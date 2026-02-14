@@ -1,0 +1,58 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 2
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+    - id: c1
+      type_id: CPU
+      speed_factor: 1.0
+resources:
+  - id: r0
+    name: bus
+    bound_core_id: c0
+    protocol: mutex
+tasks:
+  - id: t0
+    name: task-a
+    task_type: dynamic_rt
+    period: 10
+    deadline: 10
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 3
+            required_resources: [r0]
+  - id: t1
+    name: task-b
+    task_type: dynamic_rt
+    period: 10
+    deadline: 10
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 2
+            required_resources: [r0]
+scheduler:
+  name: rm
+  params: {}
+sim:
+  duration: 8
+  seed: 7

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rtos-sim"
+version = "0.2.0"
+description = "RTOS heterogeneous multi-core scheduling simulator"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "RTOS Sim Team" }
+]
+dependencies = [
+  "simpy>=4.1.1",
+  "pydantic>=2.6.0",
+  "PyYAML>=6.0.1",
+  "jsonschema>=4.22.0"
+]
+
+[project.optional-dependencies]
+ui = [
+  "PyQt6>=6.6.0",
+  "pyqtgraph>=0.13.5"
+]
+dev = [
+  "pytest>=8.1.1",
+  "pytest-cov>=5.0.0"
+]
+
+[project.scripts]
+rtos-sim = "rtos_sim.cli.main:main"
+rtos-sim-ui = "rtos_sim.ui.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rtos_sim*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "-q"
+testpaths = ["tests"]

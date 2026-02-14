@@ -1,0 +1,43 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 2
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+    - id: c1
+      type_id: CPU
+      speed_factor: 1.0
+resources:
+  - id: r0
+    name: peripheral
+    bound_core_id: c0
+    protocol: mutex
+tasks:
+  - id: t0
+    name: bind-demo
+    task_type: dynamic_rt
+    period: 12
+    deadline: 12
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 4
+            mapping_hint: c0
+            required_resources: [r0]
+scheduler:
+  name: edf
+  params: {}
+sim:
+  duration: 6
+  seed: 1

@@ -1,0 +1,41 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+tasks:
+  - id: t0
+    name: simple
+    task_type: dynamic_rt
+    period: 10
+    deadline: 10
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: [s1]
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 2
+      - id: s1
+        predecessors: [s0]
+        successors: []
+        segments:
+          - id: seg1
+            index: 1
+            wcet: 3
+scheduler:
+  name: edf
+  params: {}
+sim:
+  duration: 12
+  seed: 42

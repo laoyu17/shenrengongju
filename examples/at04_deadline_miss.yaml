@@ -1,0 +1,34 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+tasks:
+  - id: t0
+    name: miss-demo
+    task_type: dynamic_rt
+    period: 20
+    deadline: 2
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 5
+scheduler:
+  name: edf
+  params: {}
+sim:
+  duration: 8
+  seed: 3
