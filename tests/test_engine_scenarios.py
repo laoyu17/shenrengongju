@@ -67,6 +67,8 @@ def test_at05_preempt() -> None:
     events, metrics = _run_example("at05_preempt.yaml")
     assert any(e["type"] == "Preempt" for e in events)
     assert metrics["preempt_count"] >= 1
+    assert metrics["scheduler_preempt_count"] >= 1
+    assert metrics["forced_preempt_count"] == 0
 
 
 def test_at05_preempt_utilization_is_accounted_on_preempt_boundary() -> None:
@@ -629,6 +631,10 @@ def test_abort_on_miss_forces_stop_without_job_completion() -> None:
     assert not any(event["type"] == "SegmentEnd" for event in events)
     assert not any(event["type"] == "JobComplete" for event in events)
     assert metrics["jobs_completed"] == 0
+    assert metrics["jobs_aborted"] == 1
+    assert metrics["forced_preempt_count"] == 1
+    assert metrics["scheduler_preempt_count"] == 0
+    assert metrics["preempt_count"] == 1
 
 
 def test_abort_on_miss_removes_waiter_from_pip_queue() -> None:
@@ -737,3 +743,46 @@ def test_abort_on_miss_removes_waiter_from_pip_queue() -> None:
         if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("other@")
     )
     assert other_start >= low_release - 1e-9
+
+
+def test_scheduler_and_forced_preempt_metrics_are_split() -> None:
+    scheduler_events, scheduler_metrics = _run_example("at05_preempt.yaml")
+    assert any(event["type"] == "Preempt" for event in scheduler_events)
+    assert scheduler_metrics["scheduler_preempt_count"] >= 1
+    assert scheduler_metrics["forced_preempt_count"] == 0
+
+    abort_payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "t0",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 1.0,
+                "abort_on_miss": True,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 3.0}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 5.0, "seed": 13},
+    }
+    abort_events, abort_metrics = _run_payload(abort_payload)
+    assert any(event["type"] == "Preempt" for event in abort_events)
+    assert abort_metrics["forced_preempt_count"] == 1
+    assert abort_metrics["scheduler_preempt_count"] == 0
+    assert abort_metrics["jobs_aborted"] == 1

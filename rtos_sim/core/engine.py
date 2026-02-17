@@ -840,6 +840,12 @@ class SimEngine(ISimEngine):
             for segment_key in self._segments
             if segment_key.startswith(f"{job_id}:")
         ]
+        segment_protocols: dict[str, list[IResourceProtocol]] = {}
+        for segment_key in segment_keys:
+            segment = self._segments.get(segment_key)
+            if segment is None:
+                continue
+            segment_protocols[segment_key] = self._protocols_for_segment(segment)
 
         for core in self._cores.values():
             if core.running_segment_key and core.running_segment_key.startswith(f"{job_id}:"):
@@ -861,7 +867,7 @@ class SimEngine(ISimEngine):
             self._ready.discard(segment_key)
 
         for segment_key in segment_keys:
-            for protocol in self._all_protocols():
+            for protocol in segment_protocols.get(segment_key, []):
                 cancel_result = protocol.cancel_segment(segment_key)
                 if cancel_result.priority_updates:
                     self._apply_priority_updates(cancel_result.priority_updates)
@@ -881,12 +887,14 @@ class SimEngine(ISimEngine):
                 segment.finished = True
             self._held_resources[segment_key] = set()
 
-    def _all_protocols(self) -> list[IResourceProtocol]:
+    def _protocols_for_segment(self, segment: RuntimeSegmentState) -> list[IResourceProtocol]:
         unique: dict[int, IResourceProtocol] = {}
-        if self._protocol is not None:
-            unique[id(self._protocol)] = self._protocol
-        for protocol in self._resource_protocols.values():
-            unique[id(protocol)] = protocol
+        for resource_id in segment.required_resources:
+            protocol = self._resource_protocols.get(resource_id)
+            if protocol is None and self._protocol is not None:
+                protocol = self._protocol
+            if protocol is not None:
+                unique[id(protocol)] = protocol
         return list(unique.values())
 
     def _finalize_running_segments(self) -> None:

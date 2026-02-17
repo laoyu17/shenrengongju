@@ -78,6 +78,10 @@ class PIPResourceProtocol(IResourceProtocol):
         return ResourceReleaseResult(woken=woken, priority_updates=updates)
 
     def cancel_segment(self, segment_key: str) -> ResourceReleaseResult:
+        owns_any = any(owner == segment_key for owner in self._owners.values())
+        if segment_key not in self._segment_base_priority and not owns_any:
+            return ResourceReleaseResult()
+
         updates: dict[str, float] = {}
         woken: list[str] = []
         affected_owners: set[str] = set()

@@ -52,6 +52,11 @@ class MutexResourceProtocol(IResourceProtocol):
         return ResourceReleaseResult(woken=woken)
 
     def cancel_segment(self, segment_key: str) -> ResourceReleaseResult:
+        owns_any = any(owner == segment_key for owner in self._owners.values())
+        waits_any = any(segment_key in waiters for waiters in self._waiters.values())
+        if not owns_any and not waits_any:
+            return ResourceReleaseResult()
+
         woken: list[str] = []
 
         for resource_id, waiters in self._waiters.items():

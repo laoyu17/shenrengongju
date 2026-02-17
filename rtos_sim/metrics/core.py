@@ -20,9 +20,11 @@ class CoreMetrics(IMetric):
         self._job_deadline: dict[str, float] = {}
         self._job_complete: dict[str, float] = {}
         self._deadline_miss_jobs: set[str] = set()
+        self._aborted_jobs: set[str] = set()
         self._running: dict[str, tuple[float, str]] = {}
         self._core_busy: dict[str, float] = defaultdict(float)
-        self._preempt_count = 0
+        self._scheduler_preempt_count = 0
+        self._forced_preempt_count = 0
         self._migrate_count = 0
         self._event_count = 0
         self._max_time = 0.0
@@ -54,7 +56,11 @@ class CoreMetrics(IMetric):
             if segment_key and segment_key in self._running:
                 start, core = self._running.pop(segment_key)
                 self._core_busy[core] += max(0.0, event.time - start)
-            self._preempt_count += 1
+            reason = str(event.payload.get("reason", "")).strip().lower()
+            if reason == "abort_on_miss":
+                self._forced_preempt_count += 1
+            else:
+                self._scheduler_preempt_count += 1
 
         elif event.type == EventType.MIGRATE:
             self._migrate_count += 1
@@ -62,6 +68,8 @@ class CoreMetrics(IMetric):
         elif event.type == EventType.DEADLINE_MISS:
             if event.job_id:
                 self._deadline_miss_jobs.add(event.job_id)
+                if event.payload.get("abort_on_miss"):
+                    self._aborted_jobs.add(event.job_id)
 
         elif event.type == EventType.JOB_COMPLETE and event.job_id:
             self._job_complete[event.job_id] = event.time
@@ -98,11 +106,15 @@ class CoreMetrics(IMetric):
         return {
             "jobs_released": len(self._job_release),
             "jobs_completed": len(self._job_complete),
+            "jobs_aborted": len(self._aborted_jobs),
             "deadline_miss_count": len(self._deadline_miss_jobs),
             "deadline_miss_ratio": len(self._deadline_miss_jobs) / total_jobs,
             "avg_response_time": avg_response,
             "avg_lateness": avg_lateness,
-            "preempt_count": self._preempt_count,
+            # Legacy aggregated counter: scheduler preempt + forced preempt by abort.
+            "preempt_count": self._scheduler_preempt_count + self._forced_preempt_count,
+            "scheduler_preempt_count": self._scheduler_preempt_count,
+            "forced_preempt_count": self._forced_preempt_count,
             "migrate_count": self._migrate_count,
             "core_utilization": utilization,
             "event_count": self._event_count,

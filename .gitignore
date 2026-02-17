@@ -1,0 +1,13 @@
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Test/coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local outputs
+artifacts/
+out/

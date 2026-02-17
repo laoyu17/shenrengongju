@@ -1917,7 +1917,12 @@ class MainWindow(QMainWindow):
             self._load_file(path)
 
     def _load_file(self, path: str) -> None:
-        content = Path(path).read_text(encoding="utf-8")
+        try:
+            content = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Load failed", str(exc))
+            self._status_label.setText("Load failed")
+            return
         self._suspend_text_events = True
         try:
             self._editor.setPlainText(content)
@@ -1943,7 +1948,12 @@ class MainWindow(QMainWindow):
             content = json.dumps(payload, ensure_ascii=False, indent=2)
         else:
             content = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-        Path(path).write_text(content, encoding="utf-8")
+        try:
+            Path(path).write_text(content, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Save failed", str(exc))
+            self._status_label.setText("Save failed")
+            return
         self._status_label.setText(f"Saved: {path}")
 
     def _on_validate(self) -> None:

@@ -18,6 +18,7 @@
 - 已接入调度器、资源协议、ETM、开销模型插件点：`project/rtos_sim/core/engine.py:105`
 - 已实现关键运行事件：释放、就绪、开始、结束、阻塞/唤醒、抢占、迁移、deadline miss、完成：`project/rtos_sim/core/engine.py:320`
 - 已实现 deadline miss 与 `abort_on_miss` 行为分支：`project/rtos_sim/core/engine.py:623`
+- 已修复 deadline 边界触发与 abort 中止隔离语义（避免中止后再次调度）：`project/rtos_sim/core/engine.py:320`
 
 ### 1.3 配置模型与语义校验
 - 已实现 `0.1 -> 0.2` 配置兼容迁移：`project/rtos_sim/io/loader.py:83`
@@ -30,7 +31,7 @@
 - 资源协议：Mutex + PIP + PCP（优先级更新语义）：`project/rtos_sim/protocols/mutex.py:10`、`project/rtos_sim/protocols/pip.py:9`、`project/rtos_sim/protocols/pcp.py:9`
 - ETM：Constant（`wcet / core_speed`）：`project/rtos_sim/etm/registry.py:14`
 - 开销模型：Simple 常量开销：`project/rtos_sim/overheads/registry.py:22`
-- 指标聚合：响应时间、超期率、抢占/迁移、利用率：`project/rtos_sim/metrics/core.py:63`
+- 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`project/rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
 - CLI 支持 `validate/run/ui/batch-run` 命令：`project/rtos_sim/cli/main.py:95`
@@ -52,7 +53,7 @@
 ### 1.6 测试与样例
 - 已新增 8 个样例（含 AT-06/AT-07 与批量实验矩阵）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at07_heterogeneous_multicore.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
-- 当前本地测试状态：`python -m pytest -q` 通过（34 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（41 tests）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。
@@ -62,7 +63,7 @@
 - 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
 - 回归：新增 UI 交互与表单同步测试（含表格 CRUD、DAG 侧栏编辑、未知字段保留）：`project/tests/test_ui_gantt.py:39`
 - 回归：新增 DAG 拖拽连线循环检测、节点自由移动、自动布局、可选布局持久化与表格校验阻断测试：`project/tests/test_ui_gantt.py:344`
-- 当前本地测试状态：`python -m pytest -q` 通过（34 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（41 tests）
 
 ---
 
@@ -86,9 +87,9 @@
    - 影响：基础建模效率明显提升，但复杂图编辑体验仍有提升空间。
 
 3. **UI 自动化测试仍需扩展到交互层**
-   - 现状：已新增 UI 可视化 + 表格 CRUD + DAG 侧栏/拖拽编辑 + 校验阻断回归，但尚未覆盖线程中断恢复、文件对话框等行为。
+   - 现状：已覆盖 UI 可视化 + 表格 CRUD + DAG 侧栏/拖拽编辑 + 校验阻断 + 线程停止恢复 + 文件读写异常路径，仍需补文件对话框平台差异等边缘行为。
    - 证据：`project/tests/test_ui_gantt.py:31`
-   - 影响：UI 交互级回归仍有遗漏风险。
+   - 影响：UI 交互级回归风险已下降，但跨平台对话框差异仍需持续观察。
 
 ### 2.3 P2（中期优化）
 1. **性能治理已建立首版基线，仍需持续校准阈值**
@@ -96,7 +97,7 @@
    - 证据：`project/scripts/perf_baseline.py:1`
 
 2. **CI/CD 已建立首版回归门禁，后续需补发布流水线**
-   - 现状：已增加 Linux/Windows 测试 + Linux 性能门禁工作流。
+   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流（软门禁）。
    - 证据：`project/.github/workflows/ci.yml:1`
    - 影响：基础回归自动化已具备，仍需补打包发布链路。
 
@@ -158,13 +159,13 @@
 ### Sprint S4（质量与性能）— 回归与门禁
 - 目标：
   - 建立性能基线（100–300 tasks）；
-  - 建立 CI（lint/test/样例回归/性能阈值）。
+  - 建立 CI（lint/test/样例回归 + 性能报告）。
 - 关键交付：
   - 压测脚本与基准报告；
-  - CI 配置（至少 Linux + Windows）。
+  - CI 配置（至少 Linux + Windows，测试硬门禁 + 性能软门禁）。
 - 验收标准：
   - 主干提交自动回归；
-  - 性能退化可被门禁拦截。
+  - 性能结果可持续追踪（报告产物可追溯，不阻断合并）。
 
 ### Sprint S5（发布与扩展）— 交付化
 - 目标：

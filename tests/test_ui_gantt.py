@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QApplication
+import pytest
 import yaml
 
 from rtos_sim.core import SimEngine
@@ -457,5 +459,88 @@ def test_ui_dag_layout_persist_to_ui_layout_optional() -> None:
 
         # ui_layout metadata should not break runtime validation in UI path.
         window._loader.load_data(payload)
+    finally:
+        window.close()
+
+
+def test_ui_stop_then_finished_recovers_buttons_and_worker_state() -> None:
+    class _DummyWorker:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    window = MainWindow(config_path="examples/at05_preempt.yaml")
+    try:
+        worker = _DummyWorker()
+        window._worker = worker
+        window._run_button.setEnabled(False)
+        window._stop_button.setEnabled(True)
+
+        window._on_stop()
+        assert worker.stopped is True
+        assert window._status_label.text() == "Stopping..."
+
+        window._on_finished({}, [])
+        assert window._worker is None
+        assert window._run_button.isEnabled() is True
+        assert window._stop_button.isEnabled() is False
+        assert window._status_label.text() == "Completed"
+    finally:
+        window.close()
+
+
+def test_ui_load_file_failure_shows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow(config_path="examples/at05_preempt.yaml")
+    try:
+        original_text = window._editor.toPlainText()
+        calls: list[str] = []
+
+        def _fake_critical(_parent, title: str, message: str) -> None:
+            calls.append(f"{title}:{message}")
+
+        monkeypatch.setattr("rtos_sim.ui.app.QMessageBox.critical", _fake_critical)
+        window._load_file("/__definitely_missing__/config.yaml")
+
+        assert calls
+        assert window._status_label.text() == "Load failed"
+        assert window._editor.toPlainText() == original_text
+    finally:
+        window.close()
+
+
+def test_ui_save_file_write_error_shows_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow(config_path="examples/at05_preempt.yaml")
+    try:
+        target = tmp_path / "readonly.yaml"
+        calls: list[str] = []
+
+        def _fake_get_save_file_name(*_args, **_kwargs):
+            return (str(target), "Config Files (*.yaml *.yml *.json)")
+
+        real_write_text = Path.write_text
+
+        def _fake_write_text(self: Path, *_args, **_kwargs):
+            if self == target:
+                raise OSError("permission denied")
+            return real_write_text(self, *_args, **_kwargs)
+
+        def _fake_critical(_parent, title: str, message: str) -> None:
+            calls.append(f"{title}:{message}")
+
+        monkeypatch.setattr(
+            "rtos_sim.ui.app.QFileDialog.getSaveFileName",
+            _fake_get_save_file_name,
+        )
+        monkeypatch.setattr(Path, "write_text", _fake_write_text)
+        monkeypatch.setattr("rtos_sim.ui.app.QMessageBox.critical", _fake_critical)
+
+        window._pick_save_file()
+        assert calls
+        assert window._status_label.text() == "Save failed"
     finally:
         window.close()

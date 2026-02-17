@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import platform
 from pathlib import Path
+import subprocess
+import sys
 import time
 
 from rtos_sim.core import SimEngine
@@ -89,6 +93,7 @@ def _run_case(task_count: int, seed: int) -> dict:
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     metrics = engine.metric_report()
     return {
+        "case_name": f"tasks_{task_count}",
         "task_count": task_count,
         "wall_time_ms": elapsed_ms,
         "jobs_released": metrics.get("jobs_released", 0),
@@ -96,6 +101,19 @@ def _run_case(task_count: int, seed: int) -> dict:
         "event_count": metrics.get("event_count", 0),
         "max_time": metrics.get("max_time", 0.0),
     }
+
+
+def _git_sha() -> str:
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:  # noqa: BLE001 - best effort metadata only
+        return "unknown"
+    return result.stdout.strip() or "unknown"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated wall-time thresholds, aligned with --tasks",
     )
     parser.add_argument("--seed", type=int, default=7, help="simulation seed")
+    parser.add_argument(
+        "--threshold-version",
+        default="v1",
+        help="semantic version for current threshold profile",
+    )
     parser.add_argument(
         "--output",
         default="artifacts/perf/perf-baseline.json",
@@ -132,8 +155,14 @@ def main(argv: list[str] | None = None) -> int:
         if max_wall is not None:
             case["pass"] = case["wall_time_ms"] <= max_wall
             failed = failed or not case["pass"]
+            case["pass_reason"] = (
+                f"wall_time_ms <= threshold ({case['wall_time_ms']:.2f} <= {max_wall:.2f})"
+                if case["pass"]
+                else f"wall_time_ms > threshold ({case['wall_time_ms']:.2f} > {max_wall:.2f})"
+            )
         else:
             case["pass"] = True
+            case["pass_reason"] = "no threshold configured"
         cases.append(case)
         verdict = "PASS" if case["pass"] else "FAIL"
         print(
@@ -141,7 +170,15 @@ def main(argv: list[str] | None = None) -> int:
             f"events={case['event_count']}"
         )
 
-    report = {"seed": args.seed, "cases": cases}
+    report = {
+        "seed": args.seed,
+        "threshold_version": args.threshold_version,
+        "git_sha": _git_sha(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+        "cases": cases,
+    }
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
