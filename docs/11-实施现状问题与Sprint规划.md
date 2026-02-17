@@ -26,6 +26,7 @@
 
 ### 1.4 插件化能力（MVP）
 - 调度器：EDF / RM + 注册机制：`project/rtos_sim/schedulers/registry.py:15`
+- 调度器参数：`tie_breaker / allow_preempt` 已生效（S3 第一阶段）：`project/rtos_sim/schedulers/base.py:55`
 - 资源协议：Mutex + PIP + PCP（优先级更新语义）：`project/rtos_sim/protocols/mutex.py:10`、`project/rtos_sim/protocols/pip.py:9`、`project/rtos_sim/protocols/pcp.py:9`
 - ETM：Constant（`wcet / core_speed`）：`project/rtos_sim/etm/registry.py:14`
 - 开销模型：Simple 常量开销：`project/rtos_sim/overheads/registry.py:22`
@@ -34,16 +35,24 @@
 ### 1.5 CLI 与 PyQt6 UI
 - CLI 支持 `validate/run/ui/batch-run` 命令：`project/rtos_sim/cli/main.py:95`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
+- 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
+- UI 已支持结构化表单与 YAML/JSON 文本双向同步：`project/rtos_sim/ui/app.py:209`
+- UI 已支持多任务/多资源表格化增删改（表格 + 选中项详情联动）：`project/rtos_sim/ui/app.py:328`
+- UI 已支持单任务 DAG 图形化雏形（节点/边可视化 + 侧栏增删改）：`project/rtos_sim/ui/app.py:350`
+- UI 已支持 DAG 节点自由拖动（视图层）与自动布局重排：`project/rtos_sim/ui/app.py:924`
+- UI 已支持 DAG 拖拽连线与循环检测即时提示（防止形成环）：`project/rtos_sim/ui/app.py:1030`
+- UI 已支持可选 `ui_layout` 布局持久化（下次打开复用）：`project/rtos_sim/ui/config_doc.py:58`
+- UI 已支持表格强校验（错误高亮 + Apply/Run/Validate 前阻断）：`project/rtos_sim/ui/app.py:1259`
 - UI 已实现后台线程仿真 + 主线程渲染 + 实时 Gantt（按 CPU 泳道 + 任务图例 + 抢占断点）：`project/rtos_sim/ui/app.py:447`
 - UI 已实现三层编码（Task 颜色 / Subtask 纹理 / Segment 边框+短标签）：`project/rtos_sim/ui/app.py:460`
 - UI 已支持稳定悬停与点击锁定详情面板（专家字段）：`project/rtos_sim/ui/app.py:532`
 - UI 事件增量批推送（64条或150ms）：`project/rtos_sim/ui/worker.py:53`
 
 ### 1.6 测试与样例
-- 已新增 6 个样例（含批量实验矩阵样例）：`project/examples/at01_single_dag_single_core.yaml:1`、`project/examples/batch_matrix.yaml:1`
+- 已新增 8 个样例（含 AT-06/AT-07 与批量实验矩阵）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at07_heterogeneous_multicore.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
-- 当前本地测试状态：`python -m pytest -q` 通过（17 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（34 tests）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。
@@ -51,8 +60,9 @@
 - 体验增强：Gantt 支持 Task/Subtask/Segment 三层编码，避免颜色层级混乱：`project/rtos_sim/ui/app.py:460`
 - 体验增强：悬停命中改为 scene 鼠标检测，并提供右侧详情面板（支持点击锁定）：`project/rtos_sim/ui/app.py:532`
 - 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
-- 回归：新增 UI 交互测试（CPU 泳道/层级图例/悬停预览/点击锁定）：`project/tests/test_ui_gantt.py:39`
-- 当前本地测试状态：`python -m pytest -q` 通过（17 tests）
+- 回归：新增 UI 交互与表单同步测试（含表格 CRUD、DAG 侧栏编辑、未知字段保留）：`project/tests/test_ui_gantt.py:39`
+- 回归：新增 DAG 拖拽连线循环检测、节点自由移动、自动布局、可选布局持久化与表格校验阻断测试：`project/tests/test_ui_gantt.py:344`
+- 当前本地测试状态：`python -m pytest -q` 通过（34 tests）
 
 ---
 
@@ -65,29 +75,30 @@
    - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
-1. **调度器参数尚处于“传递就绪”，算法级参数开关仍需落地**
-   - 现状：`create_scheduler(name, params)` 已传递参数到调度器实例，但 EDF/RM 尚未定义业务参数生效规则。
-   - 证据：`project/rtos_sim/schedulers/registry.py:28`、`project/rtos_sim/schedulers/edf.py:11`
-   - 影响：参数化能力已具备骨架，但实验维度仍有限。
+1. **调度器参数已从“透传”进入“基础生效”，但参数域仍需继续扩展**
+   - 现状：`tie_breaker/allow_preempt` 已在 EDF/RM 生效，尚未覆盖更多算法级业务开关。
+   - 证据：`project/rtos_sim/schedulers/base.py:55`、`project/rtos_sim/schedulers/edf.py:16`
+   - 影响：核心参数化路径已打通，后续需补齐更细粒度策略参数。
 
-2. **UI 配置编辑器仍为文本编辑，不是结构化表单/图编辑**
-   - 现状：当前为 `QPlainTextEdit` 文本模式。
-   - 证据：`project/rtos_sim/ui/app.py:47`
-   - 影响：易出配置错误，用户门槛偏高。
+2. **UI 图形化配置已进入雏形阶段，仍需完善交互深度**
+   - 现状：已支持多任务/多资源表格 CRUD、单任务 DAG 侧栏编辑、拖拽连线循环拦截、节点自由移动与自动布局；复杂 DAG 的多选编排/跨任务画布仍待实现。
+   - 证据：`project/rtos_sim/ui/app.py:209`
+   - 影响：基础建模效率明显提升，但复杂图编辑体验仍有提升空间。
 
 3. **UI 自动化测试仍需扩展到交互层**
-   - 现状：已新增 UI 基础可视化回归（任务泳道/抢占标记），但尚未覆盖按钮交互、线程中断恢复、文件对话框等行为。
+   - 现状：已新增 UI 可视化 + 表格 CRUD + DAG 侧栏/拖拽编辑 + 校验阻断回归，但尚未覆盖线程中断恢复、文件对话框等行为。
    - 证据：`project/tests/test_ui_gantt.py:31`
    - 影响：UI 交互级回归仍有遗漏风险。
 
 ### 2.3 P2（中期优化）
-1. **性能治理尚未形成专项基线**
-   - 现状：有指标聚合，但缺少中等规模压测脚本与阈值门禁。
-   - 证据：`project/rtos_sim/metrics/core.py:84`
+1. **性能治理已建立首版基线，仍需持续校准阈值**
+   - 现状：已提供 `scripts/perf_baseline.py`（100/300 tasks）与阈值门禁入口。
+   - 证据：`project/scripts/perf_baseline.py:1`
 
-2. **CI/CD 与发布流水线未建立**
-   - 现状：本地可运行，可测试，但未看到 CI 配置。
-   - 影响：跨环境稳定性与发布质量依赖人工执行。
+2. **CI/CD 已建立首版回归门禁，后续需补发布流水线**
+   - 现状：已增加 Linux/Windows 测试 + Linux 性能门禁工作流。
+   - 证据：`project/.github/workflows/ci.yml:1`
+   - 影响：基础回归自动化已具备，仍需补打包发布链路。
 
 ---
 

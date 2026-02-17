@@ -81,12 +81,15 @@ class ConfigLoader:
         return data
 
     def _normalize_version(self, payload: dict[str, Any]) -> dict[str, Any]:
-        version = str(payload.get("version", "0.1"))
+        normalized_payload = dict(payload)
+        # UI-only layout metadata must not participate in schema/model validation.
+        normalized_payload.pop("ui_layout", None)
+        version = str(normalized_payload.get("version", "0.1"))
 
         if version == self.SUPPORTED_VERSION:
-            return payload
+            return normalized_payload
         if version == "0.1":
-            migrated = dict(payload)
+            migrated = dict(normalized_payload)
             migrated["version"] = self.SUPPORTED_VERSION
             migrated.setdefault("resources", [])
             migrated.setdefault("scheduler", {}).setdefault("params", {})
