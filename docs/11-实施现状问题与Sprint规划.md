@@ -34,13 +34,24 @@
 ### 1.5 CLI 与 PyQt6 UI
 - CLI 支持 `validate/run/ui` 三个命令：`project/rtos_sim/cli/main.py:73`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
-- UI 已实现后台线程仿真 + 主线程渲染 + 实时 Gantt：`project/rtos_sim/ui/app.py:154`
+- UI 已实现后台线程仿真 + 主线程渲染 + 实时 Gantt（按 CPU 泳道 + 任务图例 + 抢占断点）：`project/rtos_sim/ui/app.py:447`
+- UI 已实现三层编码（Task 颜色 / Subtask 纹理 / Segment 边框+短标签）：`project/rtos_sim/ui/app.py:460`
+- UI 已支持稳定悬停与点击锁定详情面板（专家字段）：`project/rtos_sim/ui/app.py:532`
 - UI 事件增量批推送（64条或150ms）：`project/rtos_sim/ui/worker.py:53`
 
 ### 1.6 测试与样例
 - 已新增 5 个场景样例（AT01~AT05）：`project/examples/at01_single_dag_single_core.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
-- 当前本地测试状态：`python -m pytest -q` 通过（9 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（13 tests）
+
+### 1.7 已修复：UI 有指标但 Gantt 无线段
+- 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。
+- 修复：引擎新增订阅者持久化，`reset()` 后自动重新挂载外部订阅者，保证 UI/外部监听不丢事件：`project/rtos_sim/core/engine.py:79`
+- 体验增强：Gantt 支持 Task/Subtask/Segment 三层编码，避免颜色层级混乱：`project/rtos_sim/ui/app.py:460`
+- 体验增强：悬停命中改为 scene 鼠标检测，并提供右侧详情面板（支持点击锁定）：`project/rtos_sim/ui/app.py:532`
+- 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
+- 回归：新增 UI 交互测试（CPU 泳道/层级图例/悬停预览/点击锁定）：`project/tests/test_ui_gantt.py:39`
+- 当前本地测试状态：`python -m pytest -q` 通过（13 tests）
 
 ---
 
@@ -68,10 +79,10 @@
    - 证据：`project/rtos_sim/ui/app.py:47`
    - 影响：易出配置错误，用户门槛偏高。
 
-3. **UI 自动化测试缺失**
-   - 现状：现有测试覆盖 model/engine/cli，未覆盖 UI 线程与交互。
-   - 证据：`project/tests/test_engine_scenarios.py:22`
-   - 影响：GUI 回归风险较高。
+3. **UI 自动化测试仍需扩展到交互层**
+   - 现状：已新增 UI 基础可视化回归（任务泳道/抢占标记），但尚未覆盖按钮交互、线程中断恢复、文件对话框等行为。
+   - 证据：`project/tests/test_ui_gantt.py:31`
+   - 影响：UI 交互级回归仍有遗漏风险。
 
 ### 2.3 P2（中期优化）
 1. **性能治理尚未形成专项基线**
@@ -164,4 +175,3 @@
 - 每个 Sprint 固定输出：`设计变更记录 + 代码 + 测试 + 验收报告`
 - 问题清单按 `P0/P1/P2` 每周滚动复盘一次
 - 文档与代码强绑定：接口变更必须同步更新 `08/09/10` 三份设计文档
-

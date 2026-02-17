@@ -16,7 +16,7 @@ class SimulationWorker(QThread):
     """Run simulation in background and stream event batches."""
 
     events_batch = pyqtSignal(list)
-    finished_report = pyqtSignal(dict)
+    finished_report = pyqtSignal(dict, list)
     failed = pyqtSignal(str)
 
     def __init__(self, config_text: str, until: float | None = None) -> None:
@@ -43,12 +43,15 @@ class SimulationWorker(QThread):
             return
 
         self._engine = SimEngine()
+        all_events: list[dict[str, Any]] = []
         pending: list[dict[str, Any]] = []
         last_flush = time.monotonic()
 
         def on_event(event) -> None:
             nonlocal last_flush
-            pending.append(event.model_dump(mode="json"))
+            serialized = event.model_dump(mode="json")
+            all_events.append(serialized)
+            pending.append(serialized)
             now = time.monotonic()
             if len(pending) >= 64 or now - last_flush >= 0.15:
                 self.events_batch.emit(list(pending))
@@ -62,8 +65,6 @@ class SimulationWorker(QThread):
         try:
             self._engine.build(spec)
             self._engine.run(until=self._until)
-            if pending:
-                self.events_batch.emit(list(pending))
-            self.finished_report.emit(self._engine.metric_report())
+            self.finished_report.emit(self._engine.metric_report(), all_events)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))

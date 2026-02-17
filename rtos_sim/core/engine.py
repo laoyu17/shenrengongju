@@ -70,13 +70,12 @@ class SimEngine(ISimEngine):
         self._external_etm = etm
         self._external_overhead = overhead_model
         self._metrics = metrics or [CoreMetrics()]
+        self._subscribers: list[Callable[[SimEvent], None]] = []
 
         self._env = simpy.Environment()
         self._event_bus = EventBus()
         self._events: list[SimEvent] = []
-        self._event_bus.subscribe(self._events.append)
-        for metric in self._metrics:
-            self._event_bus.subscribe(metric.consume)
+        self._setup_event_pipeline()
 
         self._spec: ModelSpec | None = None
         self._scheduler: IScheduler | None = None
@@ -96,6 +95,9 @@ class SimEngine(ISimEngine):
         self._stopped = False
 
     def subscribe(self, handler: Callable[[SimEvent], None]) -> None:
+        if handler in self._subscribers:
+            return
+        self._subscribers.append(handler)
         self._event_bus.subscribe(handler)
 
     def build(self, spec: ModelSpec) -> None:
@@ -169,12 +171,11 @@ class SimEngine(ISimEngine):
 
     def reset(self) -> None:
         self._env = simpy.Environment()
-        self._event_bus = EventBus()
-        self._events = []
-        self._event_bus.subscribe(self._events.append)
         for metric in self._metrics:
             metric.reset()
-            self._event_bus.subscribe(metric.consume)
+        self._event_bus = EventBus()
+        self._events = []
+        self._setup_event_pipeline()
 
         self._spec = None
         self._scheduler = None
@@ -190,6 +191,13 @@ class SimEngine(ISimEngine):
         self._segment_to_subtask = {}
         self._paused = False
         self._stopped = False
+
+    def _setup_event_pipeline(self) -> None:
+        self._event_bus.subscribe(self._events.append)
+        for metric in self._metrics:
+            self._event_bus.subscribe(metric.consume)
+        for handler in self._subscribers:
+            self._event_bus.subscribe(handler)
 
     @property
     def events(self) -> list[SimEvent]:

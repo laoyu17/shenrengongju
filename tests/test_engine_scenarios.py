@@ -54,3 +54,18 @@ def test_at05_preempt() -> None:
     events, metrics = _run_example("at05_preempt.yaml")
     assert any(e["type"] == "Preempt" for e in events)
     assert metrics["preempt_count"] >= 1
+
+
+def test_subscribe_before_build_keeps_stream_after_reset() -> None:
+    loader = ConfigLoader()
+    spec = loader.load(str(EXAMPLES / "at05_preempt.yaml"))
+    engine = SimEngine()
+
+    streamed = []
+    engine.subscribe(streamed.append)
+    engine.build(spec)
+    engine.run()
+
+    assert streamed
+    assert len(streamed) == len(engine.events)
+    assert any(event.type.value == "SegmentStart" for event in streamed)
