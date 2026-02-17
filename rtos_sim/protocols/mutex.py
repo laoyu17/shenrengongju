@@ -50,3 +50,21 @@ class MutexResourceProtocol(IResourceProtocol):
             self.on_wake(next_segment, resource_id)
             woken.append(next_segment)
         return ResourceReleaseResult(woken=woken)
+
+    def cancel_segment(self, segment_key: str) -> ResourceReleaseResult:
+        woken: list[str] = []
+
+        for resource_id, waiters in self._waiters.items():
+            filtered = deque(waiter for waiter in waiters if waiter != segment_key)
+            self._waiters[resource_id] = filtered
+
+        owned_resources = [
+            resource_id
+            for resource_id, owner in self._owners.items()
+            if owner == segment_key
+        ]
+        for resource_id in owned_resources:
+            release_result = self.release(segment_key, resource_id)
+            woken.extend(release_result.woken)
+
+        return ResourceReleaseResult(woken=list(dict.fromkeys(woken)))

@@ -539,3 +539,201 @@ def test_subscribe_before_build_keeps_stream_after_reset() -> None:
     assert streamed
     assert len(streamed) == len(engine.events)
     assert any(event.type.value == "SegmentStart" for event in streamed)
+
+
+def test_deadline_miss_triggers_at_deadline_boundary_without_other_events() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "t0",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 2.0,
+                "abort_on_miss": False,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 5.0}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 8.0, "seed": 7},
+    }
+
+    events, _ = _run_payload(payload)
+    miss_event = next(event for event in events if event["type"] == "DeadlineMiss")
+    segment_end = next(event for event in events if event["type"] == "SegmentEnd")
+
+    assert miss_event["time"] == pytest.approx(2.0, abs=1e-6)
+    assert miss_event["time"] < segment_end["time"]
+
+
+def test_abort_on_miss_forces_stop_without_job_completion() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "t0",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 1.0,
+                "abort_on_miss": True,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {
+                                "id": "seg0",
+                                "index": 1,
+                                "wcet": 3.0,
+                                "preemptible": False,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 5.0, "seed": 7},
+    }
+
+    events, metrics = _run_payload(payload)
+    miss_time = next(event["time"] for event in events if event["type"] == "DeadlineMiss")
+    starts = [event for event in events if event["type"] == "SegmentStart"]
+
+    assert len(starts) == 1
+    assert all(event["time"] <= miss_time + 1e-12 for event in starts)
+    assert not any(event["type"] == "SegmentEnd" for event in events)
+    assert not any(event["type"] == "JobComplete" for event in events)
+    assert metrics["jobs_completed"] == 0
+
+
+def test_abort_on_miss_removes_waiter_from_pip_queue() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "pip"}],
+        "tasks": [
+            {
+                "id": "low",
+                "name": "low",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 20.0,
+                "abort_on_miss": False,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {"id": "seg0", "index": 1, "wcet": 4.0, "required_resources": ["r0"]}
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "wait",
+                "name": "wait",
+                "task_type": "dynamic_rt",
+                "arrival": 0.1,
+                "deadline": 0.5,
+                "abort_on_miss": True,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {"id": "seg0", "index": 1, "wcet": 1.0, "required_resources": ["r0"]}
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "other",
+                "name": "other",
+                "task_type": "dynamic_rt",
+                "arrival": 0.2,
+                "deadline": 5.0,
+                "abort_on_miss": False,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {"id": "seg0", "index": 1, "wcet": 1.0, "required_resources": ["r0"]}
+                        ],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 10.0, "seed": 7},
+    }
+
+    events, _ = _run_payload(payload)
+    miss_event = next(
+        event
+        for event in events
+        if event["type"] == "DeadlineMiss" and str(event.get("job_id", "")).startswith("wait@")
+    )
+    miss_time = miss_event["time"]
+    assert any(
+        event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("wait@")
+        for event in events
+    )
+
+    assert not any(
+        event["type"] == "SegmentUnblocked"
+        and str(event.get("job_id", "")).startswith("wait@")
+        and event["time"] > miss_time
+        for event in events
+    )
+    assert not any(
+        event["type"] == "SegmentStart"
+        and str(event.get("job_id", "")).startswith("wait@")
+        and event["time"] > miss_time
+        for event in events
+    )
+
+    low_release = next(
+        event["time"]
+        for event in events
+        if event["type"] == "ResourceRelease" and str(event.get("job_id", "")).startswith("low@")
+    )
+    other_start = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("other@")
+    )
+    assert other_start >= low_release - 1e-9

@@ -58,6 +58,7 @@ class SimEngine(ISimEngine):
     """Discrete-event engine using SimPy clock progression."""
 
     DEFAULT_EVENT_ID_MODE = "deterministic"
+    DEADLINE_EPSILON = 1e-9
 
     def __init__(
         self,
@@ -95,6 +96,7 @@ class SimEngine(ISimEngine):
         self._held_resources: dict[str, set[str]] = {}
         self._release_heap: list[tuple[float, int, str]] = []
         self._segment_to_subtask: dict[str, tuple[str, str]] = {}
+        self._aborted_jobs: set[str] = set()
 
         self._paused = False
         self._stopped = False
@@ -196,6 +198,7 @@ class SimEngine(ISimEngine):
         self._held_resources = {}
         self._release_heap = []
         self._segment_to_subtask = {}
+        self._aborted_jobs = set()
         self._paused = False
         self._stopped = False
 
@@ -328,6 +331,12 @@ class SimEngine(ISimEngine):
         for core in self._cores.values():
             if core.finish_time is not None:
                 next_times.append(core.finish_time)
+        for job_runtime in self._jobs.values():
+            state = job_runtime.state
+            if state.completed or state.missed_deadline or state.absolute_deadline is None:
+                continue
+            if state.absolute_deadline > now + 1e-12:
+                next_times.append(state.absolute_deadline + self.DEADLINE_EPSILON)
 
         if not next_times:
             # Some dispatch attempts may block immediately and leave the core idle
@@ -434,7 +443,7 @@ class SimEngine(ISimEngine):
 
     def _mark_segment_ready(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]
-        if segment.finished:
+        if segment.finished or segment.job_id in self._aborted_jobs:
             return
         segment.blocked = False
         segment.waiting_resource = None
@@ -453,6 +462,8 @@ class SimEngine(ISimEngine):
         ready_segments: list[ReadySegment] = []
         for segment_key in self._ready:
             segment = self._segments[segment_key]
+            if segment.finished or segment.job_id in self._aborted_jobs:
+                continue
             ready_segments.append(
                 ReadySegment(
                     job_id=segment.job_id,
@@ -470,38 +481,50 @@ class SimEngine(ISimEngine):
                 )
             )
 
-        core_states = [
-            CoreState(
-                core_id=core.core_id,
-                core_speed=core.speed,
-                running_segment_key=core.running_segment_key,
-                running_since=core.running_since,
-                running_segment=(
-                    ReadySegment(
-                        job_id=self._segments[core.running_segment_key].job_id,
-                        task_id=self._segments[core.running_segment_key].task_id,
-                        subtask_id=self._segments[core.running_segment_key].subtask_id,
-                        segment_id=self._segments[core.running_segment_key].segment_id,
-                        remaining_time=self._segments[core.running_segment_key].remaining_time,
-                        absolute_deadline=self._segments[core.running_segment_key].absolute_deadline,
-                        task_period=self._segments[core.running_segment_key].task_period,
-                        mapping_hint=self._segments[core.running_segment_key].mapping_hint,
-                        required_resources=list(self._segments[core.running_segment_key].required_resources),
-                        preemptible=self._segments[core.running_segment_key].preemptible,
-                        release_time=self._segments[core.running_segment_key].release_time,
-                        priority_value=self._segments[core.running_segment_key].effective_priority,
+        core_states: list[CoreState] = []
+        for core in self._cores.values():
+            running_segment_key = core.running_segment_key
+            running_segment = None
+            if running_segment_key:
+                segment = self._segments[running_segment_key]
+                if segment.job_id not in self._aborted_jobs and not segment.finished:
+                    running_segment = ReadySegment(
+                        job_id=segment.job_id,
+                        task_id=segment.task_id,
+                        subtask_id=segment.subtask_id,
+                        segment_id=segment.segment_id,
+                        remaining_time=segment.remaining_time,
+                        absolute_deadline=segment.absolute_deadline,
+                        task_period=segment.task_period,
+                        mapping_hint=segment.mapping_hint,
+                        required_resources=list(segment.required_resources),
+                        preemptible=segment.preemptible,
+                        release_time=segment.release_time,
+                        priority_value=segment.effective_priority,
                     )
-                    if core.running_segment_key
-                    else None
-                ),
+                else:
+                    running_segment_key = None
+            core_states.append(
+                CoreState(
+                    core_id=core.core_id,
+                    core_speed=core.speed,
+                    running_segment_key=running_segment_key,
+                    running_since=core.running_since if running_segment_key else None,
+                    running_segment=running_segment,
+                )
             )
-            for core in self._cores.values()
-        ]
         return ScheduleSnapshot(now=now, ready_segments=ready_segments, core_states=core_states)
 
     def _schedule(self, now: float) -> None:
         assert self._scheduler and self._overheads
 
+        self._ready = {
+            segment_key
+            for segment_key in self._ready
+            if segment_key in self._segments
+            and not self._segments[segment_key].finished
+            and self._segments[segment_key].job_id not in self._aborted_jobs
+        }
         if not self._ready and not any(core.running_segment_key for core in self._cores.values()):
             return
 
@@ -536,20 +559,32 @@ class SimEngine(ISimEngine):
             if decision.action == DecisionAction.DISPATCH and decision.to_core and decision.job_id:
                 self._apply_dispatch(decision.job_id, decision.segment_id, decision.to_core, now)
 
-    def _apply_preempt(self, core_id: str, now: float) -> None:
+    def _apply_preempt(
+        self,
+        core_id: str,
+        now: float,
+        *,
+        force: bool = False,
+        requeue: bool = True,
+        reason: str | None = None,
+    ) -> bool:
         core = self._cores[core_id]
         if not core.running_segment_key:
-            return
+            return False
         segment = self._segments[core.running_segment_key]
-        if not segment.preemptible:
-            return
+        if not segment.preemptible and not force:
+            return False
         if core.running_since is not None:
             elapsed = max(0.0, now - core.running_since)
             executed = elapsed * core.speed
             segment.remaining_time = max(0.0, segment.remaining_time - executed)
         segment.running_on = None
 
-        self._ready.add(segment.key)
+        if requeue and not segment.finished and segment.job_id not in self._aborted_jobs:
+            self._ready.add(segment.key)
+        payload = {"segment_key": segment.key}
+        if reason:
+            payload["reason"] = reason
         self._event_bus.publish(
             event_type=EventType.PREEMPT,
             time=now,
@@ -557,15 +592,18 @@ class SimEngine(ISimEngine):
             job_id=segment.job_id,
             segment_id=segment.segment_id,
             core_id=core_id,
-            payload={"segment_key": segment.key},
+            payload=payload,
         )
         core.running_segment_key = None
         core.running_since = None
         core.finish_time = None
+        return True
 
     def _apply_dispatch(self, job_id: str, decision_segment_id: str | None, core_id: str, now: float) -> None:
         assert self._etm and self._overheads
 
+        if job_id in self._aborted_jobs:
+            return
         core = self._cores[core_id]
         if core.running_segment_key is not None:
             return
@@ -584,6 +622,9 @@ class SimEngine(ISimEngine):
 
         segment_key = sorted(candidates)[0]
         segment = self._segments[segment_key]
+        if segment.finished or segment.job_id in self._aborted_jobs:
+            self._ready.discard(segment_key)
+            return
 
         for resource_id in segment.required_resources:
             if resource_id in self._held_resources[segment_key]:
@@ -710,6 +751,8 @@ class SimEngine(ISimEngine):
                 )
                 for woken_segment_key in release_result.woken:
                     woken_segment = self._segments[woken_segment_key]
+                    if woken_segment.finished or woken_segment.job_id in self._aborted_jobs:
+                        continue
                     woken_segment.blocked = False
                     woken_segment.waiting_resource = None
                     self._ready.add(woken_segment_key)
@@ -733,6 +776,8 @@ class SimEngine(ISimEngine):
 
     def _on_segment_finish(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]
+        if segment.job_id in self._aborted_jobs:
+            return
         job_runtime = self._jobs[segment.job_id]
         subtask = job_runtime.subtasks[segment.subtask_id]
         subtask.next_index += 1
@@ -786,33 +831,63 @@ class SimEngine(ISimEngine):
                 self._abort_job(state.job_id, now)
 
     def _abort_job(self, job_id: str, now: float) -> None:
-        # Clear ready segments.
-        for segment_key in list(self._ready):
-            if segment_key.startswith(f"{job_id}:"):
-                self._ready.discard(segment_key)
+        if job_id in self._aborted_jobs:
+            return
+        self._aborted_jobs.add(job_id)
 
-        # Stop running segments on cores.
+        segment_keys = [
+            segment_key
+            for segment_key in self._segments
+            if segment_key.startswith(f"{job_id}:")
+        ]
+
         for core in self._cores.values():
             if core.running_segment_key and core.running_segment_key.startswith(f"{job_id}:"):
-                self._apply_preempt(core.core_id, now)
+                self._apply_preempt(
+                    core.core_id,
+                    now,
+                    force=True,
+                    requeue=False,
+                    reason="abort_on_miss",
+                )
 
-        # Release resources of unfinished segments.
-        for segment_key, resources in list(self._held_resources.items()):
-            if not segment_key.startswith(f"{job_id}:"):
+        for segment_key in segment_keys:
+            segment = self._segments.get(segment_key)
+            if segment is None:
                 continue
-            for resource_id in sorted(resources):
-                protocol = self._protocol_for_resource(resource_id)
-                release_result = protocol.release(segment_key, resource_id)
-                if release_result.priority_updates:
-                    self._apply_priority_updates(release_result.priority_updates)
-                for woken_segment_key in release_result.woken:
+            segment.blocked = False
+            segment.waiting_resource = None
+            segment.running_on = None
+            self._ready.discard(segment_key)
+
+        for segment_key in segment_keys:
+            for protocol in self._all_protocols():
+                cancel_result = protocol.cancel_segment(segment_key)
+                if cancel_result.priority_updates:
+                    self._apply_priority_updates(cancel_result.priority_updates)
+                for woken_segment_key in cancel_result.woken:
                     woken_segment = self._segments.get(woken_segment_key)
                     if woken_segment is None or woken_segment.finished:
+                        continue
+                    if woken_segment.job_id in self._aborted_jobs:
                         continue
                     woken_segment.blocked = False
                     woken_segment.waiting_resource = None
                     self._ready.add(woken_segment_key)
+
+        for segment_key in segment_keys:
+            segment = self._segments.get(segment_key)
+            if segment is not None:
+                segment.finished = True
             self._held_resources[segment_key] = set()
+
+    def _all_protocols(self) -> list[IResourceProtocol]:
+        unique: dict[int, IResourceProtocol] = {}
+        if self._protocol is not None:
+            unique[id(self._protocol)] = self._protocol
+        for protocol in self._resource_protocols.values():
+            unique[id(protocol)] = protocol
+        return list(unique.values())
 
     def _finalize_running_segments(self) -> None:
         # Keep deterministic reports when run() exits early.

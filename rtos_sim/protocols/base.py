@@ -45,6 +45,10 @@ class IResourceProtocol(ABC):
     def release(self, segment_key: str, resource_id: str) -> ResourceReleaseResult:
         """Release a resource and return wakeup/priority update info."""
 
+    def cancel_segment(self, segment_key: str) -> ResourceReleaseResult:  # noqa: ARG002
+        """Best-effort cleanup when a segment is aborted/cancelled."""
+        return ResourceReleaseResult()
+
     def on_block(self, segment_key: str, resource_id: str) -> None:  # noqa: ARG002
         """Optional callback when segment blocks on a resource."""
 

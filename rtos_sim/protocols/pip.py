@@ -77,6 +77,38 @@ class PIPResourceProtocol(IResourceProtocol):
         updates.update(self._recompute_segment_priority(segment_key))
         return ResourceReleaseResult(woken=woken, priority_updates=updates)
 
+    def cancel_segment(self, segment_key: str) -> ResourceReleaseResult:
+        updates: dict[str, float] = {}
+        woken: list[str] = []
+        affected_owners: set[str] = set()
+
+        for resource_id, queue in self._waiters.items():
+            filtered = [item for item in queue if item[1] != segment_key]
+            if len(filtered) != len(queue):
+                self._waiters[resource_id] = filtered
+                owner = self._owners.get(resource_id)
+                if owner is not None and owner != segment_key:
+                    affected_owners.add(owner)
+
+        owned_resources = [
+            resource_id
+            for resource_id, owner in self._owners.items()
+            if owner == segment_key
+        ]
+        for resource_id in owned_resources:
+            release_result = self.release(segment_key, resource_id)
+            woken.extend(release_result.woken)
+            updates.update(release_result.priority_updates)
+
+        for owner_segment in affected_owners:
+            updates.update(self._recompute_segment_priority(owner_segment))
+
+        self._held_by_segment.pop(segment_key, None)
+        self._segment_base_priority.pop(segment_key, None)
+        self._segment_effective_priority.pop(segment_key, None)
+        unique_woken = list(dict.fromkeys(woken))
+        return ResourceReleaseResult(woken=unique_woken, priority_updates=updates)
+
     def _register_segment_priority(self, segment_key: str, priority: float) -> None:
         if segment_key not in self._segment_base_priority:
             self._segment_base_priority[segment_key] = priority

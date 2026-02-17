@@ -91,6 +91,36 @@ class PCPResourceProtocol(IResourceProtocol):
         updates.update(self._recompute_segment_priority(segment_key))
         return ResourceReleaseResult(woken=woken, priority_updates=updates)
 
+    def cancel_segment(self, segment_key: str) -> ResourceReleaseResult:
+        updates: dict[str, float] = {}
+        woken: list[str] = []
+
+        for resource_id, queue in self._waiters.items():
+            filtered = [item for item in queue if item[1] != segment_key]
+            if len(filtered) != len(queue):
+                self._waiters[resource_id] = filtered
+
+        self._ceiling_blocked.pop(segment_key, None)
+
+        owned_resources = [
+            resource_id
+            for resource_id, owner in self._owners.items()
+            if owner == segment_key
+        ]
+        for resource_id in owned_resources:
+            release_result = self.release(segment_key, resource_id)
+            woken.extend(release_result.woken)
+            updates.update(release_result.priority_updates)
+
+        for deferred_segment in self._try_wake_ceiling_blocked():
+            woken.append(deferred_segment)
+
+        self._held_by_segment.pop(segment_key, None)
+        self._segment_base_priority.pop(segment_key, None)
+        self._segment_effective_priority.pop(segment_key, None)
+        unique_woken = list(dict.fromkeys(woken))
+        return ResourceReleaseResult(woken=unique_woken, priority_updates=updates)
+
     def _try_wake_ceiling_blocked(self) -> list[str]:
         woken: list[str] = []
         for segment_key in list(self._ceiling_blocked):
