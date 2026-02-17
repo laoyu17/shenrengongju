@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,16 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 def _run_example(name: str):
     loader = ConfigLoader()
     spec = loader.load(str(EXAMPLES / name))
+    engine = SimEngine()
+    engine.build(spec)
+    engine.run()
+    events = [event.model_dump(mode="json") for event in engine.events]
+    return events, engine.metric_report()
+
+
+def _run_payload(payload: dict):
+    loader = ConfigLoader()
+    spec = loader.load_data(payload)
     engine = SimEngine()
     engine.build(spec)
     engine.run()
@@ -60,6 +71,36 @@ def test_at05_preempt() -> None:
 
 def test_at05_preempt_utilization_is_accounted_on_preempt_boundary() -> None:
     _, metrics = _run_example("at05_preempt.yaml")
+    assert metrics["core_utilization"]["c0"] == pytest.approx(1.0)
+
+
+def test_at06_time_deterministic_is_repeatable() -> None:
+    events_a, metrics_a = _run_example("at06_time_deterministic.yaml")
+    events_b, metrics_b = _run_example("at06_time_deterministic.yaml")
+
+    assert events_a == events_b
+    assert metrics_a == metrics_b
+
+    release_times = [event["time"] for event in events_a if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([0.0, 5.0, 10.0, 15.0])
+
+
+def test_at07_heterogeneous_core_speed_scaling() -> None:
+    events, metrics = _run_example("at07_heterogeneous_multicore.yaml")
+
+    fast_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("fast@")
+    )
+    slow_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("slow@")
+    )
+    assert fast_end == pytest.approx(2.0)
+    assert slow_end == pytest.approx(4.0)
+    assert metrics["core_utilization"]["c1"] == pytest.approx(0.5)
     assert metrics["core_utilization"]["c0"] == pytest.approx(1.0)
 
 
@@ -216,6 +257,273 @@ def test_pcp_ceiling_prevents_medium_task_from_preempting_lock_holder() -> None:
         if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("med@")
     )
     assert med_start >= low_end - 1e-9
+
+
+def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 2, "speed_factor": 1.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "CPU", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "CPU", "speed_factor": 1.0},
+            ],
+        },
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 20, "seed": 7},
+    }
+    payload["resources"] = [
+        {"id": "r0", "name": "lockA", "bound_core_id": "c0", "protocol": "pcp"},
+        {"id": "r1", "name": "lockB", "bound_core_id": "c1", "protocol": "pcp"},
+    ]
+    payload["tasks"] = [
+        {
+            "id": "low",
+            "name": "low",
+            "task_type": "dynamic_rt",
+            "deadline": 50,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [
+                        {
+                            "id": "seg0",
+                            "index": 1,
+                            "wcet": 4,
+                            "required_resources": ["r0"],
+                            "mapping_hint": "c0",
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "id": "med",
+            "name": "med",
+            "task_type": "dynamic_rt",
+            "deadline": 20,
+            "arrival": 0.5,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [
+                        {
+                            "id": "seg0",
+                            "index": 1,
+                            "wcet": 1,
+                            "required_resources": ["r1"],
+                            "mapping_hint": "c1",
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "id": "high",
+            "name": "high",
+            "task_type": "dynamic_rt",
+            "deadline": 5,
+            "arrival": 2,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [
+                        {
+                            "id": "seg0",
+                            "index": 1,
+                            "wcet": 1,
+                            "required_resources": ["r0"],
+                            "mapping_hint": "c0",
+                        }
+                    ],
+                }
+            ],
+        },
+    ]
+
+    events, _ = _run_payload(payload)
+    blocked = next(
+        event
+        for event in events
+        if event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("med@")
+    )
+    assert blocked["payload"]["reason"] == "system_ceiling_block"
+    med_start = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("med@")
+    )
+    assert med_start >= 5.0
+
+
+def test_scheduler_allow_preempt_parameter_can_disable_preemption() -> None:
+    payload = _single_core_payload("mutex")
+    payload["scheduler"]["params"] = {"allow_preempt": False}
+    payload["tasks"] = [
+        {
+            "id": "low",
+            "name": "low",
+            "task_type": "dynamic_rt",
+            "deadline": 20,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 5}],
+                }
+            ],
+        },
+        {
+            "id": "high",
+            "name": "high",
+            "task_type": "dynamic_rt",
+            "deadline": 3,
+            "arrival": 1,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                }
+            ],
+        },
+    ]
+
+    events, _ = _run_payload(payload)
+    assert not any(event["type"] == "Preempt" for event in events)
+
+
+def test_scheduler_tie_breaker_lifo_changes_equal_deadline_preempt_order() -> None:
+    base = _single_core_payload("mutex")
+    base["resources"] = []
+    base["tasks"] = [
+        {
+            "id": "old",
+            "name": "old",
+            "task_type": "dynamic_rt",
+            "deadline": 10,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 4}],
+                }
+            ],
+        },
+        {
+            "id": "new",
+            "name": "new",
+            "task_type": "dynamic_rt",
+            "deadline": 9,
+            "arrival": 1,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                }
+            ],
+        },
+    ]
+
+    fifo_payload = deepcopy(base)
+    fifo_payload["scheduler"]["params"] = {"tie_breaker": "fifo"}
+    lifo_payload = deepcopy(base)
+    lifo_payload["scheduler"]["params"] = {"tie_breaker": "lifo"}
+
+    fifo_events, _ = _run_payload(fifo_payload)
+    lifo_events, _ = _run_payload(lifo_payload)
+
+    assert not any(event["type"] == "Preempt" for event in fifo_events)
+    assert any(event["type"] == "Preempt" for event in lifo_events)
+
+
+def test_event_id_mode_supports_deterministic_and_random() -> None:
+    payload = _single_core_payload("mutex")
+    payload["resources"] = []
+    payload["tasks"] = [
+        {
+            "id": "t0",
+            "name": "task",
+            "task_type": "dynamic_rt",
+            "deadline": 10,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                }
+            ],
+        }
+    ]
+
+    deterministic = deepcopy(payload)
+    deterministic["scheduler"]["params"] = {"event_id_mode": "deterministic"}
+    events_a, _ = _run_payload(deterministic)
+    events_b, _ = _run_payload(deterministic)
+    assert [event["event_id"] for event in events_a] == [event["event_id"] for event in events_b]
+
+    random_mode = deepcopy(payload)
+    random_mode["scheduler"]["params"] = {"event_id_mode": "random"}
+    random_a, _ = _run_payload(random_mode)
+    random_b, _ = _run_payload(random_mode)
+    assert [event["event_id"] for event in random_a] != [event["event_id"] for event in random_b]
+
+
+def test_metric_report_includes_idle_cores() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 2, "speed_factor": 1.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "CPU", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "CPU", "speed_factor": 1.0},
+            ],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "task",
+                "task_type": "dynamic_rt",
+                "deadline": 10,
+                "arrival": 0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1, "mapping_hint": "c0"}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 2, "seed": 7},
+    }
+
+    _, metrics = _run_payload(payload)
+    assert set(metrics["core_utilization"]) == {"c0", "c1"}
+    assert metrics["core_utilization"]["c1"] == pytest.approx(0.0)
 
 
 def test_subscribe_before_build_keeps_stream_after_reset() -> None:

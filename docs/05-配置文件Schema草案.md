@@ -187,9 +187,11 @@ tasks:
             mapping_hint: g0
 
 scheduler:
-  name: fixed_priority
+  name: edf
   params:
-    policy: rm
+    tie_breaker: fifo
+    allow_preempt: true
+    event_id_mode: deterministic
 
 sim:
   duration: 100

@@ -18,6 +18,7 @@ class PCPResourceProtocol(IResourceProtocol):
         self._held_by_segment: dict[str, set[str]] = defaultdict(set)
         self._segment_base_priority: dict[str, float] = {}
         self._segment_effective_priority: dict[str, float] = {}
+        self._ceiling_blocked: dict[str, tuple[str, float]] = {}
         self._waiter_order = 0
 
     def configure(self, resources: dict[str, ResourceRuntimeSpec]) -> None:
@@ -28,6 +29,7 @@ class PCPResourceProtocol(IResourceProtocol):
         self._held_by_segment = defaultdict(set)
         self._segment_base_priority = {}
         self._segment_effective_priority = {}
+        self._ceiling_blocked = {}
         self._waiter_order = 0
 
     def request(
@@ -37,8 +39,18 @@ class PCPResourceProtocol(IResourceProtocol):
             return ResourceRequestResult(False, "bound_core_violation")
 
         self._register_segment_priority(segment_key, priority)
+        self._ceiling_blocked.pop(segment_key, None)
         owner = self._owners[resource_id]
         if owner is None:
+            system_ceiling = self._current_system_ceiling(excluding_segment=segment_key)
+            if system_ceiling is not None and priority <= system_ceiling + 1e-12:
+                self._ceiling_blocked[segment_key] = (resource_id, priority)
+                self.on_block(segment_key, resource_id)
+                return ResourceRequestResult(
+                    False,
+                    "system_ceiling_block",
+                    metadata={"system_ceiling": system_ceiling},
+                )
             self._owners[resource_id] = segment_key
             self._held_by_segment[segment_key].add(resource_id)
             updates = self._recompute_segment_priority(segment_key)
@@ -59,6 +71,7 @@ class PCPResourceProtocol(IResourceProtocol):
         if self._owners[resource_id] != segment_key:
             return ResourceReleaseResult()
 
+        self._ceiling_blocked.pop(segment_key, None)
         self._owners[resource_id] = None
         self._held_by_segment[segment_key].discard(resource_id)
 
@@ -72,8 +85,39 @@ class PCPResourceProtocol(IResourceProtocol):
             woken.append(next_waiter)
             updates.update(self._recompute_segment_priority(next_waiter))
 
+        for deferred_segment in self._try_wake_ceiling_blocked():
+            woken.append(deferred_segment)
+
         updates.update(self._recompute_segment_priority(segment_key))
         return ResourceReleaseResult(woken=woken, priority_updates=updates)
+
+    def _try_wake_ceiling_blocked(self) -> list[str]:
+        woken: list[str] = []
+        for segment_key in list(self._ceiling_blocked):
+            target_resource, priority = self._ceiling_blocked[segment_key]
+            if self._owners.get(target_resource) is not None:
+                continue
+            system_ceiling = self._current_system_ceiling(excluding_segment=segment_key)
+            if system_ceiling is not None and priority <= system_ceiling + 1e-12:
+                continue
+            self._ceiling_blocked.pop(segment_key, None)
+            self.on_wake(segment_key, target_resource)
+            woken.append(segment_key)
+        return woken
+
+    def _current_system_ceiling(self, excluding_segment: str | None = None) -> float | None:
+        current: float | None = None
+        for resource_id, owner in self._owners.items():
+            if owner is None:
+                continue
+            if excluding_segment is not None and owner == excluding_segment:
+                continue
+            ceiling = self._ceilings.get(resource_id)
+            if ceiling is None:
+                continue
+            if current is None or ceiling > current:
+                current = ceiling
+        return current
 
     def _register_segment_priority(self, segment_key: str, priority: float) -> None:
         if segment_key not in self._segment_base_priority:

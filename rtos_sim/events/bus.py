@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import uuid
 from typing import Callable
 
@@ -14,12 +15,28 @@ EventHandler = Callable[[SimEvent], None]
 class EventBus:
     """Simple in-process pub/sub event bus."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        event_id_mode: str = "deterministic",
+        event_id_seed: int | None = None,
+    ) -> None:
         self._handlers: list[EventHandler] = []
         self._seq = 0
+        self._event_id_mode = event_id_mode.lower().strip()
+        self._rng = random.Random(event_id_seed)
 
     def subscribe(self, handler: EventHandler) -> None:
         self._handlers.append(handler)
+
+    def _next_event_id(self) -> str:
+        if self._event_id_mode == "random":
+            return str(uuid.uuid4())
+        if self._event_id_mode == "seeded_random":
+            # Keep stable event ids for the same seed while remaining pseudo-random.
+            value = self._rng.getrandbits(128)
+            return f"{value:032x}"
+        return f"evt-{self._seq:08d}"
 
     def publish(
         self,
@@ -34,7 +51,7 @@ class EventBus:
         payload: dict | None = None,
     ) -> SimEvent:
         event = SimEvent(
-            event_id=str(uuid.uuid4()),
+            event_id=self._next_event_id(),
             seq=self._seq,
             correlation_id=correlation_id,
             time=time,

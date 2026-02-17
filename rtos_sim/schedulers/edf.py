@@ -15,4 +15,4 @@ class EDFScheduler(PriorityScheduler):
 
     def priority_key(self, segment: ReadySegment, now: float) -> tuple:
         deadline = segment.absolute_deadline if segment.absolute_deadline is not None else float("inf")
-        return (-segment.priority_value, deadline, segment.release_time, segment.key)
+        return (-segment.priority_value, deadline, *self.tie_break_key(segment))

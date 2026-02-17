@@ -56,9 +56,29 @@ class PriorityScheduler(IScheduler, ABC):
     def priority_key(self, segment: ReadySegment, now: float) -> tuple:
         """Return a sortable key. Lower tuple = higher priority."""
 
+    def tie_break_key(self, segment: ReadySegment) -> tuple:
+        mode = str(self._params.get("tie_breaker", "fifo")).strip().lower()
+        if mode in {"lifo", "release_desc"}:
+            return (-segment.release_time, segment.key)
+        if mode in {"segment_key", "key"}:
+            return (segment.key,)
+        # default: fifo / release_asc
+        return (segment.release_time, segment.key)
+
+    def _param_bool(self, key: str, default: bool) -> bool:
+        raw = self._params.get(key, default)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return default
+
     def schedule(self, now: float, snapshot: ScheduleSnapshot) -> list[Decision]:
         ready = list(snapshot.ready_segments)
         core_states = {core.core_id: core for core in snapshot.core_states}
+        allow_preempt = self._param_bool("allow_preempt", True)
         running_segment_to_core = {
             core.running_segment.key: core.core_id
             for core in snapshot.core_states
@@ -70,6 +90,11 @@ class PriorityScheduler(IScheduler, ABC):
 
         for core_id in self._core_ids:
             current_segment = core_states[core_id].running_segment if core_id in core_states else None
+            if current_segment is not None and not allow_preempt:
+                assignments[core_id] = current_segment
+                used_segment_keys.add(current_segment.key)
+                continue
+
             candidates = [
                 segment
                 for segment in ready

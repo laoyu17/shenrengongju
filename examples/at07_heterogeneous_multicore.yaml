@@ -1,0 +1,56 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU_SLOW
+      name: cpu-slow
+      core_count: 1
+      speed_factor: 1.0
+    - id: CPU_FAST
+      name: cpu-fast
+      core_count: 1
+      speed_factor: 2.0
+  cores:
+    - id: c0
+      type_id: CPU_SLOW
+      speed_factor: 1.0
+    - id: c1
+      type_id: CPU_FAST
+      speed_factor: 2.0
+resources: []
+tasks:
+  - id: slow
+    name: slow-core-task
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 4
+            mapping_hint: c0
+  - id: fast
+    name: fast-core-task
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 0
+    abort_on_miss: false
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 4
+            mapping_hint: c1
+scheduler:
+  name: edf
+  params: {}
+sim:
+  duration: 6
+  seed: 7

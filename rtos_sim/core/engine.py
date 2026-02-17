@@ -57,6 +57,8 @@ class JobRuntime:
 class SimEngine(ISimEngine):
     """Discrete-event engine using SimPy clock progression."""
 
+    DEFAULT_EVENT_ID_MODE = "deterministic"
+
     def __init__(
         self,
         scheduler: IScheduler | None = None,
@@ -71,9 +73,11 @@ class SimEngine(ISimEngine):
         self._external_overhead = overhead_model
         self._metrics = metrics or [CoreMetrics()]
         self._subscribers: list[Callable[[SimEvent], None]] = []
+        self._event_id_mode = self.DEFAULT_EVENT_ID_MODE
+        self._event_id_seed: int | None = None
 
         self._env = simpy.Environment()
-        self._event_bus = EventBus()
+        self._event_bus = self._create_event_bus()
         self._events: list[SimEvent] = []
         self._setup_event_pipeline()
 
@@ -102,6 +106,12 @@ class SimEngine(ISimEngine):
         self._event_bus.subscribe(handler)
 
     def build(self, spec: ModelSpec) -> None:
+        event_id_mode = spec.scheduler.params.get("event_id_mode", self.DEFAULT_EVENT_ID_MODE)
+        if isinstance(event_id_mode, str) and event_id_mode.strip():
+            self._event_id_mode = event_id_mode.strip().lower()
+        else:
+            self._event_id_mode = self.DEFAULT_EVENT_ID_MODE
+        self._event_id_seed = spec.sim.seed
         self.reset()
         self._spec = spec
 
@@ -169,7 +179,7 @@ class SimEngine(ISimEngine):
         self._env = simpy.Environment()
         for metric in self._metrics:
             metric.reset()
-        self._event_bus = EventBus()
+        self._event_bus = self._create_event_bus()
         self._events = []
         self._setup_event_pipeline()
 
@@ -204,7 +214,17 @@ class SimEngine(ISimEngine):
         merged: dict = {}
         for metric in self._metrics:
             merged.update(metric.report())
+        core_utilization = merged.get("core_utilization")
+        if isinstance(core_utilization, dict):
+            for core_id in self._cores:
+                core_utilization.setdefault(core_id, 0.0)
         return merged
+
+    def _create_event_bus(self) -> EventBus:
+        return EventBus(
+            event_id_mode=self._event_id_mode,
+            event_id_seed=self._event_id_seed,
+        )
 
     def _setup_protocols(self, spec: ModelSpec) -> None:
         resource_specs = self._build_resource_runtime_specs(spec)
