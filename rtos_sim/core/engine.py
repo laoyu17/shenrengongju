@@ -22,7 +22,7 @@ from rtos_sim.model import (
     TaskGraphSpec,
 )
 from rtos_sim.overheads import IOverheadModel, create_overhead_model
-from rtos_sim.protocols import IResourceProtocol, create_protocol
+from rtos_sim.protocols import IResourceProtocol, ResourceRuntimeSpec, create_protocol
 from rtos_sim.schedulers import IScheduler, ScheduleContext, create_scheduler
 
 from .interfaces import ISimEngine
@@ -80,6 +80,7 @@ class SimEngine(ISimEngine):
         self._spec: ModelSpec | None = None
         self._scheduler: IScheduler | None = None
         self._protocol: IResourceProtocol | None = None
+        self._resource_protocols: dict[str, IResourceProtocol] = {}
         self._etm: IExecutionTimeModel | None = None
         self._overheads: IOverheadModel | None = None
 
@@ -110,12 +111,7 @@ class SimEngine(ISimEngine):
         )
         self._scheduler.init(ScheduleContext(core_ids=[core.id for core in spec.platform.cores]))
 
-        if spec.resources:
-            protocol_name = spec.resources[0].protocol
-        else:
-            protocol_name = "mutex"
-        self._protocol = self._external_protocol or create_protocol(protocol_name)
-        self._protocol.configure({res.id: res.bound_core_id for res in spec.resources})
+        self._setup_protocols(spec)
 
         etm_name = str(spec.scheduler.params.get("etm", "default"))
         self._etm = self._external_etm or create_etm(etm_name)
@@ -180,6 +176,7 @@ class SimEngine(ISimEngine):
         self._spec = None
         self._scheduler = None
         self._protocol = None
+        self._resource_protocols = {}
         self._etm = None
         self._overheads = None
         self._cores = {}
@@ -209,8 +206,96 @@ class SimEngine(ISimEngine):
             merged.update(metric.report())
         return merged
 
+    def _setup_protocols(self, spec: ModelSpec) -> None:
+        resource_specs = self._build_resource_runtime_specs(spec)
+        self._resource_protocols = {}
+
+        if self._external_protocol is not None:
+            self._protocol = self._external_protocol
+            self._protocol.configure(resource_specs)
+            for resource_id in resource_specs:
+                self._resource_protocols[resource_id] = self._protocol
+            return
+
+        if not spec.resources:
+            self._protocol = create_protocol("mutex")
+            self._protocol.configure({})
+            return
+
+        grouped: dict[str, dict[str, ResourceRuntimeSpec]] = {}
+        for resource in spec.resources:
+            grouped.setdefault(resource.protocol.lower(), {})[resource.id] = resource_specs[resource.id]
+
+        self._protocol = None
+        for protocol_name, protocol_resources in grouped.items():
+            protocol = create_protocol(protocol_name)
+            protocol.configure(protocol_resources)
+            if self._protocol is None:
+                self._protocol = protocol
+            for resource_id in protocol_resources:
+                self._resource_protocols[resource_id] = protocol
+
+        if self._protocol is None:
+            self._protocol = create_protocol("mutex")
+            self._protocol.configure({})
+
+    def _build_resource_runtime_specs(self, spec: ModelSpec) -> dict[str, ResourceRuntimeSpec]:
+        resource_ceilings: dict[str, float] = {
+            resource.id: self._lowest_priority_value() for resource in spec.resources
+        }
+        for task in spec.tasks:
+            task_priority = self._task_priority_value(task.deadline, task.period)
+            for subtask in task.subtasks:
+                for segment in subtask.segments:
+                    for resource_id in segment.required_resources:
+                        if resource_id in resource_ceilings:
+                            resource_ceilings[resource_id] = max(resource_ceilings[resource_id], task_priority)
+
+        runtime_specs: dict[str, ResourceRuntimeSpec] = {}
+        for resource in spec.resources:
+            ceiling = resource_ceilings.get(resource.id, self._lowest_priority_value())
+            if ceiling <= self._lowest_priority_value() + 1e-6:
+                ceiling = 0.0
+            runtime_specs[resource.id] = ResourceRuntimeSpec(
+                bound_core_id=resource.bound_core_id,
+                ceiling_priority=ceiling,
+            )
+        return runtime_specs
+
+    def _protocol_for_resource(self, resource_id: str) -> IResourceProtocol:
+        protocol = self._resource_protocols.get(resource_id)
+        if protocol is not None:
+            return protocol
+        if self._protocol is None:
+            raise RuntimeError("resource protocol not initialized")
+        return self._protocol
+
+    def _lowest_priority_value(self) -> float:
+        return -1e18
+
+    def _task_priority_value(self, deadline: float | None, period: float | None) -> float:
+        if self._spec is None:
+            return 0.0
+        scheduler_name = self._spec.scheduler.name.lower()
+        if scheduler_name in {"edf", "earliest_deadline_first"}:
+            if deadline is None:
+                return self._lowest_priority_value()
+            return -float(deadline)
+        if scheduler_name in {"rm", "rate_monotonic", "fixed_priority"}:
+            if period is None:
+                return self._lowest_priority_value()
+            return -float(period)
+        return 0.0
+
+    def _apply_priority_updates(self, updates: dict[str, float]) -> None:
+        for segment_key, effective_priority in updates.items():
+            segment = self._segments.get(segment_key)
+            if segment is None or segment.finished:
+                continue
+            segment.effective_priority = float(effective_priority)
+
     def _advance_once(self, horizon: float) -> bool:
-        assert self._scheduler and self._protocol and self._etm and self._overheads
+        assert self._scheduler and self._etm and self._overheads
 
         now = self._env.now
         self._process_releases(now)
@@ -225,7 +310,15 @@ class SimEngine(ISimEngine):
                 next_times.append(core.finish_time)
 
         if not next_times:
-            return False
+            # Some dispatch attempts may block immediately and leave the core idle
+            # while ready segments still exist. Re-schedule once before stopping.
+            if self._ready:
+                self._schedule(now)
+                for core in self._cores.values():
+                    if core.finish_time is not None:
+                        next_times.append(core.finish_time)
+            if not next_times:
+                return False
 
         next_time = min(next_times)
         if next_time <= now + 1e-12:
@@ -248,6 +341,7 @@ class SimEngine(ISimEngine):
             task = next(t for t in self._spec.tasks if t.id == task_id)
             job_id = f"{task.id}@{release_idx}"
             absolute_deadline = release_time + task.deadline if task.deadline is not None else None
+            base_priority = self._task_priority_value(absolute_deadline, task.period)
             subtask_completion = {sub.id: False for sub in task.subtasks}
             job_state = JobState(
                 task_id=task.id,
@@ -278,6 +372,8 @@ class SimEngine(ISimEngine):
                         predecessor_subtasks=list(sub.predecessors),
                         successor_subtasks=list(sub.successors),
                         segment_index=seg.index,
+                        base_priority=base_priority,
+                        effective_priority=base_priority,
                     )
                     self._segment_to_subtask[segment_key] = (job_id, sub.id)
                     self._held_resources[segment_key] = set()
@@ -350,6 +446,7 @@ class SimEngine(ISimEngine):
                     required_resources=list(segment.required_resources),
                     preemptible=segment.preemptible,
                     release_time=segment.release_time,
+                    priority_value=segment.effective_priority,
                 )
             )
 
@@ -372,6 +469,7 @@ class SimEngine(ISimEngine):
                         required_resources=list(self._segments[core.running_segment_key].required_resources),
                         preemptible=self._segments[core.running_segment_key].preemptible,
                         release_time=self._segments[core.running_segment_key].release_time,
+                        priority_value=self._segments[core.running_segment_key].effective_priority,
                     )
                     if core.running_segment_key
                     else None
@@ -446,7 +544,7 @@ class SimEngine(ISimEngine):
         core.finish_time = None
 
     def _apply_dispatch(self, job_id: str, decision_segment_id: str | None, core_id: str, now: float) -> None:
-        assert self._protocol and self._etm and self._overheads
+        assert self._etm and self._overheads
 
         core = self._cores[core_id]
         if core.running_segment_key is not None:
@@ -470,7 +568,11 @@ class SimEngine(ISimEngine):
         for resource_id in segment.required_resources:
             if resource_id in self._held_resources[segment_key]:
                 continue
-            result = self._protocol.request(segment_key, resource_id, core_id)
+            protocol = self._protocol_for_resource(resource_id)
+            request_priority = segment.effective_priority
+            result = protocol.request(segment_key, resource_id, core_id, request_priority)
+            if result.priority_updates:
+                self._apply_priority_updates(result.priority_updates)
             if not result.granted:
                 segment.blocked = True
                 segment.waiting_resource = resource_id
@@ -483,7 +585,12 @@ class SimEngine(ISimEngine):
                     segment_id=segment.segment_id,
                     core_id=core_id,
                     resource_id=resource_id,
-                    payload={"reason": result.reason, "segment_key": segment_key},
+                    payload={
+                        "reason": result.reason,
+                        "segment_key": segment_key,
+                        "request_priority": request_priority,
+                        **result.metadata,
+                    },
                 )
                 return
             self._held_resources[segment_key].add(resource_id)
@@ -495,7 +602,11 @@ class SimEngine(ISimEngine):
                 segment_id=segment.segment_id,
                 core_id=core_id,
                 resource_id=resource_id,
-                payload={"segment_key": segment_key},
+                payload={
+                    "segment_key": segment_key,
+                    "request_priority": request_priority,
+                    **result.metadata,
+                },
             )
 
         migration_cost = 0.0
@@ -563,7 +674,10 @@ class SimEngine(ISimEngine):
             )
 
             for resource_id in sorted(self._held_resources.get(segment_key, set())):
-                woken = self._protocol.release(segment_key, resource_id)
+                protocol = self._protocol_for_resource(resource_id)
+                release_result = protocol.release(segment_key, resource_id)
+                if release_result.priority_updates:
+                    self._apply_priority_updates(release_result.priority_updates)
                 self._event_bus.publish(
                     event_type=EventType.RESOURCE_RELEASE,
                     time=now,
@@ -572,9 +686,9 @@ class SimEngine(ISimEngine):
                     segment_id=segment.segment_id,
                     core_id=core.core_id,
                     resource_id=resource_id,
-                    payload={"segment_key": segment_key},
+                    payload={"segment_key": segment_key, **release_result.metadata},
                 )
-                for woken_segment_key in woken:
+                for woken_segment_key in release_result.woken:
                     woken_segment = self._segments[woken_segment_key]
                     woken_segment.blocked = False
                     woken_segment.waiting_resource = None
@@ -667,7 +781,17 @@ class SimEngine(ISimEngine):
             if not segment_key.startswith(f"{job_id}:"):
                 continue
             for resource_id in sorted(resources):
-                self._protocol.release(segment_key, resource_id)
+                protocol = self._protocol_for_resource(resource_id)
+                release_result = protocol.release(segment_key, resource_id)
+                if release_result.priority_updates:
+                    self._apply_priority_updates(release_result.priority_updates)
+                for woken_segment_key in release_result.woken:
+                    woken_segment = self._segments.get(woken_segment_key)
+                    if woken_segment is None or woken_segment.finished:
+                        continue
+                    woken_segment.blocked = False
+                    woken_segment.waiting_resource = None
+                    self._ready.add(woken_segment_key)
             self._held_resources[segment_key] = set()
 
     def _finalize_running_segments(self) -> None:

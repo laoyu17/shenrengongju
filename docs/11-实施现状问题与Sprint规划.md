@@ -1,9 +1,9 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.1
-- 状态：基线评审版
-- 日期：2026-02-13
+- 版本：v0.2
+- 状态：S2 实施更新版
+- 日期：2026-02-17
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
 
 ## 1. 已经实现的内容（As-Is）
@@ -26,23 +26,24 @@
 
 ### 1.4 插件化能力（MVP）
 - 调度器：EDF / RM + 注册机制：`project/rtos_sim/schedulers/registry.py:15`
-- 资源协议：Mutex（FIFO + 绑定核校验）：`project/rtos_sim/protocols/mutex.py:10`
+- 资源协议：Mutex + PIP + PCP（优先级更新语义）：`project/rtos_sim/protocols/mutex.py:10`、`project/rtos_sim/protocols/pip.py:9`、`project/rtos_sim/protocols/pcp.py:9`
 - ETM：Constant（`wcet / core_speed`）：`project/rtos_sim/etm/registry.py:14`
 - 开销模型：Simple 常量开销：`project/rtos_sim/overheads/registry.py:22`
 - 指标聚合：响应时间、超期率、抢占/迁移、利用率：`project/rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
-- CLI 支持 `validate/run/ui` 三个命令：`project/rtos_sim/cli/main.py:73`
+- CLI 支持 `validate/run/ui/batch-run` 命令：`project/rtos_sim/cli/main.py:95`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
+- 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
 - UI 已实现后台线程仿真 + 主线程渲染 + 实时 Gantt（按 CPU 泳道 + 任务图例 + 抢占断点）：`project/rtos_sim/ui/app.py:447`
 - UI 已实现三层编码（Task 颜色 / Subtask 纹理 / Segment 边框+短标签）：`project/rtos_sim/ui/app.py:460`
 - UI 已支持稳定悬停与点击锁定详情面板（专家字段）：`project/rtos_sim/ui/app.py:532`
 - UI 事件增量批推送（64条或150ms）：`project/rtos_sim/ui/worker.py:53`
 
 ### 1.6 测试与样例
-- 已新增 5 个场景样例（AT01~AT05）：`project/examples/at01_single_dag_single_core.yaml:1`
+- 已新增 6 个样例（含批量实验矩阵样例）：`project/examples/at01_single_dag_single_core.yaml:1`、`project/examples/batch_matrix.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
-- 当前本地测试状态：`python -m pytest -q` 通过（13 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（17 tests）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。
@@ -51,28 +52,23 @@
 - 体验增强：悬停命中改为 scene 鼠标检测，并提供右侧详情面板（支持点击锁定）：`project/rtos_sim/ui/app.py:532`
 - 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
 - 回归：新增 UI 交互测试（CPU 泳道/层级图例/悬停预览/点击锁定）：`project/tests/test_ui_gantt.py:39`
-- 当前本地测试状态：`python -m pytest -q` 通过（13 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（17 tests）
 
 ---
 
 ## 2. 当前存在的问题（Gap / Risk）
 
 ### 2.1 P0（需优先收敛）
-1. **PIP/PCP 尚未真实实现，仅别名到 Mutex**
-   - 现状：`pip/pcp` 注册到 `MutexResourceProtocol`，不具备优先级继承/天花板语义。
-   - 证据：`project/rtos_sim/protocols/registry.py:16`
-   - 影响：资源协议相关实验结论不具备完整可信度。
-
-2. **“批量实验/对比框架”尚未落地代码**
-   - 现状：文档定义了批量实验目标，但 `io` 当前仅加载/保存/校验，无 runner。
-   - 证据：`project/docs/10-详细设计说明书.md:199`、`project/rtos_sim/io/__init__.py:1`
-   - 影响：无法系统开展策略横向对比与回归基准化。
+1. **PCP 仍为 MVP 语义（未覆盖全部经典约束证明路径）**
+   - 现状：已实现 ceiling 提升与优先级队列，但尚未实现完整的全局系统天花板分析报告能力。
+   - 证据：`project/rtos_sim/protocols/pcp.py:9`
+   - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
-1. **调度器参数尚未被实际消费**
-   - 现状：`create_scheduler(name, params)` 的 `params` 未使用。
-   - 证据：`project/rtos_sim/schedulers/registry.py:28`
-   - 影响：策略可配置性不足，难以复现实验参数矩阵。
+1. **调度器参数尚处于“传递就绪”，算法级参数开关仍需落地**
+   - 现状：`create_scheduler(name, params)` 已传递参数到调度器实例，但 EDF/RM 尚未定义业务参数生效规则。
+   - 证据：`project/rtos_sim/schedulers/registry.py:28`、`project/rtos_sim/schedulers/edf.py:11`
+   - 影响：参数化能力已具备骨架，但实验维度仍有限。
 
 2. **UI 配置编辑器仍为文本编辑，不是结构化表单/图编辑**
    - 现状：当前为 `QPlainTextEdit` 文本模式。
@@ -125,7 +121,7 @@
 - 范围：核心引擎、基础插件、CLI/UI MVP、样例与测试基线。
 - 完成判定：CLI 可运行，UI 可展示，`pytest` 通过。
 
-### Sprint S2（P0 收敛）— 协议与实验框架
+### Sprint S2（已完成，P0 主体收敛）— 协议与实验框架
 - 目标：
   - 实现真实 `PIP/PCP` 协议；
   - 增加批量实验 runner（参数矩阵 -> 批跑 -> 汇总）。
@@ -135,6 +131,7 @@
 - 验收标准：
   - 资源协议对比场景可复现；
   - 批量实验可输出统一报告（CSV/JSON）。
+  - 当前状态：已完成（PIP/PCP 为 MVP 语义，后续继续增强证明能力）。
 
 ### Sprint S3（P1 收敛）— 可配置性与 UI 易用性
 - 目标：

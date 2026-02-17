@@ -36,8 +36,9 @@ class IScheduler(ABC):
 class PriorityScheduler(IScheduler, ABC):
     """Priority-based multi-core scheduler with side-effect free decisions."""
 
-    def __init__(self) -> None:
+    def __init__(self, params: dict | None = None) -> None:
         self._core_ids: list[str] = []
+        self._params = dict(params or {})
 
     def init(self, context: ScheduleContext) -> None:
         self._core_ids = list(context.core_ids)

@@ -9,15 +9,15 @@ from .edf import EDFScheduler
 from .rm import RMScheduler
 
 
-SchedulerFactory = Callable[[], IScheduler]
+SchedulerFactory = Callable[..., IScheduler]
 
 
 _REGISTRY: dict[str, SchedulerFactory] = {
-    "edf": EDFScheduler,
-    "earliest_deadline_first": EDFScheduler,
-    "rm": RMScheduler,
-    "rate_monotonic": RMScheduler,
-    "fixed_priority": RMScheduler,
+    "edf": lambda params=None: EDFScheduler(params=params),
+    "earliest_deadline_first": lambda params=None: EDFScheduler(params=params),
+    "rm": lambda params=None: RMScheduler(params=params),
+    "rate_monotonic": lambda params=None: RMScheduler(params=params),
+    "fixed_priority": lambda params=None: RMScheduler(params=params),
 }
 
 
@@ -29,4 +29,8 @@ def create_scheduler(name: str, params: dict | None = None) -> IScheduler:  # no
     key = name.lower()
     if key not in _REGISTRY:
         raise ValueError(f"unknown scheduler {name}")
-    return _REGISTRY[key]()
+    factory = _REGISTRY[key]
+    try:
+        return factory(params or {})
+    except TypeError:
+        return factory()

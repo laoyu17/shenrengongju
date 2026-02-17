@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 
-from .base import IResourceProtocol, ResourceRequestResult
+from .base import IResourceProtocol, ResourceReleaseResult, ResourceRequestResult, ResourceRuntimeSpec
 
 
 class MutexResourceProtocol(IResourceProtocol):
@@ -15,12 +15,14 @@ class MutexResourceProtocol(IResourceProtocol):
         self._owners: dict[str, str | None] = {}
         self._waiters: dict[str, deque[str]] = defaultdict(deque)
 
-    def configure(self, resources: dict[str, str]) -> None:
-        self._bound_cores = dict(resources)
+    def configure(self, resources: dict[str, ResourceRuntimeSpec]) -> None:
+        self._bound_cores = {resource_id: spec.bound_core_id for resource_id, spec in resources.items()}
         self._owners = {resource_id: None for resource_id in resources}
         self._waiters = defaultdict(deque)
 
-    def request(self, segment_key: str, resource_id: str, core_id: str) -> ResourceRequestResult:
+    def request(
+        self, segment_key: str, resource_id: str, core_id: str, priority: float  # noqa: ARG002
+    ) -> ResourceRequestResult:
         bound_core = self._bound_cores[resource_id]
         if bound_core != core_id:
             return ResourceRequestResult(False, "bound_core_violation")
@@ -37,9 +39,9 @@ class MutexResourceProtocol(IResourceProtocol):
         self.on_block(segment_key, resource_id)
         return ResourceRequestResult(False, "resource_busy")
 
-    def release(self, segment_key: str, resource_id: str) -> list[str]:
+    def release(self, segment_key: str, resource_id: str) -> ResourceReleaseResult:
         if self._owners[resource_id] != segment_key:
-            return []
+            return ResourceReleaseResult()
         self._owners[resource_id] = None
         woken: list[str] = []
         if self._waiters[resource_id]:
@@ -47,4 +49,4 @@ class MutexResourceProtocol(IResourceProtocol):
             self._owners[resource_id] = next_segment
             self.on_wake(next_segment, resource_id)
             woken.append(next_segment)
-        return woken
+        return ResourceReleaseResult(woken=woken)

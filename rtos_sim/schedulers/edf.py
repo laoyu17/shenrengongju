@@ -10,6 +10,9 @@ from .base import PriorityScheduler
 class EDFScheduler(PriorityScheduler):
     """Global EDF on ready segments."""
 
+    def __init__(self, params: dict | None = None) -> None:
+        super().__init__(params=params)
+
     def priority_key(self, segment: ReadySegment, now: float) -> tuple:
         deadline = segment.absolute_deadline if segment.absolute_deadline is not None else float("inf")
-        return (deadline, segment.release_time, segment.key)
+        return (-segment.priority_value, deadline, segment.release_time, segment.key)

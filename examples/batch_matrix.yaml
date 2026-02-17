@@ -1,0 +1,6 @@
+version: "0.1"
+base_config: "at01_single_dag_single_core.yaml"
+output_dir: "../artifacts/batch-at01"
+factors:
+  scheduler.name: ["edf", "rm"]
+  sim.seed: [7, 13]

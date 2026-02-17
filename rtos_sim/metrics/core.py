@@ -39,15 +39,21 @@ class CoreMetrics(IMetric):
                     self._job_deadline[event.job_id] = float(deadline)
 
         elif event.type == EventType.SEGMENT_START:
-            if event.segment_id and event.core_id:
-                self._running[event.segment_id] = (event.time, event.core_id)
+            segment_key = self._segment_runtime_key(event)
+            if segment_key and event.core_id:
+                self._running[segment_key] = (event.time, event.core_id)
 
         elif event.type == EventType.SEGMENT_END:
-            if event.segment_id and event.segment_id in self._running:
-                start, core = self._running.pop(event.segment_id)
+            segment_key = self._segment_runtime_key(event)
+            if segment_key and segment_key in self._running:
+                start, core = self._running.pop(segment_key)
                 self._core_busy[core] += max(0.0, event.time - start)
 
         elif event.type == EventType.PREEMPT:
+            segment_key = self._segment_runtime_key(event)
+            if segment_key and segment_key in self._running:
+                start, core = self._running.pop(segment_key)
+                self._core_busy[core] += max(0.0, event.time - start)
             self._preempt_count += 1
 
         elif event.type == EventType.MIGRATE:
@@ -59,6 +65,14 @@ class CoreMetrics(IMetric):
 
         elif event.type == EventType.JOB_COMPLETE and event.job_id:
             self._job_complete[event.job_id] = event.time
+
+    def _segment_runtime_key(self, event: SimEvent) -> str | None:
+        segment_key = event.payload.get("segment_key")
+        if isinstance(segment_key, str) and segment_key:
+            return segment_key
+        if event.segment_id:
+            return event.segment_id
+        return None
 
     def report(self) -> dict:
         response_times: list[float] = []

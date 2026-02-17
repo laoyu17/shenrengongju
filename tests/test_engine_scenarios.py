@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigLoader
 
@@ -54,6 +56,166 @@ def test_at05_preempt() -> None:
     events, metrics = _run_example("at05_preempt.yaml")
     assert any(e["type"] == "Preempt" for e in events)
     assert metrics["preempt_count"] >= 1
+
+
+def test_at05_preempt_utilization_is_accounted_on_preempt_boundary() -> None:
+    _, metrics = _run_example("at05_preempt.yaml")
+    assert metrics["core_utilization"]["c0"] == pytest.approx(1.0)
+
+
+def _single_core_payload(protocol: str) -> dict:
+    return {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": protocol}],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 20, "seed": 7},
+    }
+
+
+def test_pip_owner_inherits_priority_after_blocking() -> None:
+    payload = _single_core_payload("mutex")
+    payload["resources"] = [
+        {"id": "r_dummy", "name": "dummy", "bound_core_id": "c0", "protocol": "mutex"},
+        {"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "pip"},
+    ]
+    payload["tasks"] = [
+        {
+            "id": "low",
+            "name": "low",
+            "task_type": "dynamic_rt",
+            "deadline": 50,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 4, "required_resources": ["r0"]}],
+                }
+            ],
+        },
+        {
+            "id": "med",
+            "name": "med",
+            "task_type": "dynamic_rt",
+            "deadline": 20,
+            "arrival": 0.5,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 2}],
+                }
+            ],
+        },
+        {
+            "id": "high",
+            "name": "high",
+            "task_type": "dynamic_rt",
+            "deadline": 5,
+            "arrival": 1.0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1, "required_resources": ["r0"]}],
+                }
+            ],
+        },
+    ]
+
+    loader = ConfigLoader()
+    spec = loader.load_data(payload)
+    engine = SimEngine()
+    engine.build(spec)
+    engine.run()
+    events = [event.model_dump(mode="json") for event in engine.events]
+
+    blocked_idx = next(
+        idx
+        for idx, event in enumerate(events)
+        if event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("high@")
+    )
+    next_start = next(event for event in events[blocked_idx + 1 :] if event["type"] == "SegmentStart")
+    assert str(next_start["job_id"]).startswith("low@")
+
+
+def test_pcp_ceiling_prevents_medium_task_from_preempting_lock_holder() -> None:
+    payload = _single_core_payload("pcp")
+    payload["tasks"] = [
+        {
+            "id": "low",
+            "name": "low",
+            "task_type": "dynamic_rt",
+            "deadline": 50,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 4, "required_resources": ["r0"]}],
+                }
+            ],
+        },
+        {
+            "id": "med",
+            "name": "med",
+            "task_type": "dynamic_rt",
+            "deadline": 20,
+            "arrival": 0.5,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 2}],
+                }
+            ],
+        },
+        {
+            "id": "high",
+            "name": "high",
+            "task_type": "dynamic_rt",
+            "deadline": 5,
+            "arrival": 2.0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1, "required_resources": ["r0"]}],
+                }
+            ],
+        },
+    ]
+
+    loader = ConfigLoader()
+    spec = loader.load_data(payload)
+    engine = SimEngine()
+    engine.build(spec)
+    engine.run()
+    events = [event.model_dump(mode="json") for event in engine.events]
+
+    low_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("low@")
+    )
+    med_start = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("med@")
+    )
+    assert med_start >= low_end - 1e-9
 
 
 def test_subscribe_before_build_keeps_stream_after_reset() -> None:

@@ -81,6 +81,8 @@ class RuntimeSegmentState:
     predecessor_subtasks: list[str]
     successor_subtasks: list[str]
     segment_index: int
+    base_priority: float = 0.0
+    effective_priority: float = 0.0
 
     started_at: Optional[float] = None
     running_on: Optional[str] = None

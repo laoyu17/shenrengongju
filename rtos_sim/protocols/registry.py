@@ -6,6 +6,8 @@ from collections.abc import Callable
 
 from .base import IResourceProtocol
 from .mutex import MutexResourceProtocol
+from .pcp import PCPResourceProtocol
+from .pip import PIPResourceProtocol
 
 
 ProtocolFactory = Callable[[], IResourceProtocol]
@@ -13,9 +15,8 @@ ProtocolFactory = Callable[[], IResourceProtocol]
 
 _REGISTRY: dict[str, ProtocolFactory] = {
     "mutex": MutexResourceProtocol,
-    # Current MVP keeps pip/pcp aliases mapped to mutex behavior.
-    "pip": MutexResourceProtocol,
-    "pcp": MutexResourceProtocol,
+    "pip": PIPResourceProtocol,
+    "pcp": PCPResourceProtocol,
 }
 
 

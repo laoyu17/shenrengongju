@@ -3,29 +3,47 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(slots=True)
 class ResourceRequestResult:
     granted: bool
     reason: str = ""
+    priority_updates: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ResourceReleaseResult:
+    woken: list[str] = field(default_factory=list)
+    priority_updates: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ResourceRuntimeSpec:
+    bound_core_id: str
+    ceiling_priority: float = 0.0
 
 
 class IResourceProtocol(ABC):
     """Resource protocol interface for mutual exclusion and priority rules."""
 
     @abstractmethod
-    def configure(self, resources: dict[str, str]) -> None:
-        """Initialize protocol with resource->bound_core mapping."""
+    def configure(self, resources: dict[str, ResourceRuntimeSpec]) -> None:
+        """Initialize protocol with per-resource runtime attributes."""
 
     @abstractmethod
-    def request(self, segment_key: str, resource_id: str, core_id: str) -> ResourceRequestResult:
+    def request(
+        self, segment_key: str, resource_id: str, core_id: str, priority: float
+    ) -> ResourceRequestResult:
         """Try to acquire a resource for a segment."""
 
     @abstractmethod
-    def release(self, segment_key: str, resource_id: str) -> list[str]:
-        """Release a resource and return woken segment keys."""
+    def release(self, segment_key: str, resource_id: str) -> ResourceReleaseResult:
+        """Release a resource and return wakeup/priority update info."""
 
     def on_block(self, segment_key: str, resource_id: str) -> None:  # noqa: ARG002
         """Optional callback when segment blocks on a resource."""

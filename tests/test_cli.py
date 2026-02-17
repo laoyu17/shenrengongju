@@ -37,3 +37,36 @@ def test_cli_run_outputs(tmp_path: Path) -> None:
     assert first_line
     metrics = json.loads(metrics_out.read_text(encoding="utf-8"))
     assert "jobs_completed" in metrics
+
+
+def test_cli_batch_run_outputs_summary(tmp_path: Path) -> None:
+    base_config = tmp_path / "base.yaml"
+    base_config.write_text(
+        (EXAMPLES / "at01_single_dag_single_core.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    batch_config = tmp_path / "batch.yaml"
+    batch_config.write_text(
+        """
+version: "0.1"
+base_config: "base.yaml"
+output_dir: "out"
+factors:
+  scheduler.name: ["edf", "rm"]
+  sim.seed: [11, 22]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    code = main(["batch-run", "-b", str(batch_config)])
+    assert code == 0
+
+    summary_json = tmp_path / "out" / "summary.json"
+    summary_csv = tmp_path / "out" / "summary.csv"
+    assert summary_json.exists()
+    assert summary_csv.exists()
+
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert payload["total_runs"] == 4
+    assert payload["succeeded_runs"] == 4
+    assert payload["failed_runs"] == 0

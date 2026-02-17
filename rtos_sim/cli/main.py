@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from rtos_sim.core import SimEngine
-from rtos_sim.io import ConfigError, ConfigLoader
+from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
 
 
 def _write_jsonl(path: str, rows: list[dict[str, Any]]) -> None:
@@ -70,6 +70,27 @@ def cmd_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_batch_run(args: argparse.Namespace) -> int:
+    runner = ExperimentRunner()
+    try:
+        summary = runner.run_batch(
+            args.batch_config,
+            output_dir=args.output_dir,
+            summary_csv=args.summary_csv,
+            summary_json=args.summary_json,
+        )
+    except ConfigError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+
+    print(
+        "[OK] batch simulation completed, "
+        f"runs={summary.total_runs}, success={summary.succeeded_runs}, failed={summary.failed_runs}, "
+        f"csv={summary.summary_csv}, json={summary.summary_json}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rtos-sim", description="RTOS simulation CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -88,6 +109,13 @@ def build_parser() -> argparse.ArgumentParser:
     ui_parser = subparsers.add_parser("ui", help="launch PyQt UI")
     ui_parser.add_argument("-c", "--config", default=None, help="path to initial config")
     ui_parser.set_defaults(func=cmd_ui)
+
+    batch_parser = subparsers.add_parser("batch-run", help="run matrix experiments")
+    batch_parser.add_argument("-b", "--batch-config", required=True, help="path to batch config YAML/JSON")
+    batch_parser.add_argument("--output-dir", default=None, help="batch output directory")
+    batch_parser.add_argument("--summary-csv", default=None, help="summary CSV output path")
+    batch_parser.add_argument("--summary-json", default=None, help="summary JSON output path")
+    batch_parser.set_defaults(func=cmd_batch_run)
 
     return parser
 
