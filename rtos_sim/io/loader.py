@@ -91,15 +91,55 @@ class ConfigLoader:
         if version == "0.1":
             migrated = dict(normalized_payload)
             migrated["version"] = self.SUPPORTED_VERSION
-            migrated.setdefault("resources", [])
-            migrated.setdefault("scheduler", {}).setdefault("params", {})
-            for task in migrated.get("tasks", []):
+            resources = migrated.setdefault("resources", [])
+            if not isinstance(resources, list):
+                raise ConfigError("invalid config structure: resources must be list")
+
+            scheduler = migrated.setdefault("scheduler", {})
+            if not isinstance(scheduler, dict):
+                raise ConfigError("invalid config structure: scheduler must be object")
+            params = scheduler.setdefault("params", {})
+            if not isinstance(params, dict):
+                raise ConfigError("invalid config structure: scheduler.params must be object")
+
+            tasks = migrated.get("tasks", [])
+            if not isinstance(tasks, list):
+                raise ConfigError("invalid config structure: tasks must be list")
+            for task_idx, task in enumerate(tasks):
+                if not isinstance(task, dict):
+                    raise ConfigError(
+                        f"invalid config structure: tasks[{task_idx}] must be object"
+                    )
                 task.setdefault("arrival", 0)
                 task.setdefault("abort_on_miss", False)
-                for subtask in task.get("subtasks", []):
+
+                subtasks = task.get("subtasks", [])
+                if not isinstance(subtasks, list):
+                    raise ConfigError(
+                        f"invalid config structure: tasks[{task_idx}].subtasks must be list"
+                    )
+                for subtask_idx, subtask in enumerate(subtasks):
+                    if not isinstance(subtask, dict):
+                        raise ConfigError(
+                            f"invalid config structure: tasks[{task_idx}].subtasks[{subtask_idx}] "
+                            "must be object"
+                        )
                     subtask.setdefault("predecessors", [])
                     subtask.setdefault("successors", [])
-                    for segment in subtask.get("segments", []):
+
+                    segments = subtask.get("segments", [])
+                    if not isinstance(segments, list):
+                        raise ConfigError(
+                            "invalid config structure: "
+                            f"tasks[{task_idx}].subtasks[{subtask_idx}].segments must be list"
+                        )
+                    for segment_idx, segment in enumerate(segments):
+                        if not isinstance(segment, dict):
+                            raise ConfigError(
+                                "invalid config structure: "
+                                f"tasks[{task_idx}].subtasks[{subtask_idx}].segments[{segment_idx}] "
+                                "must be object"
+                            )
                         segment.setdefault("required_resources", [])
                         segment.setdefault("preemptible", True)
             return migrated
