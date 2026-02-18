@@ -352,8 +352,6 @@ class MainWindow(QMainWindow):
         self._form_allow_preempt.setChecked(True)
         self._form_event_id_mode = QComboBox()
         self._form_event_id_mode.addItems(["deterministic", "random", "seeded_random"])
-        self._form_event_id_validation = QComboBox()
-        self._form_event_id_validation.addItems(["strict", "warn"])
         self._form_resource_acquire_policy = QComboBox()
         self._form_resource_acquire_policy.addItems(["legacy_sequential", "atomic_rollback"])
         self._form_sim_duration = QDoubleSpinBox()
@@ -564,7 +562,6 @@ class MainWindow(QMainWindow):
         runtime_form.addRow("scheduler.params.tie_breaker", self._form_tie_breaker)
         runtime_form.addRow(self._form_allow_preempt)
         runtime_form.addRow("scheduler.params.event_id_mode", self._form_event_id_mode)
-        runtime_form.addRow("scheduler.params.event_id_validation", self._form_event_id_validation)
         runtime_form.addRow(
             "scheduler.params.resource_acquire_policy",
             self._form_resource_acquire_policy,
@@ -732,7 +729,6 @@ class MainWindow(QMainWindow):
             self._form_scheduler_name,
             self._form_tie_breaker,
             self._form_event_id_mode,
-            self._form_event_id_validation,
             self._form_resource_acquire_policy,
         ]
         for widget in combo_boxes:
@@ -899,10 +895,6 @@ class MainWindow(QMainWindow):
             self._set_combo_value(self._form_tie_breaker, str(params.get("tie_breaker", "fifo")))
             self._form_allow_preempt.setChecked(self._to_bool(params.get("allow_preempt"), True))
             self._set_combo_value(self._form_event_id_mode, str(params.get("event_id_mode", "deterministic")))
-            self._set_combo_value(
-                self._form_event_id_validation,
-                str(params.get("event_id_validation", "strict")),
-            )
             self._set_combo_value(
                 self._form_resource_acquire_policy,
                 str(params.get("resource_acquire_policy", "legacy_sequential")),
@@ -1593,8 +1585,6 @@ class MainWindow(QMainWindow):
                 "tie_breaker": self._form_tie_breaker.currentText().strip() or "fifo",
                 "allow_preempt": bool(self._form_allow_preempt.isChecked()),
                 "event_id_mode": self._form_event_id_mode.currentText().strip() or "deterministic",
-                "event_id_validation": self._form_event_id_validation.currentText().strip()
-                or "strict",
                 "resource_acquire_policy": self._form_resource_acquire_policy.currentText().strip()
                 or "legacy_sequential",
             },

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from rtos_sim.cli.main import main
+import yaml
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -336,3 +337,50 @@ def test_cli_run_returns_error_when_audit_fails(tmp_path: Path, monkeypatch) -> 
     assert code == 2
     report = json.loads(audit_out.read_text(encoding="utf-8"))
     assert report["status"] == "fail"
+
+
+def test_cli_migrate_config_removes_deprecated_event_id_validation(tmp_path: Path) -> None:
+    source = yaml.safe_load((EXAMPLES / "at01_single_dag_single_core.yaml").read_text(encoding="utf-8"))
+    source["scheduler"]["params"]["event_id_mode"] = "deterministic"
+    source["scheduler"]["params"]["event_id_validation"] = "strict"
+    src_path = tmp_path / "legacy.yaml"
+    out_path = tmp_path / "migrated.yaml"
+    report_path = tmp_path / "migrate_report.json"
+    src_path.write_text(yaml.safe_dump(source, sort_keys=False), encoding="utf-8")
+
+    code = main(
+        [
+            "migrate-config",
+            "--in",
+            str(src_path),
+            "--out",
+            str(out_path),
+            "--report-out",
+            str(report_path),
+        ]
+    )
+    assert code == 0
+    assert out_path.exists()
+    assert report_path.exists()
+
+    migrated = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert "event_id_validation" not in migrated["scheduler"]["params"]
+    assert main(["validate", "-c", str(out_path)]) == 0
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert "scheduler.params.event_id_validation" in report["removed_keys"]
+
+
+def test_cli_migrate_config_preserves_ui_layout_metadata(tmp_path: Path) -> None:
+    source = yaml.safe_load((EXAMPLES / "at01_single_dag_single_core.yaml").read_text(encoding="utf-8"))
+    source["scheduler"]["params"]["event_id_validation"] = "strict"
+    source["ui_layout"] = {"task_nodes": {"t0": {"s0": [12.0, 34.0]}}}
+    src_path = tmp_path / "legacy_with_layout.yaml"
+    out_path = tmp_path / "migrated_with_layout.yaml"
+    src_path.write_text(yaml.safe_dump(source, sort_keys=False), encoding="utf-8")
+
+    code = main(["migrate-config", "--in", str(src_path), "--out", str(out_path)])
+    assert code == 0
+
+    migrated = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert migrated["ui_layout"]["task_nodes"]["t0"]["s0"] == [12.0, 34.0]

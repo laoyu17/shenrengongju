@@ -54,8 +54,7 @@
           "properties": {
             "tie_breaker": { "type": "string" },
             "allow_preempt": { "type": "boolean" },
-            "event_id_mode": { "type": "string" },
-            "event_id_validation": { "type": "string", "enum": ["warn", "strict"], "default": "strict" },
+            "event_id_mode": { "type": "string", "enum": ["deterministic", "random", "seeded_random"] },
             "etm": { "type": "string" },
             "etm_params": { "type": "object" },
             "resource_acquire_policy": {
@@ -265,7 +264,6 @@ scheduler:
     tie_breaker: fifo
     allow_preempt: true
     event_id_mode: deterministic
-    event_id_validation: strict
     resource_acquire_policy: legacy_sequential
 
 sim:
@@ -281,8 +279,8 @@ sim:
 - `processor_types.speed_factor` 与 `cores.speed_factor` 必须 `> 0`
 - `resources` 非必填，默认 `[]`
 - `scheduler.params` 非必填，默认 `{}`
-- `scheduler.params.event_id_validation`：`warn | strict`（默认 `strict`）
-- `scheduler.params.event_id_mode`：默认必须取 `deterministic | random | seeded_random`；仅在 `event_id_validation=warn` 时允许兼容回退
+- `scheduler.params.event_id_mode`：必须取 `deterministic | random | seeded_random`，非法值直接失败
+- `scheduler.params.event_id_validation`：已废弃且会被拒绝（硬失败）；旧配置可用 `rtos-sim migrate-config` 自动清理
 - `scheduler.params.resource_acquire_policy`：`legacy_sequential | atomic_rollback`（默认 `legacy_sequential`）
 - `scheduler.params.etm`：`constant | table_based`（默认 `constant`）
 - `scheduler.params.etm_params`：ETM 参数对象（`table_based` 支持 `table` / `default_scale`）
@@ -305,3 +303,9 @@ sim:
 - 映射提示支持三级回退：`segment.mapping_hint > subtask_mapping_hint > task_mapping_hint`
 - 引用完整性：`required_resources`、`type_id`、`bound_core_id` 必须指向已定义实体
 - 运行时速度口径：`effective_core_speed = core.speed_factor * processor_type.speed_factor`
+
+## 5. 配置迁移（CLI）
+
+- 命令：`rtos-sim migrate-config --in <old.yaml> --out <new.yaml> [--report-out <report.json>]`
+- 行为：执行 `0.1 -> 0.2` 归一化，并移除已废弃参数（当前包含 `scheduler.params.event_id_validation`）
+- 默认会做严格校验（schema + 语义）；如需仅迁移不校验，可附加 `--no-validate`

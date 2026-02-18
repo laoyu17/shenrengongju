@@ -7,7 +7,6 @@ from fractions import Fraction
 import heapq
 from math import gcd
 import random
-import warnings
 from typing import Any, Callable, Optional
 
 import simpy
@@ -62,10 +61,8 @@ class SimEngine(ISimEngine):
     """Discrete-event engine using SimPy clock progression."""
 
     DEFAULT_EVENT_ID_MODE = "deterministic"
-    DEFAULT_EVENT_ID_VALIDATION = "strict"
     DEFAULT_RESOURCE_ACQUIRE_POLICY = "legacy_sequential"
     VALID_EVENT_ID_MODES = {"deterministic", "random", "seeded_random"}
-    VALID_EVENT_ID_VALIDATION = {"warn", "strict"}
     VALID_RESOURCE_ACQUIRE_POLICIES = {"legacy_sequential", "atomic_rollback"}
     DEADLINE_EPSILON = 1e-9
     SCHEDULE_RETRY_LIMIT = 8
@@ -407,13 +404,6 @@ class SimEngine(ISimEngine):
         return self._protocol
 
     def _resolve_event_id_mode(self, params: dict[str, Any]) -> str:
-        validation_raw = params.get("event_id_validation", self.DEFAULT_EVENT_ID_VALIDATION)
-        validation = str(validation_raw).strip().lower() if validation_raw is not None else ""
-        if validation not in self.VALID_EVENT_ID_VALIDATION:
-            raise ValueError(
-                "scheduler.params.event_id_validation must be one of warn|strict"
-            )
-
         mode_raw = params.get("event_id_mode", self.DEFAULT_EVENT_ID_MODE)
         mode = str(mode_raw).strip().lower() if mode_raw is not None else ""
         if not mode:
@@ -421,14 +411,10 @@ class SimEngine(ISimEngine):
         if mode in self.VALID_EVENT_ID_MODES:
             return mode
 
-        message = (
+        raise ValueError(
             "invalid scheduler.params.event_id_mode='"
             f"{mode_raw}', expected deterministic|random|seeded_random"
         )
-        if validation == "strict":
-            raise ValueError(message)
-        warnings.warn(message + "; fallback to deterministic", RuntimeWarning, stacklevel=2)
-        return self.DEFAULT_EVENT_ID_MODE
 
     def _resolve_resource_acquire_policy(self, params: dict[str, Any]) -> str:
         policy_raw = params.get("resource_acquire_policy", self.DEFAULT_RESOURCE_ACQUIRE_POLICY)

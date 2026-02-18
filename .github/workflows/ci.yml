@@ -133,6 +133,89 @@ jobs:
             --threshold-version ci-nightly-v1 \
             --output artifacts/perf/perf-nightly-1000.json
 
+      - name: Resolve previous nightly artifact
+        id: prev_nightly
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = (context.ref || "").replace("refs/heads/", "");
+            const workflowId = "ci.yml";
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: workflowId,
+              event: "schedule",
+              branch: branch || undefined,
+              per_page: 30,
+            });
+            const previous = runs.data.workflow_runs.find(
+              (run) => run.id !== context.runId && run.conclusion === "success"
+            );
+            if (!previous) {
+              core.info("No previous successful scheduled run found.");
+              return;
+            }
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner,
+              repo,
+              run_id: previous.id,
+              per_page: 100,
+            });
+            const artifact = artifacts.data.artifacts.find(
+              (item) => item.name === "perf-nightly-1000" && !item.expired
+            );
+            if (!artifact) {
+              core.info(`Run ${previous.id} has no perf-nightly-1000 artifact.`);
+              return;
+            }
+            core.setOutput("run_id", String(previous.id));
+            core.setOutput("download_url", artifact.archive_download_url);
+
+      - name: Download previous nightly artifact
+        if: steps.prev_nightly.outputs.download_url != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_URL: ${{ steps.prev_nightly.outputs.download_url }}
+        run: |
+          mkdir -p artifacts/perf/prev
+          curl -sSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${ARTIFACT_URL}" \
+            -o artifacts/perf/prev/previous-nightly.zip
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          zip_path = Path("artifacts/perf/prev/previous-nightly.zip")
+          out = Path("artifacts/perf/prev")
+          if not zip_path.exists():
+              raise SystemExit(0)
+          with zipfile.ZipFile(zip_path) as zf:
+              candidates = [
+                  name for name in zf.namelist()
+                  if Path(name).name == "perf-nightly-1000.json"
+              ]
+              if not candidates:
+                  print("No perf-nightly-1000.json found in previous artifact; skip baseline restore.")
+                  raise SystemExit(0)
+              (out / "perf-nightly-1000.base.json").write_bytes(zf.read(candidates[0]))
+          PY
+
+      - name: Build nightly delta summary
+        if: always()
+        run: |
+          python scripts/perf_delta.py \
+            --current artifacts/perf/perf-nightly-1000.json \
+            --base artifacts/perf/prev/perf-nightly-1000.base.json \
+            --task-count 1000 \
+            --highlight-pct 5 \
+            --current-run-id "${{ github.run_id }}" \
+            --base-run-id "${{ steps.prev_nightly.outputs.run_id }}" \
+            --out artifacts/perf/perf-delta-summary.json
+
       - name: Add nightly perf summary
         if: always()
         run: |
@@ -152,6 +235,19 @@ jobs:
                   f"wall_ms={case.get('wall_time_ms')} events={case.get('event_count')} "
                   f"reason={case.get('pass_reason')}"
               )
+          delta_path = Path("artifacts/perf/perf-delta-summary.json")
+          if delta_path.exists():
+              delta = json.loads(delta_path.read_text(encoding="utf-8"))
+              lines.append(f"- delta.status: {delta.get('status')}")
+              lines.append(
+                  f"- delta.base_run_id: {delta.get('base_run_id') or 'none'}"
+              )
+              wall = delta.get("wall_time_ms", {})
+              lines.append(
+                  f"- delta.wall_ms: base={wall.get('base')} current={wall.get('current')} "
+                  f"delta={wall.get('delta')} pct={wall.get('delta_pct')}"
+              )
+              lines.append(f"- delta.highlight: {delta.get('highlight')}")
           summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
           summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
@@ -160,5 +256,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: perf-baseline-nightly-1000-${{ github.run_id }}
+          name: perf-nightly-1000
           path: artifacts/perf/perf-nightly-1000.json
+
+      - name: Upload nightly delta summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-nightly-delta
+          path: artifacts/perf/perf-delta-summary.json

@@ -248,22 +248,22 @@ class SchedulerSpec(BaseModel):
         if policy is not None and str(policy).strip() not in {"legacy_sequential", "atomic_rollback"}:
             raise ValueError("scheduler.params.resource_acquire_policy must be legacy_sequential|atomic_rollback")
 
+        if "event_id_validation" in self.params:
+            raise ValueError(
+                "scheduler.params.event_id_validation has been removed; "
+                "event_id_mode now always fails on invalid values"
+            )
+
         event_mode = self.params.get("event_id_mode")
         if event_mode is not None and not isinstance(event_mode, str):
             raise ValueError("scheduler.params.event_id_mode must be string")
-
-        validation = self.params.get("event_id_validation")
-        validation_mode = "strict" if validation is None else str(validation).strip().lower()
-        if validation_mode not in {"warn", "strict"}:
-            raise ValueError("scheduler.params.event_id_validation must be warn|strict")
         if event_mode is not None:
             event_mode_value = event_mode.strip().lower()
             if event_mode_value and event_mode_value not in self.VALID_EVENT_ID_MODES:
-                if validation_mode != "warn":
-                    raise ValueError(
-                        "scheduler.params.event_id_mode must be "
-                        "deterministic|random|seeded_random"
-                    )
+                raise ValueError(
+                    "scheduler.params.event_id_mode must be "
+                    "deterministic|random|seeded_random"
+                )
 
         etm_name = self.params.get("etm")
         if etm_name is not None and not isinstance(etm_name, str):

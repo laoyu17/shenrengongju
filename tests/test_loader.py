@@ -222,7 +222,6 @@ def test_schema_validation_message_is_aggregated_and_limited_to_8_entries() -> N
     ("params", "expected"),
     [
         ({"resource_acquire_policy": "bad"}, "resource_acquire_policy"),
-        ({"event_id_validation": "bad"}, "event_id_validation"),
         ({"event_id_mode": 123}, "event_id_mode"),
         ({"etm": 123}, "etm"),
         ({"etm_params": []}, "etm_params"),
@@ -242,8 +241,8 @@ def test_event_id_mode_invalid_string_fails_when_validation_default_strict() -> 
         ConfigLoader().load_data(payload)
 
 
-def test_event_id_mode_invalid_string_allows_warn_compat_mode() -> None:
+def test_event_id_validation_parameter_is_rejected_after_hard_fail_cutover() -> None:
     payload = _base_payload_v02()
-    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "warn"}
-    spec = ConfigLoader().load_data(payload)
-    assert spec.scheduler.params["event_id_mode"] == "bad_mode"
+    payload["scheduler"]["params"] = {"event_id_mode": "deterministic", "event_id_validation": "strict"}
+    with pytest.raises(ConfigError, match="event_id_validation"):
+        ConfigLoader().load_data(payload)

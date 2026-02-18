@@ -1,8 +1,8 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.3
-- 状态：S4（Phase A/B/C 首轮落地）
+- 版本：v0.4
+- 状态：S5（Phase A/B/C + D/E 语义闭环与配置治理）
 - 日期：2026-02-18
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
 
@@ -39,7 +39,7 @@
 - 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`project/rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
-- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model` 命令：`project/rtos_sim/cli/main.py:95`
+- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model/migrate-config` 命令：`project/rtos_sim/cli/main.py:95`
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`project/rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`project/rtos_sim/cli/main.py:81`、`project/rtos_sim/analysis/audit.py:14`
 - `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`project/rtos_sim/cli/main.py:151`
@@ -118,9 +118,10 @@
    - 证据：`project/scripts/perf_baseline.py:1`
 
 2. **CI/CD 已建立首版回归门禁，后续需补发布流水线**
-   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流；PR 路径保留 100/300，nightly 增加 1000 非阻断趋势任务。
+   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流；PR 路径保留 100/300，nightly 增加 1000 非阻断趋势任务并输出昨日 delta 摘要。
    - 证据：`project/.github/workflows/ci.yml:1`
    - 影响：基础回归自动化已具备，仍需补打包发布链路。
+   - 补充：nightly 昨日 delta 已改为按固定 `task_count` 严格匹配，避免误读其他 case 为基线（无匹配时降级 `no_base`）。
 
 ---
 
@@ -222,7 +223,7 @@
 
 ### Phase C（P2）已完成（首轮）
 - 性能基线默认场景已扩展至 100/300/1000：`project/scripts/perf_baseline.py:122`
-- CI 性能任务分层：PR 路径 100/300，nightly 非阻断 1000：`project/.github/workflows/ci.yml:68`
+- CI 性能任务分层：PR 路径 100/300，nightly 非阻断 1000 + 昨日 delta 摘要：`project/.github/workflows/ci.yml:68`
 - 文档与命令示例已同步：`project/README.md:42`
 
 ### Phase D（研究可复现收敛）已完成（本轮）
@@ -235,3 +236,9 @@
 - 新增关系提取模块：`build_model_relations_report` + `model_relations_report_to_rows`：`project/rtos_sim/analysis/model_relations.py:1`
 - 审计报告新增 `model_relation_summary` 摘要挂载：`project/rtos_sim/analysis/audit.py:53`
 - 回归：新增模型关系与 CLI 导出测试：`project/tests/test_model_relations.py:1`、`project/tests/test_cli.py:145`
+
+### Phase F（配置治理与趋势可靠性）已完成（本轮）
+- 移除废弃参数迁移入口：新增 `rtos-sim migrate-config`，支持 `event_id_validation` 自动清理并可输出迁移报告：`project/rtos_sim/cli/main.py:262`
+- nightly 上一日基线提取改为固定文件名 `perf-nightly-1000.json`，避免 artifact 内多 json 时误选：`project/.github/workflows/ci.yml:196`
+- `perf_delta` 改为按目标 `task_count` 严格匹配（无匹配不再回退首 case）：`project/scripts/perf_delta.py:20`
+- 回归：新增 delta 严格匹配与迁移命令测试：`project/tests/test_perf_delta.py:62`、`project/tests/test_cli.py:341`

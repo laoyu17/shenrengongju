@@ -47,11 +47,9 @@ CONFIG_SCHEMA: dict = {
                     "properties": {
                         "tie_breaker": {"type": "string"},
                         "allow_preempt": {"type": "boolean"},
-                        "event_id_mode": {"type": "string"},
-                        "event_id_validation": {
+                        "event_id_mode": {
                             "type": "string",
-                            "enum": ["warn", "strict"],
-                            "default": "strict",
+                            "enum": ["deterministic", "random", "seeded_random"],
                         },
                         "etm": {"type": "string"},
                         "etm_params": {"type": "object"},
@@ -60,32 +58,6 @@ CONFIG_SCHEMA: dict = {
                             "enum": ["legacy_sequential", "atomic_rollback"],
                         },
                     },
-                    "allOf": [
-                        {
-                            "if": {
-                                "not": {
-                                    "properties": {
-                                        "event_id_validation": {
-                                            "const": "warn",
-                                        }
-                                    },
-                                    "required": ["event_id_validation"],
-                                }
-                            },
-                            "then": {
-                                "properties": {
-                                    "event_id_mode": {
-                                        "type": "string",
-                                        "enum": [
-                                            "deterministic",
-                                            "random",
-                                            "seeded_random",
-                                        ],
-                                    }
-                                }
-                            },
-                        }
-                    ],
                 },
             },
             "additionalProperties": False,

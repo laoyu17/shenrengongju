@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -42,6 +43,34 @@ class ConfigLoader:
             return ModelSpec.model_validate(normalized)
         except ValidationError as exc:
             raise ConfigError(str(exc)) from exc
+
+    def migrate_data(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Normalize version and drop known deprecated fields.
+
+        This helper is used by CLI migration command to produce an upgraded
+        config file before strict schema/model validation.
+        """
+
+        input_version = str(payload.get("version", "0.1"))
+        migrated = self._normalize_version(payload)
+        removed_keys: list[str] = []
+
+        scheduler = migrated.get("scheduler")
+        if isinstance(scheduler, dict):
+            params = scheduler.get("params")
+            if isinstance(params, dict) and "event_id_validation" in params:
+                params.pop("event_id_validation", None)
+                removed_keys.append("scheduler.params.event_id_validation")
+
+        if "ui_layout" in payload:
+            migrated["ui_layout"] = deepcopy(payload["ui_layout"])
+
+        report = {
+            "input_version": input_version,
+            "output_version": str(migrated.get("version", self.SUPPORTED_VERSION)),
+            "removed_keys": removed_keys,
+        }
+        return migrated, report
 
     def save(self, spec: ModelSpec, path: str) -> None:
         output_path = Path(path)

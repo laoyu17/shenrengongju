@@ -144,7 +144,6 @@ def test_ui_structured_form_apply_to_text() -> None:
         assert payload["scheduler"]["params"]["tie_breaker"] == "lifo"
         assert payload["scheduler"]["params"]["allow_preempt"] is False
         assert payload["scheduler"]["params"]["event_id_mode"] == "random"
-        assert payload["scheduler"]["params"]["event_id_validation"] == "strict"
         assert payload["sim"]["seed"] == 99
         assert payload["resources"][0]["protocol"] == "pcp"
     finally:
@@ -212,7 +211,6 @@ sim:
         assert window._form_segment_required_resources.text() == "r0"
         assert window._form_tie_breaker.currentText() == "segment_key"
         assert window._form_event_id_mode.currentText() == "seeded_random"
-        assert window._form_event_id_validation.currentText() == "strict"
         assert window._form_sim_seed.value() == 123
     finally:
         window.close()

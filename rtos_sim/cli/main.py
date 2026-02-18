@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from rtos_sim.analysis import (
     build_audit_report,
     build_compare_report,
@@ -87,6 +89,32 @@ def _read_json(path: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ConfigError(f"metrics file must be object: {path}")
     return payload
+
+
+def _read_config_payload(path: str) -> dict[str, Any]:
+    input_path = Path(path)
+    if not input_path.exists():
+        raise ConfigError(f"config file not found: {path}")
+    text = input_path.read_text(encoding="utf-8")
+    try:
+        if input_path.suffix.lower() in {".yaml", ".yml"}:
+            payload = yaml.safe_load(text)
+        else:
+            payload = json.loads(text)
+    except (yaml.YAMLError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"invalid config syntax: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ConfigError("config root must be object")
+    return payload
+
+
+def _write_config_payload(path: str, payload: dict[str, Any]) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.suffix.lower() in {".yaml", ".yml"}:
+        output_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    else:
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -256,6 +284,30 @@ def cmd_inspect_model(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate_config(args: argparse.Namespace) -> int:
+    loader = ConfigLoader()
+    try:
+        source = _read_config_payload(args.input_config)
+        migrated, report = loader.migrate_data(source)
+        if not args.no_validate:
+            loader.load_data(migrated)
+    except ConfigError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+
+    _write_config_payload(args.output_config, migrated)
+    if args.report_out:
+        _write_json(args.report_out, report)
+
+    print(
+        "[OK] config migration completed, "
+        f"in={args.input_config}, out={args.output_config}, "
+        f"removed_keys={len(report['removed_keys'])}, "
+        f"validated={'no' if args.no_validate else 'yes'}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rtos-sim", description="RTOS simulation CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -311,6 +363,20 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--out-json", default=None, help="relation report JSON path")
     inspect_parser.add_argument("--out-csv", default=None, help="relation report CSV path")
     inspect_parser.set_defaults(func=cmd_inspect_model)
+
+    migrate_parser = subparsers.add_parser(
+        "migrate-config",
+        help="normalize version and remove deprecated scheduler params",
+    )
+    migrate_parser.add_argument("--in", dest="input_config", required=True, help="input config YAML/JSON")
+    migrate_parser.add_argument("--out", dest="output_config", required=True, help="output config YAML/JSON")
+    migrate_parser.add_argument("--report-out", default=None, help="optional migration report JSON path")
+    migrate_parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="skip strict schema/model validation after migration",
+    )
+    migrate_parser.set_defaults(func=cmd_migrate_config)
 
     return parser
 

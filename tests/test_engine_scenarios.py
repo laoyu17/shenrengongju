@@ -1139,7 +1139,7 @@ def test_event_id_mode_supports_deterministic_and_random() -> None:
     assert [event["event_id"] for event in random_a] != [event["event_id"] for event in random_b]
 
 
-def test_event_id_mode_invalid_value_warns_and_falls_back_to_deterministic() -> None:
+def test_event_id_mode_invalid_value_fails_loader() -> None:
     payload = _single_core_payload("mutex")
     payload["resources"] = []
     payload["tasks"] = [
@@ -1159,37 +1159,7 @@ def test_event_id_mode_invalid_value_warns_and_falls_back_to_deterministic() -> 
             ],
         }
     ]
-    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "warn"}
-
-    with pytest.warns(RuntimeWarning, match="invalid scheduler.params.event_id_mode"):
-        events_a, _ = _run_payload(payload)
-    with pytest.warns(RuntimeWarning, match="invalid scheduler.params.event_id_mode"):
-        events_b, _ = _run_payload(payload)
-
-    assert [event["event_id"] for event in events_a] == [event["event_id"] for event in events_b]
-
-
-def test_event_id_mode_invalid_value_strict_fails_loader() -> None:
-    payload = _single_core_payload("mutex")
-    payload["resources"] = []
-    payload["tasks"] = [
-        {
-            "id": "t0",
-            "name": "task",
-            "task_type": "dynamic_rt",
-            "deadline": 10,
-            "arrival": 0,
-            "subtasks": [
-                {
-                    "id": "s0",
-                    "predecessors": [],
-                    "successors": [],
-                    "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
-                }
-            ],
-        }
-    ]
-    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "strict"}
+    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode"}
     with pytest.raises(ConfigError, match="event_id_mode"):
         ConfigLoader().load_data(payload)
 

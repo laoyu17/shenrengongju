@@ -43,11 +43,19 @@ rtos-sim compare --left-metrics artifacts/base_metrics.json --right-metrics arti
 rtos-sim inspect-model -c examples/at02_resource_mutex.yaml \
   --out-json artifacts/model_relations.json --out-csv artifacts/model_relations.csv
 
+# 迁移旧配置并移除废弃参数（如 scheduler.params.event_id_validation）
+rtos-sim migrate-config --in examples/at01_single_dag_single_core.yaml --out artifacts/migrated.yaml \
+  --report-out artifacts/migrate_report.json
+
 # 性能基线（100/300/1000 tasks，阈值可选）
 python scripts/perf_baseline.py --tasks 100,300,1000 --max-wall-ms 1500,4000,12000
 
 # 对比两份性能报告（周报）
 python scripts/perf_compare.py --base artifacts/perf/base.json --current artifacts/perf/new.json
+
+# 生成 nightly 昨日 delta 摘要（CI 同款）
+python scripts/perf_delta.py --current artifacts/perf/perf-nightly-1000.json \
+  --base artifacts/perf/perf-nightly-1000.base.json --out artifacts/perf/perf-delta-summary.json
 ```
 
 ## 测试
@@ -59,8 +67,9 @@ python -m pytest
 ## CI 合并门禁（S4）
 
 - **硬门禁**：PR 必须通过 `python -m pytest -q`（Linux/Windows）
-- **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务
+- **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务与昨日 delta 摘要
 - 性能报告位置：CI artifact `perf-baseline-pr`（`artifacts/perf/perf-baseline.json`）
+- nightly 产物：`perf-nightly-1000`（原始报告）+ `perf-nightly-delta`（昨日对比摘要）
 
 ## 模型语义审查产物（S5）
 
@@ -75,7 +84,7 @@ python -m pytest
 - `scheduler.params.tie_breaker`：`fifo`（默认）/`lifo`/`segment_key`
 - `scheduler.params.allow_preempt`：是否允许抢占（默认 `true`）
 - `scheduler.params.event_id_mode`：`deterministic`（默认）/`random`/`seeded_random`
-- `scheduler.params.event_id_validation`：`strict`（默认）/`warn`（迁移兼容）
+- `scheduler.params.event_id_validation`：已移除；请使用 `migrate-config` 清理旧字段
 - `scheduler.params.resource_acquire_policy`：`legacy_sequential`（默认）/`atomic_rollback`
 - `scheduler.params.etm`：`constant`（默认）/`table_based`
 - `scheduler.params.etm_params`：ETM 参数对象（`table_based` 支持 `table` 与 `default_scale`）
@@ -97,6 +106,7 @@ python -m pytest
 - 运行配置（模型）版本：`version: "0.2"`（由 `ConfigLoader` 校验）
 - 批量实验配置版本：`examples/batch_matrix.yaml` 中 `version: "0.1"`（仅用于 batch 文件结构）
 - 到达过程配置：新增 `tasks[*].arrival_process`（`fixed/uniform/poisson/one_shot`），兼容旧字段 `arrival_model/min_inter_arrival/max_inter_arrival`
+- 配置迁移命令：`rtos-sim migrate-config --in <old> --out <new>`（会移除已废弃字段并可输出迁移报告）
 
 ## 样例
 
