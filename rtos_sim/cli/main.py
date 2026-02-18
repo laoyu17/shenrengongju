@@ -27,10 +27,16 @@ def _write_json(path: str, payload: dict[str, Any]) -> None:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
-    issues = loader.validate(args.config)
-    if issues:
-        for issue in issues:
-            print(f"[ERROR] {issue.path}: {issue.message}")
+    try:
+        spec = loader.load(args.config)
+    except ConfigError as exc:
+        print(f"[ERROR] {args.config}: {exc}")
+        return 1
+    try:
+        # Build-time plugin resolution must pass during validate.
+        SimEngine().build(spec)
+    except ValueError as exc:
+        print(f"[ERROR] {args.config}: {exc}")
         return 1
     print("[OK] config validation passed")
     return 0

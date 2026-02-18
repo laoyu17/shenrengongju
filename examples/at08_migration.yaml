@@ -3,21 +3,21 @@ platform:
   processor_types:
     - id: CPU
       name: cpu
-      core_count: 1
+      core_count: 2
       speed_factor: 1.0
   cores:
     - id: c0
       type_id: CPU
       speed_factor: 1.0
-resources:
-  - id: r0
-    name: bus
-    bound_core_id: c0
-    protocol: mutex
+    - id: c1
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
 tasks:
   - id: low
-    name: lock-holder
+    name: migratable-low
     task_type: dynamic_rt
+    period: 20
     deadline: 20
     arrival: 0
     abort_on_miss: false
@@ -28,11 +28,11 @@ tasks:
         segments:
           - id: seg0
             index: 1
-            wcet: 5
-            required_resources: [r0]
+            wcet: 6
   - id: high
-    name: lock-waiter
+    name: urgent
     task_type: dynamic_rt
+    period: 20
     deadline: 2
     arrival: 1
     abort_on_miss: false
@@ -44,10 +44,9 @@ tasks:
           - id: seg0
             index: 1
             wcet: 1
-            required_resources: [r0]
 scheduler:
   name: edf
   params: {}
 sim:
   duration: 8
-  seed: 7
+  seed: 17

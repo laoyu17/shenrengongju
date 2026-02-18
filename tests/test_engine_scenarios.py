@@ -57,6 +57,58 @@ def test_at03_resource_binding_core() -> None:
     assert all(e["core_id"] == "c0" for e in acquire)
 
 
+def test_runtime_bound_core_violation_emits_error_and_aborts_job() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 2, "speed_factor": 1.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "CPU", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "CPU", "speed_factor": 1.0},
+            ],
+        },
+        "resources": [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "task",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 10.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1.0, "required_resources": ["r0"]}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 5.0, "seed": 9},
+    }
+    loader = ConfigLoader()
+    spec = loader.load_data(payload)
+    # 运行期兜底验证：人为破坏已通过校验的映射，触发 bound_core_violation。
+    spec.tasks[0].subtasks[0].segments[0].mapping_hint = "c1"
+
+    engine = SimEngine()
+    engine.build(spec)
+    engine.run()
+    events = [event.model_dump(mode="json") for event in engine.events]
+
+    blocked = next(event for event in events if event["type"] == "SegmentBlocked")
+    assert blocked["payload"]["reason"] == "bound_core_violation"
+    error = next(event for event in events if event["type"] == "Error")
+    assert error["payload"]["reason"] == "bound_core_violation"
+    assert error["job_id"].startswith("t0@")
+    assert not any(event["type"] == "SegmentStart" for event in events)
+    assert not any(event["type"] == "JobComplete" for event in events)
+
+
 def test_at04_deadline_miss() -> None:
     events, metrics = _run_example("at04_deadline_miss.yaml")
     assert any(e["type"] == "DeadlineMiss" for e in events)
@@ -104,6 +156,28 @@ def test_at07_heterogeneous_core_speed_scaling() -> None:
     assert slow_end == pytest.approx(4.0)
     assert metrics["core_utilization"]["c1"] == pytest.approx(0.5)
     assert metrics["core_utilization"]["c0"] == pytest.approx(1.0)
+
+
+def test_at08_migration() -> None:
+    events, metrics = _run_example("at08_migration.yaml")
+    migrate_events = [
+        event
+        for event in events
+        if event["type"] == "Migrate" and str(event.get("job_id", "")).startswith("low@")
+    ]
+    assert migrate_events
+    assert metrics["migrate_count"] >= 1
+    assert any(
+        event["payload"].get("from_core") == "c0" and event["payload"].get("to_core") == "c1"
+        for event in migrate_events
+    )
+
+    low_starts = [
+        event["core_id"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("low@")
+    ]
+    assert set(low_starts) >= {"c0", "c1"}
 
 
 def _single_core_payload(protocol: str) -> dict:
@@ -786,3 +860,187 @@ def test_scheduler_and_forced_preempt_metrics_are_split() -> None:
     assert abort_metrics["forced_preempt_count"] == 1
     assert abort_metrics["scheduler_preempt_count"] == 0
     assert abort_metrics["jobs_aborted"] == 1
+
+
+def test_dispatch_retry_same_tick_after_block_keeps_cpu_busy() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}],
+        "tasks": [
+            {
+                "id": "low",
+                "name": "low",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 30.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 5.0, "required_resources": ["r0"]}],
+                    }
+                ],
+            },
+            {
+                "id": "high",
+                "name": "high",
+                "task_type": "dynamic_rt",
+                "arrival": 1.0,
+                "deadline": 2.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1.0, "required_resources": ["r0"]}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 6.0, "seed": 7},
+    }
+
+    events, _ = _run_payload(payload)
+    blocked_time = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("high@")
+    )
+    low_starts = [
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("low@")
+    ]
+    assert len(low_starts) >= 2
+    assert low_starts[1] == pytest.approx(blocked_time)
+
+
+def test_horizon_truncation_emits_segment_end_and_accounts_utilization() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "t0",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 20.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 10.0}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 20.0, "seed": 11},
+    }
+    loader = ConfigLoader()
+    spec = loader.load_data(payload)
+    engine = SimEngine()
+    engine.build(spec)
+    engine.run(until=5.0)
+    events = [event.model_dump(mode="json") for event in engine.events]
+    metrics = engine.metric_report()
+
+    truncated_end = next(event for event in events if event["type"] == "SegmentEnd")
+    assert truncated_end["time"] == pytest.approx(5.0)
+    assert truncated_end["payload"]["ended_by"] == "horizon"
+    assert truncated_end["payload"]["truncated"] is True
+    assert metrics["max_time"] == pytest.approx(5.0)
+    assert metrics["core_utilization"]["c0"] == pytest.approx(1.0)
+    assert metrics["jobs_completed"] == 0
+
+
+def test_release_model_supports_periodic_sporadic_and_aperiodic() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "periodic",
+                "name": "periodic",
+                "task_type": "time_deterministic",
+                "arrival": 0.0,
+                "period": 5.0,
+                "deadline": 5.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.2}],
+                    }
+                ],
+            },
+            {
+                "id": "sporadic",
+                "name": "sporadic",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 3.0,
+                "min_inter_arrival": 3.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.2}],
+                    }
+                ],
+            },
+            {
+                "id": "aperiodic",
+                "name": "aperiodic",
+                "task_type": "non_rt",
+                "arrival": 1.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.2}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 13.0, "seed": 5},
+    }
+
+    events, _ = _run_payload(payload)
+    release_map: dict[str, list[float]] = {"periodic": [], "sporadic": [], "aperiodic": []}
+    for event in events:
+        if event["type"] != "JobReleased":
+            continue
+        task_id = event["payload"]["task_id"]
+        if task_id in release_map:
+            release_map[task_id].append(event["time"])
+
+    assert release_map["periodic"] == pytest.approx([0.0, 5.0, 10.0])
+    assert release_map["sporadic"] == pytest.approx([0.0, 3.0, 6.0, 9.0, 12.0])
+    assert release_map["aperiodic"] == pytest.approx([1.0])

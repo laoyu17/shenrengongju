@@ -70,3 +70,47 @@ factors:
     assert payload["total_runs"] == 4
     assert payload["succeeded_runs"] == 4
     assert payload["failed_runs"] == 0
+
+
+def test_cli_validate_rejects_unknown_scheduler(tmp_path: Path) -> None:
+    config = tmp_path / "unknown_scheduler.yaml"
+    config.write_text(
+        """
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+tasks:
+  - id: t0
+    name: task
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 0
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 1
+scheduler:
+  name: not_registered
+  params: {}
+sim:
+  duration: 5
+  seed: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    code = main(["validate", "-c", str(config)])
+    assert code == 1

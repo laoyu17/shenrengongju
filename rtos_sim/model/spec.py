@@ -147,18 +147,22 @@ class ModelSpec(BaseModel):
                     f"resource {resource.id} bound_core_id {resource.bound_core_id} does not exist"
                 )
         resource_set = set(resource_ids)
+        resource_bound_cores = {resource.id: resource.bound_core_id for resource in self.resources}
 
         task_ids = [task.id for task in self.tasks]
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("duplicate tasks.id")
 
         for task in self.tasks:
-            self._validate_task_graph(task, resource_set, core_ids)
+            self._validate_task_graph(task, resource_set, core_ids, resource_bound_cores)
         return self
 
     @staticmethod
     def _validate_task_graph(
-        task: TaskGraphSpec, resource_set: set[str], core_ids: set[str]
+        task: TaskGraphSpec,
+        resource_set: set[str],
+        core_ids: set[str],
+        resource_bound_cores: dict[str, str],
     ) -> None:
         subtask_ids = [sub.id for sub in task.subtasks]
         if len(subtask_ids) != len(set(subtask_ids)):
@@ -200,6 +204,25 @@ class ModelSpec(BaseModel):
                     raise ValueError(
                         f"task '{task.id}' segment '{seg.id}' mapping_hint '{seg.mapping_hint}' does not exist"
                     )
+                required_bound_cores = {
+                    resource_bound_cores[resource_id]
+                    for resource_id in seg.required_resources
+                    if resource_id in resource_bound_cores
+                }
+                if len(required_bound_cores) > 1:
+                    ordered = ", ".join(sorted(required_bound_cores))
+                    raise ValueError(
+                        f"task '{task.id}' segment '{seg.id}' requires resources bound to multiple cores: {ordered}"
+                    )
+                if required_bound_cores:
+                    bound_core_id = next(iter(required_bound_cores))
+                    if seg.mapping_hint is None:
+                        seg.mapping_hint = bound_core_id
+                    elif seg.mapping_hint != bound_core_id:
+                        raise ValueError(
+                            f"task '{task.id}' segment '{seg.id}' mapping_hint '{seg.mapping_hint}' "
+                            f"conflicts with required resource core '{bound_core_id}'"
+                        )
 
         indegree: dict[str, int] = {sub_id: 0 for sub_id in subtask_ids}
         for src, dst in sorted(edges):

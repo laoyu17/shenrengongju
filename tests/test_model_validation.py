@@ -65,3 +65,36 @@ def test_unknown_mapping_hint_detected() -> None:
     payload["tasks"][0]["subtasks"][0]["segments"][0]["mapping_hint"] = "c9"
     with pytest.raises(ConfigError):
         ConfigLoader().load_data(payload)
+
+
+def test_mapping_hint_conflicts_with_resource_bound_core_detected() -> None:
+    payload = _base_payload()
+    payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
+    payload["resources"] = [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}]
+    segment = payload["tasks"][0]["subtasks"][0]["segments"][0]
+    segment["required_resources"] = ["r0"]
+    segment["mapping_hint"] = "c1"
+    with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)
+
+
+def test_resource_bound_core_is_applied_when_mapping_hint_missing() -> None:
+    payload = _base_payload()
+    payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
+    payload["resources"] = [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}]
+    payload["tasks"][0]["subtasks"][0]["segments"][0]["required_resources"] = ["r0"]
+    spec = ConfigLoader().load_data(payload)
+    segment = spec.tasks[0].subtasks[0].segments[0]
+    assert segment.mapping_hint == "c0"
+
+
+def test_segment_with_resources_bound_to_multiple_cores_is_rejected() -> None:
+    payload = _base_payload()
+    payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
+    payload["resources"] = [
+        {"id": "r0", "name": "lock0", "bound_core_id": "c0", "protocol": "mutex"},
+        {"id": "r1", "name": "lock1", "bound_core_id": "c1", "protocol": "mutex"},
+    ]
+    payload["tasks"][0]["subtasks"][0]["segments"][0]["required_resources"] = ["r0", "r1"]
+    with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)
