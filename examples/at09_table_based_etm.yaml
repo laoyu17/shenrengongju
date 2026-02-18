@@ -1,0 +1,38 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+tasks:
+  - id: t0
+    name: table-based-etm-task
+    task_type: dynamic_rt
+    deadline: 20
+    arrival: 0
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 4
+            mapping_hint: c0
+scheduler:
+  name: edf
+  params:
+    etm: table_based
+    etm_params:
+      default_scale: 1.0
+      table:
+        t0/s0/seg0@c0: 0.5
+sim:
+  duration: 5
+  seed: 7

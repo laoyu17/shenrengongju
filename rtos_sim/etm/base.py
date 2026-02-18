@@ -9,7 +9,17 @@ class IExecutionTimeModel(ABC):
     """Execution-time estimation plugin."""
 
     @abstractmethod
-    def estimate(self, segment_wcet: float, core_speed: float, now: float) -> float:
+    def estimate(
+        self,
+        segment_wcet: float,
+        core_speed: float,
+        now: float,
+        *,
+        task_id: str | None = None,
+        subtask_id: str | None = None,
+        segment_id: str | None = None,
+        core_id: str | None = None,
+    ) -> float:
         """Estimate actual execution time of a segment on a core."""
 
     @abstractmethod

@@ -15,7 +15,7 @@ platform:
       speed_factor: 1.0
     - id: c1
       type_id: CPU_FAST
-      speed_factor: 2.0
+      speed_factor: 1.0
 resources: []
 tasks:
   - id: slow
