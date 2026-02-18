@@ -10,6 +10,9 @@ from .runtime import (
     ScheduleSnapshot,
 )
 from .spec import (
+    ArrivalModel,
+    ArrivalProcessSpec,
+    ArrivalProcessType,
     CoreSpec,
     ModelSpec,
     PlatformSpec,
@@ -24,6 +27,9 @@ from .spec import (
 )
 
 __all__ = [
+    "ArrivalModel",
+    "ArrivalProcessSpec",
+    "ArrivalProcessType",
     "CoreSpec",
     "CoreState",
     "Decision",

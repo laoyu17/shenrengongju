@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from rtos_sim.core import SimEngine
-from rtos_sim.io import ConfigLoader
+from rtos_sim.io import ConfigError, ConfigLoader
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -188,6 +188,212 @@ def test_dynamic_rt_random_inter_arrival_is_seeded_and_bounded() -> None:
     assert release_times_c != release_times_a
 
 
+def test_dynamic_rt_fixed_arrival_model_uses_constant_interval() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "fixed",
+                "name": "fixed-arrival-task",
+                "task_type": "dynamic_rt",
+                "deadline": 30.0,
+                "arrival": 0.0,
+                "min_inter_arrival": 2.0,
+                "arrival_model": "fixed_interval",
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.2}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 10.0, "seed": 17},
+    }
+
+    events, _ = _run_payload(payload)
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([0.0, 2.0, 4.0, 6.0, 8.0])
+
+
+def test_arrival_process_poisson_is_seeded_and_honors_max_releases() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "poisson",
+                "name": "poisson-arrival-task",
+                "task_type": "dynamic_rt",
+                "deadline": 30.0,
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "poisson",
+                    "params": {"rate": 2.0},
+                    "max_releases": 6,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 20.0, "seed": 31},
+    }
+
+    events_a, _ = _run_payload(payload)
+    events_b, _ = _run_payload(deepcopy(payload))
+
+    release_times_a = [event["time"] for event in events_a if event["type"] == "JobReleased"]
+    release_times_b = [event["time"] for event in events_b if event["type"] == "JobReleased"]
+    assert release_times_a == pytest.approx(release_times_b)
+    assert len(release_times_a) == 6
+    assert all(release_times_a[idx + 1] > release_times_a[idx] for idx in range(len(release_times_a) - 1))
+
+    payload["sim"]["seed"] = 32
+    events_c, _ = _run_payload(payload)
+    release_times_c = [event["time"] for event in events_c if event["type"] == "JobReleased"]
+    assert release_times_c != release_times_a
+
+
+def test_arrival_process_one_shot_dynamic_rt_only_releases_once() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "one-shot",
+                "name": "one-shot-arrival-task",
+                "task_type": "dynamic_rt",
+                "deadline": 30.0,
+                "arrival": 2.0,
+                "arrival_process": {"type": "one_shot"},
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 20.0, "seed": 31},
+    }
+
+    events, _ = _run_payload(payload)
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([2.0])
+
+
+def test_arrival_process_fixed_supports_non_rt_repeated_release() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "nonrt-fixed",
+                "name": "nonrt-fixed-arrival-task",
+                "task_type": "non_rt",
+                "arrival": 1.0,
+                "arrival_process": {
+                    "type": "fixed",
+                    "params": {"interval": 2.0},
+                    "max_releases": 4,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 20.0, "seed": 31},
+    }
+
+    events, _ = _run_payload(payload)
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([1.0, 3.0, 5.0, 7.0])
+
+
+def test_task_mapping_hint_controls_dispatch_core_without_segment_hint() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 2, "speed_factor": 1.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "CPU", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "CPU", "speed_factor": 1.0},
+            ],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "task",
+                "task_type": "dynamic_rt",
+                "deadline": 10.0,
+                "arrival": 0.0,
+                "task_mapping_hint": "c1",
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1.0}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 5.0, "seed": 1},
+    }
+
+    events, _ = _run_payload(payload)
+    start = next(event for event in events if event["type"] == "SegmentStart")
+    assert start["core_id"] == "c1"
+
+
 def test_at07_heterogeneous_core_speed_scaling() -> None:
     events, metrics = _run_example("at07_heterogeneous_multicore.yaml")
 
@@ -205,6 +411,166 @@ def test_at07_heterogeneous_core_speed_scaling() -> None:
     assert slow_end == pytest.approx(4.0)
     assert metrics["core_utilization"]["c1"] == pytest.approx(0.5)
     assert metrics["core_utilization"]["c0"] == pytest.approx(1.0)
+
+
+def test_processor_type_and_core_speed_factors_are_multiplied() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "SLOW", "name": "slow", "core_count": 1, "speed_factor": 1.0},
+                {"id": "FAST", "name": "fast", "core_count": 1, "speed_factor": 2.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "SLOW", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "FAST", "speed_factor": 2.0},
+            ],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "slow",
+                "name": "slow",
+                "task_type": "dynamic_rt",
+                "deadline": 20.0,
+                "arrival": 0.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 4.0, "mapping_hint": "c0"}],
+                    }
+                ],
+            },
+            {
+                "id": "fast",
+                "name": "fast",
+                "task_type": "dynamic_rt",
+                "deadline": 20.0,
+                "arrival": 0.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 4.0, "mapping_hint": "c1"}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 6.0, "seed": 7},
+    }
+
+    events, _ = _run_payload(payload)
+    fast_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("fast@")
+    )
+    slow_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("slow@")
+    )
+    assert slow_end == pytest.approx(4.0)
+    assert fast_end == pytest.approx(1.0)
+
+
+def test_table_based_etm_can_override_segment_runtime_scale() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "task",
+                "task_type": "dynamic_rt",
+                "deadline": 10.0,
+                "arrival": 0.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 4.0}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {
+            "name": "edf",
+            "params": {
+                "etm": "table_based",
+                "etm_params": {
+                    "table": {
+                        "t0/s0/seg0@c0": 0.5,
+                    }
+                },
+            },
+        },
+        "sim": {"duration": 8.0, "seed": 7},
+    }
+
+    events, _ = _run_payload(payload)
+    segment_end = next(event for event in events if event["type"] == "SegmentEnd")
+    assert segment_end["time"] == pytest.approx(2.0)
+
+
+def test_table_based_etm_invalid_scale_fails_build() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "task",
+                "task_type": "dynamic_rt",
+                "deadline": 10.0,
+                "arrival": 0.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1.0}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {
+            "name": "edf",
+            "params": {
+                "etm": "table_based",
+                "etm_params": {"table": {"seg0@c0": 0}},
+            },
+        },
+        "sim": {"duration": 4.0, "seed": 7},
+    }
+
+    spec = ConfigLoader().load_data(payload)
+    engine = SimEngine()
+    with pytest.raises(ValueError, match="must be > 0"):
+        engine.build(spec)
+
+
+def test_at09_table_based_etm_example() -> None:
+    events, _ = _run_example("at09_table_based_etm.yaml")
+    segment_end = next(event for event in events if event["type"] == "SegmentEnd")
+    assert segment_end["time"] == pytest.approx(2.0)
 
 
 def test_at08_migration() -> None:
@@ -803,7 +1169,7 @@ def test_event_id_mode_invalid_value_warns_and_falls_back_to_deterministic() -> 
     assert [event["event_id"] for event in events_a] == [event["event_id"] for event in events_b]
 
 
-def test_event_id_mode_invalid_value_strict_fails_build() -> None:
+def test_event_id_mode_invalid_value_strict_fails_loader() -> None:
     payload = _single_core_payload("mutex")
     payload["resources"] = []
     payload["tasks"] = [
@@ -824,10 +1190,8 @@ def test_event_id_mode_invalid_value_strict_fails_build() -> None:
         }
     ]
     payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "strict"}
-    spec = ConfigLoader().load_data(payload)
-    engine = SimEngine()
-    with pytest.raises(ValueError, match="invalid scheduler.params.event_id_mode"):
-        engine.build(spec)
+    with pytest.raises(ConfigError, match="event_id_mode"):
+        ConfigLoader().load_data(payload)
 
 
 def test_metric_report_includes_idle_cores() -> None:

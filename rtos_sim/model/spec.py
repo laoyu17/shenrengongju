@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from enum import Enum
-from typing import Optional
+from typing import ClassVar, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -15,6 +15,51 @@ class TaskType(str, Enum):
     TIME_DETERMINISTIC = "time_deterministic"
     DYNAMIC_RT = "dynamic_rt"
     NON_RT = "non_rt"
+
+
+class ArrivalModel(str, Enum):
+    """Dynamic task arrival model."""
+
+    FIXED_INTERVAL = "fixed_interval"
+    UNIFORM_INTERVAL = "uniform_interval"
+
+
+class ArrivalProcessType(str, Enum):
+    """Unified arrival-process type for dynamic/non-RT tasks."""
+
+    FIXED = "fixed"
+    UNIFORM = "uniform"
+    POISSON = "poisson"
+    ONE_SHOT = "one_shot"
+
+
+class ArrivalProcessSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: ArrivalProcessType
+    params: dict[str, float] = Field(default_factory=dict)
+    max_releases: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_params(self) -> "ArrivalProcessSpec":
+        allowed: dict[ArrivalProcessType, set[str]] = {
+            ArrivalProcessType.FIXED: {"interval"},
+            ArrivalProcessType.UNIFORM: {"min_interval", "max_interval"},
+            ArrivalProcessType.POISSON: {"rate"},
+            ArrivalProcessType.ONE_SHOT: set(),
+        }
+        unknown = sorted(set(self.params) - allowed[self.type])
+        if unknown:
+            joined = ", ".join(unknown)
+            raise ValueError(f"arrival_process.params contains unsupported keys: {joined}")
+        for key, value in self.params.items():
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"arrival_process.params.{key} must be number")
+            if float(value) <= 0:
+                raise ValueError(f"arrival_process.params.{key} must be > 0")
+        if self.type == ArrivalProcessType.ONE_SHOT and self.max_releases not in (None, 1):
+            raise ValueError("arrival_process type=one_shot only supports max_releases=1")
+        return self
 
 
 class ProcessorTypeSpec(BaseModel):
@@ -62,6 +107,7 @@ class SubtaskSpec(BaseModel):
     id: str
     predecessors: list[str] = Field(default_factory=list)
     successors: list[str] = Field(default_factory=list)
+    subtask_mapping_hint: Optional[str] = None
     segments: list[SegmentSpec] = Field(min_length=1)
 
 
@@ -77,6 +123,9 @@ class TaskGraphSpec(BaseModel):
     phase_offset: Optional[float] = Field(default=None, ge=0)
     min_inter_arrival: Optional[float] = Field(default=None, gt=0)
     max_inter_arrival: Optional[float] = Field(default=None, gt=0)
+    arrival_model: Optional[ArrivalModel] = None
+    arrival_process: Optional[ArrivalProcessSpec] = None
+    task_mapping_hint: Optional[str] = None
     abort_on_miss: bool = False
     subtasks: list[SubtaskSpec] = Field(min_length=1)
 
@@ -90,7 +139,7 @@ class TaskGraphSpec(BaseModel):
             raise ValueError("phase_offset is only valid for time_deterministic task")
         if self.task_type != TaskType.NON_RT and self.deadline is None:
             raise ValueError("real-time task must define deadline")
-        if self.period is not None and self.min_inter_arrival is None:
+        if self.period is not None and self.min_inter_arrival is None and self.task_type == TaskType.DYNAMIC_RT:
             self.min_inter_arrival = self.period
         if self.task_type != TaskType.DYNAMIC_RT and self.max_inter_arrival is not None:
             raise ValueError("max_inter_arrival is only valid for dynamic_rt task")
@@ -102,13 +151,93 @@ class TaskGraphSpec(BaseModel):
             and self.max_inter_arrival < self.min_inter_arrival - 1e-12
         ):
             raise ValueError("max_inter_arrival must be >= min_inter_arrival")
+        if self.task_type != TaskType.DYNAMIC_RT and self.arrival_model is not None:
+            raise ValueError("arrival_model is only valid for dynamic_rt task")
+        if self.arrival_process is not None:
+            self._normalize_arrival_process()
+        elif self.task_type == TaskType.DYNAMIC_RT:
+            if self.arrival_model is None:
+                self.arrival_model = (
+                    ArrivalModel.UNIFORM_INTERVAL
+                    if self.max_inter_arrival is not None
+                    else ArrivalModel.FIXED_INTERVAL
+                )
+            if self.arrival_model == ArrivalModel.UNIFORM_INTERVAL and self.max_inter_arrival is None:
+                raise ValueError("arrival_model=uniform_interval requires max_inter_arrival")
+            if self.arrival_model == ArrivalModel.FIXED_INTERVAL and self.max_inter_arrival is not None:
+                raise ValueError("arrival_model=fixed_interval does not allow max_inter_arrival")
         if self.period is not None and self.deadline is not None and self.deadline <= 0:
             raise ValueError("deadline must be > 0")
         return self
 
+    @staticmethod
+    def _resolve_positive_param(params: dict[str, float], key: str) -> float | None:
+        value = params.get(key)
+        if value is None:
+            return None
+        resolved = float(value)
+        if resolved <= 0:
+            raise ValueError(f"arrival_process.params.{key} must be > 0")
+        return resolved
+
+    def _normalize_arrival_process(self) -> None:
+        process = self.arrival_process
+        assert process is not None
+        if self.task_type == TaskType.TIME_DETERMINISTIC:
+            raise ValueError("arrival_process is not valid for time_deterministic task")
+
+        process_type = process.type
+        if process_type == ArrivalProcessType.ONE_SHOT and process.max_releases is None:
+            process.max_releases = 1
+
+        if process_type == ArrivalProcessType.FIXED:
+            interval = self._resolve_positive_param(process.params, "interval")
+            if interval is None and self.task_type == TaskType.DYNAMIC_RT:
+                interval = self.min_inter_arrival if self.min_inter_arrival is not None else self.period
+            if interval is None:
+                raise ValueError("arrival_process type=fixed requires params.interval")
+            if self.task_type == TaskType.DYNAMIC_RT:
+                self.min_inter_arrival = interval
+                self.max_inter_arrival = None
+                self.arrival_model = ArrivalModel.FIXED_INTERVAL
+            return
+
+        if process_type == ArrivalProcessType.UNIFORM:
+            min_interval = self._resolve_positive_param(process.params, "min_interval")
+            max_interval = self._resolve_positive_param(process.params, "max_interval")
+            if self.task_type == TaskType.DYNAMIC_RT:
+                if min_interval is None:
+                    min_interval = self.min_inter_arrival if self.min_inter_arrival is not None else self.period
+                if max_interval is None:
+                    max_interval = self.max_inter_arrival
+            if min_interval is None or max_interval is None:
+                raise ValueError(
+                    "arrival_process type=uniform requires params.min_interval and params.max_interval"
+                )
+            if max_interval < min_interval - 1e-12:
+                raise ValueError("arrival_process.params.max_interval must be >= min_interval")
+            if self.task_type == TaskType.DYNAMIC_RT:
+                self.min_inter_arrival = min_interval
+                self.max_inter_arrival = max_interval
+                self.arrival_model = ArrivalModel.UNIFORM_INTERVAL
+            return
+
+        if process_type == ArrivalProcessType.POISSON:
+            rate = self._resolve_positive_param(process.params, "rate")
+            if rate is None:
+                raise ValueError("arrival_process type=poisson requires params.rate")
+            return
+
+        if process_type == ArrivalProcessType.ONE_SHOT and self.task_type == TaskType.DYNAMIC_RT:
+            self.arrival_model = None
+            self.min_inter_arrival = None
+            self.max_inter_arrival = None
+
 
 class SchedulerSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    VALID_EVENT_ID_MODES: ClassVar[set[str]] = {"deterministic", "random", "seeded_random"}
 
     name: str
     params: dict = Field(default_factory=dict)
@@ -124,8 +253,25 @@ class SchedulerSpec(BaseModel):
             raise ValueError("scheduler.params.event_id_mode must be string")
 
         validation = self.params.get("event_id_validation")
-        if validation is not None and str(validation).strip() not in {"warn", "strict"}:
+        validation_mode = "strict" if validation is None else str(validation).strip().lower()
+        if validation_mode not in {"warn", "strict"}:
             raise ValueError("scheduler.params.event_id_validation must be warn|strict")
+        if event_mode is not None:
+            event_mode_value = event_mode.strip().lower()
+            if event_mode_value and event_mode_value not in self.VALID_EVENT_ID_MODES:
+                if validation_mode != "warn":
+                    raise ValueError(
+                        "scheduler.params.event_id_mode must be "
+                        "deterministic|random|seeded_random"
+                    )
+
+        etm_name = self.params.get("etm")
+        if etm_name is not None and not isinstance(etm_name, str):
+            raise ValueError("scheduler.params.etm must be string")
+
+        etm_params = self.params.get("etm_params")
+        if etm_params is not None and not isinstance(etm_params, dict):
+            raise ValueError("scheduler.params.etm_params must be object")
         return self
 
 
@@ -210,12 +356,23 @@ class ModelSpec(BaseModel):
         subtask_ids = [sub.id for sub in task.subtasks]
         if len(subtask_ids) != len(set(subtask_ids)):
             raise ValueError(f"task {task.id} contains duplicate subtask ids")
+        task_mapping_hint = task.task_mapping_hint
+        if task_mapping_hint and task_mapping_hint not in core_ids:
+            raise ValueError(
+                f"task '{task.id}' task_mapping_hint '{task_mapping_hint}' does not exist"
+            )
 
         adjacency: dict[str, set[str]] = defaultdict(set)
         subtask_set = set(subtask_ids)
         edges: set[tuple[str, str]] = set()
 
         for sub in task.subtasks:
+            subtask_mapping_hint = sub.subtask_mapping_hint
+            if subtask_mapping_hint and subtask_mapping_hint not in core_ids:
+                raise ValueError(
+                    f"task '{task.id}' subtask '{sub.id}' subtask_mapping_hint "
+                    f"'{subtask_mapping_hint}' does not exist"
+                )
             for pred in sub.predecessors:
                 if pred not in subtask_set:
                     raise ValueError(
@@ -238,14 +395,15 @@ class ModelSpec(BaseModel):
                     f"task '{task.id}' subtask '{sub.id}' segment index must start at 1 and be continuous"
                 )
             for seg in sub.segments:
+                effective_mapping_hint = seg.mapping_hint or subtask_mapping_hint or task_mapping_hint
                 for resource_id in seg.required_resources:
                     if resource_id not in resource_set:
                         raise ValueError(
                             f"task '{task.id}' segment '{seg.id}' references unknown resource '{resource_id}'"
                         )
-                if seg.mapping_hint and seg.mapping_hint not in core_ids:
+                if effective_mapping_hint and effective_mapping_hint not in core_ids:
                     raise ValueError(
-                        f"task '{task.id}' segment '{seg.id}' mapping_hint '{seg.mapping_hint}' does not exist"
+                        f"task '{task.id}' segment '{seg.id}' mapping_hint '{effective_mapping_hint}' does not exist"
                     )
                 if seg.release_offsets is not None:
                     if task.task_type != TaskType.TIME_DETERMINISTIC:
@@ -279,21 +437,22 @@ class ModelSpec(BaseModel):
                     )
                 if required_bound_cores:
                     bound_core_id = next(iter(required_bound_cores))
-                    if seg.mapping_hint is None:
-                        seg.mapping_hint = bound_core_id
-                    elif seg.mapping_hint != bound_core_id:
+                    if effective_mapping_hint is None:
+                        effective_mapping_hint = bound_core_id
+                    elif effective_mapping_hint != bound_core_id:
                         raise ValueError(
-                            f"task '{task.id}' segment '{seg.id}' mapping_hint '{seg.mapping_hint}' "
+                            f"task '{task.id}' segment '{seg.id}' mapping_hint '{effective_mapping_hint}' "
                             f"conflicts with required resource core '{bound_core_id}'"
                         )
-                if task.task_type == TaskType.TIME_DETERMINISTIC and seg.mapping_hint is None:
+                if task.task_type == TaskType.TIME_DETERMINISTIC and effective_mapping_hint is None:
                     if len(core_ids) == 1:
-                        seg.mapping_hint = sorted(core_ids)[0]
+                        effective_mapping_hint = sorted(core_ids)[0]
                     else:
                         raise ValueError(
                             f"task '{task.id}' segment '{seg.id}' requires mapping_hint for "
                             "time_deterministic task on multi-core platform"
                         )
+                seg.mapping_hint = effective_mapping_hint
 
         indegree: dict[str, int] = {sub_id: 0 for sub_id in subtask_ids}
         for src, dst in sorted(edges):

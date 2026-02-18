@@ -48,12 +48,44 @@ CONFIG_SCHEMA: dict = {
                         "tie_breaker": {"type": "string"},
                         "allow_preempt": {"type": "boolean"},
                         "event_id_mode": {"type": "string"},
-                        "event_id_validation": {"type": "string", "enum": ["warn", "strict"]},
+                        "event_id_validation": {
+                            "type": "string",
+                            "enum": ["warn", "strict"],
+                            "default": "strict",
+                        },
+                        "etm": {"type": "string"},
+                        "etm_params": {"type": "object"},
                         "resource_acquire_policy": {
                             "type": "string",
                             "enum": ["legacy_sequential", "atomic_rollback"],
                         },
                     },
+                    "allOf": [
+                        {
+                            "if": {
+                                "not": {
+                                    "properties": {
+                                        "event_id_validation": {
+                                            "const": "warn",
+                                        }
+                                    },
+                                    "required": ["event_id_validation"],
+                                }
+                            },
+                            "then": {
+                                "properties": {
+                                    "event_id_mode": {
+                                        "type": "string",
+                                        "enum": [
+                                            "deterministic",
+                                            "random",
+                                            "seeded_random",
+                                        ],
+                                    }
+                                }
+                            },
+                        }
+                    ],
                 },
             },
             "additionalProperties": False,
@@ -117,6 +149,12 @@ CONFIG_SCHEMA: dict = {
                 "phase_offset": {"type": "number", "minimum": 0},
                 "min_inter_arrival": {"type": "number", "exclusiveMinimum": 0},
                 "max_inter_arrival": {"type": "number", "exclusiveMinimum": 0},
+                "arrival_model": {
+                    "type": "string",
+                    "enum": ["fixed_interval", "uniform_interval"],
+                },
+                "arrival_process": {"$ref": "#/$defs/ArrivalProcess"},
+                "task_mapping_hint": {"type": ["string", "null"]},
                 "abort_on_miss": {"type": "boolean", "default": False},
                 "subtasks": {
                     "type": "array",
@@ -141,6 +179,7 @@ CONFIG_SCHEMA: dict = {
                     "items": {"type": "string", "minLength": 1},
                     "default": [],
                 },
+                "subtask_mapping_hint": {"type": ["string", "null"]},
                 "segments": {
                     "type": "array",
                     "minItems": 1,
@@ -168,6 +207,23 @@ CONFIG_SCHEMA: dict = {
                     "type": ["array", "null"],
                     "items": {"type": "number", "minimum": 0},
                 },
+            },
+            "additionalProperties": False,
+        },
+        "ArrivalProcess": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["fixed", "uniform", "poisson", "one_shot"],
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {"type": "number", "exclusiveMinimum": 0},
+                    "default": {},
+                },
+                "max_releases": {"type": ["integer", "null"], "minimum": 1},
             },
             "additionalProperties": False,
         },

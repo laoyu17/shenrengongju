@@ -1,0 +1,56 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu-cluster
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+
+tasks:
+  - id: t_poisson
+    name: poisson_dynamic
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 0
+    arrival_process:
+      type: poisson
+      params:
+        rate: 1.5
+      max_releases: 6
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 0.2
+
+  - id: t_one_shot
+    name: one_shot_dynamic
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 1
+    arrival_process:
+      type: one_shot
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 0.5
+
+scheduler:
+  name: edf
+  params:
+    event_id_mode: deterministic
+sim:
+  duration: 8
+  seed: 42

@@ -62,7 +62,7 @@ class SimEngine(ISimEngine):
     """Discrete-event engine using SimPy clock progression."""
 
     DEFAULT_EVENT_ID_MODE = "deterministic"
-    DEFAULT_EVENT_ID_VALIDATION = "warn"
+    DEFAULT_EVENT_ID_VALIDATION = "strict"
     DEFAULT_RESOURCE_ACQUIRE_POLICY = "legacy_sequential"
     VALID_EVENT_ID_MODES = {"deterministic", "random", "seeded_random"}
     VALID_EVENT_ID_VALIDATION = {"warn", "strict"}
@@ -144,7 +144,10 @@ class SimEngine(ISimEngine):
         self._setup_protocols(spec)
 
         etm_name = str(spec.scheduler.params.get("etm", "default"))
-        self._etm = self._external_etm or create_etm(etm_name)
+        etm_params = spec.scheduler.params.get("etm_params", {})
+        if not isinstance(etm_params, dict):
+            etm_params = {}
+        self._etm = self._external_etm or create_etm(etm_name, etm_params)
 
         overhead_name = str(spec.scheduler.params.get("overhead_model", "default"))
         overhead_params = spec.scheduler.params.get("overhead", {})
@@ -152,10 +155,12 @@ class SimEngine(ISimEngine):
             overhead_params = {}
         self._overheads = self._external_overhead or create_overhead_model(overhead_name, overhead_params)
 
-        self._cores = {
-            core.id: CoreRuntime(core_id=core.id, speed=core.speed_factor)
-            for core in spec.platform.cores
-        }
+        processor_speed_by_type = {processor.id: processor.speed_factor for processor in spec.platform.processor_types}
+        self._cores = {}
+        for core in spec.platform.cores:
+            processor_speed = processor_speed_by_type.get(core.type_id, 1.0)
+            effective_speed = core.speed_factor * processor_speed
+            self._cores[core.id] = CoreRuntime(core_id=core.id, speed=effective_speed)
         self._deterministic_hyper_period = self._compute_deterministic_hyper_period(spec)
 
         for task in spec.tasks:
@@ -679,6 +684,48 @@ class SimEngine(ISimEngine):
         return ready_time, window_id, offset_index
 
     def _next_release_time(self, task: TaskGraphSpec, release_idx: int, current_release: float) -> float | None:
+        arrival_process = task.arrival_process
+        if arrival_process is not None:
+            if arrival_process.max_releases is not None and release_idx >= arrival_process.max_releases:
+                return None
+
+            process_type = arrival_process.type.value
+            params = arrival_process.params
+            if process_type == "one_shot":
+                return None
+
+            if process_type == "fixed":
+                interval = self._resolve_arrival_interval(
+                    params.get("interval"),
+                    fallback=task.min_inter_arrival if task.min_inter_arrival is not None else task.period,
+                )
+                if interval is None:
+                    raise ValueError("arrival_process type=fixed requires interval")
+                return current_release + interval
+
+            if process_type == "uniform":
+                lower = self._resolve_arrival_interval(
+                    params.get("min_interval"),
+                    fallback=task.min_inter_arrival if task.min_inter_arrival is not None else task.period,
+                )
+                upper = self._resolve_arrival_interval(
+                    params.get("max_interval"),
+                    fallback=task.max_inter_arrival,
+                )
+                if lower is None or upper is None:
+                    raise ValueError("arrival_process type=uniform requires min_interval and max_interval")
+                if upper < lower - 1e-12:
+                    raise ValueError("arrival_process uniform max_interval must be >= min_interval")
+                return current_release + self._arrival_rng.uniform(lower, upper)
+
+            if process_type == "poisson":
+                rate = self._resolve_arrival_interval(params.get("rate"))
+                if rate is None:
+                    raise ValueError("arrival_process type=poisson requires rate")
+                return current_release + self._arrival_rng.expovariate(rate)
+
+            raise ValueError(f"unsupported arrival_process type: {process_type}")
+
         if task.task_type.value == "time_deterministic":
             if task.period is None:
                 return None
@@ -688,10 +735,30 @@ class SimEngine(ISimEngine):
             interval = task.min_inter_arrival if task.min_inter_arrival is not None else task.period
             if interval is None:
                 return None
-            if task.max_inter_arrival is not None:
-                interval = self._arrival_rng.uniform(interval, task.max_inter_arrival)
+            arrival_model = (
+                task.arrival_model.value
+                if task.arrival_model is not None
+                else ("uniform_interval" if task.max_inter_arrival is not None else "fixed_interval")
+            )
+            if arrival_model == "uniform_interval":
+                upper_bound = task.max_inter_arrival if task.max_inter_arrival is not None else interval
+                interval = self._arrival_rng.uniform(interval, upper_bound)
+            elif arrival_model != "fixed_interval":
+                raise ValueError(f"unsupported dynamic arrival model: {arrival_model}")
+            if interval <= 0:
+                raise ValueError("computed dynamic release interval must be > 0")
             return current_release + interval
         return None
+
+    @staticmethod
+    def _resolve_arrival_interval(raw: Any, *, fallback: float | None = None) -> float | None:
+        value = raw if raw is not None else fallback
+        if value is None:
+            return None
+        resolved = float(value)
+        if resolved <= 0:
+            raise ValueError("computed dynamic release interval must be > 0")
+        return resolved
 
     def _queue_segment_ready(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]
@@ -1026,7 +1093,15 @@ class SimEngine(ISimEngine):
             )
 
         context_cost = self._overheads.on_context_switch(segment.job_id, core_id)
-        execution_time = self._etm.estimate(segment.remaining_time, core.speed, now)
+        execution_time = self._etm.estimate(
+            segment.remaining_time,
+            core.speed,
+            now,
+            task_id=segment.task_id,
+            subtask_id=segment.subtask_id,
+            segment_id=segment.segment_id,
+            core_id=core_id,
+        )
         total_runtime = migration_cost + context_cost + execution_time
 
         segment.running_on = core_id
