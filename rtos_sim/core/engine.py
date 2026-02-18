@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 import heapq
 from math import gcd
+import random
+import warnings
 from typing import Any, Callable, Optional
 
 import simpy
@@ -60,6 +62,11 @@ class SimEngine(ISimEngine):
     """Discrete-event engine using SimPy clock progression."""
 
     DEFAULT_EVENT_ID_MODE = "deterministic"
+    DEFAULT_EVENT_ID_VALIDATION = "warn"
+    DEFAULT_RESOURCE_ACQUIRE_POLICY = "legacy_sequential"
+    VALID_EVENT_ID_MODES = {"deterministic", "random", "seeded_random"}
+    VALID_EVENT_ID_VALIDATION = {"warn", "strict"}
+    VALID_RESOURCE_ACQUIRE_POLICIES = {"legacy_sequential", "atomic_rollback"}
     DEADLINE_EPSILON = 1e-9
     SCHEDULE_RETRY_LIMIT = 8
 
@@ -79,6 +86,8 @@ class SimEngine(ISimEngine):
         self._subscribers: list[Callable[[SimEvent], None]] = []
         self._event_id_mode = self.DEFAULT_EVENT_ID_MODE
         self._event_id_seed: int | None = None
+        self._arrival_rng = random.Random(0)
+        self._resource_acquire_policy = self.DEFAULT_RESOURCE_ACQUIRE_POLICY
 
         self._env = simpy.Environment()
         self._event_bus = self._create_event_bus()
@@ -118,13 +127,11 @@ class SimEngine(ISimEngine):
         self._event_bus.subscribe(handler)
 
     def build(self, spec: ModelSpec) -> None:
-        event_id_mode = spec.scheduler.params.get("event_id_mode", self.DEFAULT_EVENT_ID_MODE)
-        if isinstance(event_id_mode, str) and event_id_mode.strip():
-            self._event_id_mode = event_id_mode.strip().lower()
-        else:
-            self._event_id_mode = self.DEFAULT_EVENT_ID_MODE
+        self._event_id_mode = self._resolve_event_id_mode(spec.scheduler.params)
         self._event_id_seed = spec.sim.seed
         self.reset()
+        self._arrival_rng = random.Random(spec.sim.seed)
+        self._resource_acquire_policy = self._resolve_resource_acquire_policy(spec.scheduler.params)
         self._spec = spec
 
         self._scheduler = self._external_scheduler or create_scheduler(
@@ -197,6 +204,7 @@ class SimEngine(ISimEngine):
         self._event_bus = self._create_event_bus()
         self._events = []
         self._setup_event_pipeline()
+        self._arrival_rng = random.Random(0)
 
         self._spec = None
         self._scheduler = None
@@ -321,8 +329,6 @@ class SimEngine(ISimEngine):
         runtime_specs: dict[str, ResourceRuntimeSpec] = {}
         for resource in spec.resources:
             ceiling = resource_ceilings.get(resource.id, self._lowest_priority_value())
-            if ceiling <= self._lowest_priority_value() + 1e-6:
-                ceiling = 0.0
             runtime_specs[resource.id] = ResourceRuntimeSpec(
                 bound_core_id=resource.bound_core_id,
                 ceiling_priority=ceiling,
@@ -394,6 +400,42 @@ class SimEngine(ISimEngine):
         if self._protocol is None:
             raise RuntimeError("resource protocol not initialized")
         return self._protocol
+
+    def _resolve_event_id_mode(self, params: dict[str, Any]) -> str:
+        validation_raw = params.get("event_id_validation", self.DEFAULT_EVENT_ID_VALIDATION)
+        validation = str(validation_raw).strip().lower() if validation_raw is not None else ""
+        if validation not in self.VALID_EVENT_ID_VALIDATION:
+            raise ValueError(
+                "scheduler.params.event_id_validation must be one of warn|strict"
+            )
+
+        mode_raw = params.get("event_id_mode", self.DEFAULT_EVENT_ID_MODE)
+        mode = str(mode_raw).strip().lower() if mode_raw is not None else ""
+        if not mode:
+            return self.DEFAULT_EVENT_ID_MODE
+        if mode in self.VALID_EVENT_ID_MODES:
+            return mode
+
+        message = (
+            "invalid scheduler.params.event_id_mode='"
+            f"{mode_raw}', expected deterministic|random|seeded_random"
+        )
+        if validation == "strict":
+            raise ValueError(message)
+        warnings.warn(message + "; fallback to deterministic", RuntimeWarning, stacklevel=2)
+        return self.DEFAULT_EVENT_ID_MODE
+
+    def _resolve_resource_acquire_policy(self, params: dict[str, Any]) -> str:
+        policy_raw = params.get("resource_acquire_policy", self.DEFAULT_RESOURCE_ACQUIRE_POLICY)
+        policy = str(policy_raw).strip().lower() if policy_raw is not None else ""
+        if not policy:
+            return self.DEFAULT_RESOURCE_ACQUIRE_POLICY
+        if policy not in self.VALID_RESOURCE_ACQUIRE_POLICIES:
+            raise ValueError(
+                "scheduler.params.resource_acquire_policy must be one of "
+                "legacy_sequential|atomic_rollback"
+            )
+        return policy
 
     def _lowest_priority_value(self) -> float:
         return -1e18
@@ -611,7 +653,7 @@ class SimEngine(ISimEngine):
                     self._queue_segment_ready(subtask.segment_keys[0], now)
 
             next_idx = release_idx + 1
-            next_release = self._next_release_time(task, next_idx)
+            next_release = self._next_release_time(task, next_idx, release_time)
             if next_release is not None and self._spec and next_release <= self._spec.sim.duration + 1e-12:
                 heapq.heappush(self._release_heap, (next_release, next_idx, task.id))
 
@@ -636,8 +678,7 @@ class SimEngine(ISimEngine):
             window_id = int((elapsed + 1e-12) // hyper_period)
         return ready_time, window_id, offset_index
 
-    @staticmethod
-    def _next_release_time(task: TaskGraphSpec, release_idx: int) -> float | None:
+    def _next_release_time(self, task: TaskGraphSpec, release_idx: int, current_release: float) -> float | None:
         if task.task_type.value == "time_deterministic":
             if task.period is None:
                 return None
@@ -647,7 +688,9 @@ class SimEngine(ISimEngine):
             interval = task.min_inter_arrival if task.min_inter_arrival is not None else task.period
             if interval is None:
                 return None
-            return task.arrival + interval * release_idx
+            if task.max_inter_arrival is not None:
+                interval = self._arrival_rng.uniform(interval, task.max_inter_arrival)
+            return current_release + interval
         return None
 
     def _queue_segment_ready(self, segment_key: str, now: float) -> None:
@@ -882,6 +925,7 @@ class SimEngine(ISimEngine):
             self._abort_job(segment.job_id, now, preempt_reason="abort_on_error")
             return "error"
 
+        acquired_resources_this_dispatch: list[str] = []
         for resource_id in segment.required_resources:
             if resource_id in self._held_resources[segment_key]:
                 continue
@@ -891,6 +935,19 @@ class SimEngine(ISimEngine):
             if result.priority_updates:
                 self._apply_priority_updates(result.priority_updates)
             if not result.granted:
+                rollback_released: list[str] = []
+                if (
+                    self._resource_acquire_policy == "atomic_rollback"
+                    and acquired_resources_this_dispatch
+                    and result.reason != "bound_core_violation"
+                ):
+                    rollback_released = self._rollback_dispatch_resources(
+                        segment=segment,
+                        segment_key=segment_key,
+                        resource_ids=acquired_resources_this_dispatch,
+                        now=now,
+                        core_id=core_id,
+                    )
                 segment.blocked = True
                 segment.waiting_resource = resource_id
                 self._ready.discard(segment_key)
@@ -906,6 +963,9 @@ class SimEngine(ISimEngine):
                         "reason": result.reason,
                         "segment_key": segment_key,
                         "request_priority": request_priority,
+                        "resource_acquire_policy": self._resource_acquire_policy,
+                        "rollback_applied": bool(rollback_released),
+                        "rollback_released_resources": sorted(rollback_released),
                         **result.metadata,
                     },
                 )
@@ -930,6 +990,7 @@ class SimEngine(ISimEngine):
                     return "error"
                 return "blocked"
             self._held_resources[segment_key].add(resource_id)
+            acquired_resources_this_dispatch.append(resource_id)
             self._event_bus.publish(
                 event_type=EventType.RESOURCE_ACQUIRE,
                 time=now,
@@ -1046,37 +1107,90 @@ class SimEngine(ISimEngine):
             release_result = protocol.release(segment_key, resource_id)
             if release_result.priority_updates:
                 self._apply_priority_updates(release_result.priority_updates)
-            self._event_bus.publish(
-                event_type=EventType.RESOURCE_RELEASE,
-                time=now,
-                correlation_id=segment.job_id,
-                job_id=segment.job_id,
-                segment_id=segment.segment_id,
-                core_id=core_id,
+            self._on_resource_release_result(
+                segment=segment,
+                segment_key=segment_key,
                 resource_id=resource_id,
-                payload={"segment_key": segment_key, **release_result.metadata},
+                release_result=release_result,
+                now=now,
+                core_id=core_id,
             )
-            for woken_segment_key in release_result.woken:
-                woken_segment = self._segments.get(woken_segment_key)
-                if woken_segment is None or woken_segment.finished:
-                    continue
-                if woken_segment.job_id in self._aborted_jobs:
-                    continue
-                woken_segment.blocked = False
-                woken_segment.waiting_resource = None
-                self._ready.add(woken_segment_key)
-                self._event_bus.publish(
-                    event_type=EventType.SEGMENT_UNBLOCKED,
-                    time=now,
-                    correlation_id=woken_segment.job_id,
-                    job_id=woken_segment.job_id,
-                    segment_id=woken_segment.segment_id,
-                    core_id=core_id,
-                    resource_id=resource_id,
-                    payload={"segment_key": woken_segment_key},
-                )
 
         self._held_resources[segment_key] = set()
+
+    def _rollback_dispatch_resources(
+        self,
+        *,
+        segment: RuntimeSegmentState,
+        segment_key: str,
+        resource_ids: list[str],
+        now: float,
+        core_id: str,
+    ) -> list[str]:
+        released: list[str] = []
+        for resource_id in reversed(resource_ids):
+            if resource_id not in self._held_resources.get(segment_key, set()):
+                continue
+            protocol = self._protocol_for_resource(resource_id)
+            release_result = protocol.release(segment_key, resource_id)
+            if release_result.priority_updates:
+                self._apply_priority_updates(release_result.priority_updates)
+            self._on_resource_release_result(
+                segment=segment,
+                segment_key=segment_key,
+                resource_id=resource_id,
+                release_result=release_result,
+                now=now,
+                core_id=core_id,
+                reason_override="acquire_rollback",
+            )
+            self._held_resources[segment_key].discard(resource_id)
+            released.append(resource_id)
+        return released
+
+    def _on_resource_release_result(
+        self,
+        *,
+        segment: RuntimeSegmentState,
+        segment_key: str,
+        resource_id: str,
+        release_result: Any,
+        now: float,
+        core_id: str,
+        reason_override: str | None = None,
+    ) -> None:
+        payload = {"segment_key": segment_key, **release_result.metadata}
+        if reason_override:
+            payload["reason"] = reason_override
+        self._event_bus.publish(
+            event_type=EventType.RESOURCE_RELEASE,
+            time=now,
+            correlation_id=segment.job_id,
+            job_id=segment.job_id,
+            segment_id=segment.segment_id,
+            core_id=core_id,
+            resource_id=resource_id,
+            payload=payload,
+        )
+        for woken_segment_key in release_result.woken:
+            woken_segment = self._segments.get(woken_segment_key)
+            if woken_segment is None or woken_segment.finished:
+                continue
+            if woken_segment.job_id in self._aborted_jobs:
+                continue
+            woken_segment.blocked = False
+            woken_segment.waiting_resource = None
+            self._ready.add(woken_segment_key)
+            self._event_bus.publish(
+                event_type=EventType.SEGMENT_UNBLOCKED,
+                time=now,
+                correlation_id=woken_segment.job_id,
+                job_id=woken_segment.job_id,
+                segment_id=woken_segment.segment_id,
+                core_id=core_id,
+                resource_id=resource_id,
+                payload={"segment_key": woken_segment_key},
+            )
 
     def _on_segment_finish(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]

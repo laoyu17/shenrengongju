@@ -13,7 +13,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RTOS Simulation Config",
   "type": "object",
-  "required": ["version", "platform", "resources", "tasks", "scheduler", "sim"],
+  "required": ["version", "platform", "tasks", "scheduler", "sim"],
   "properties": {
     "version": { "type": "string" },
     "platform": {
@@ -22,112 +22,161 @@
       "properties": {
         "processor_types": {
           "type": "array",
-          "items": { "$ref": "#/definitions/ProcessorType" }
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ProcessorType" }
         },
         "cores": {
           "type": "array",
-          "items": { "$ref": "#/definitions/Core" }
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Core" }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "resources": {
       "type": "array",
-      "items": { "$ref": "#/definitions/Resource" }
+      "items": { "$ref": "#/$defs/Resource" },
+      "default": []
     },
     "tasks": {
       "type": "array",
-      "items": { "$ref": "#/definitions/TaskGraph" }
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/TaskGraph" }
     },
     "scheduler": {
       "type": "object",
-      "required": ["name", "params"],
+      "required": ["name"],
       "properties": {
         "name": { "type": "string" },
-        "params": { "type": "object" }
-      }
+        "params": {
+          "type": "object",
+          "default": {},
+          "properties": {
+            "tie_breaker": { "type": "string" },
+            "allow_preempt": { "type": "boolean" },
+            "event_id_mode": { "type": "string" },
+            "event_id_validation": { "type": "string", "enum": ["warn", "strict"] },
+            "resource_acquire_policy": {
+              "type": "string",
+              "enum": ["legacy_sequential", "atomic_rollback"]
+            }
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "sim": {
       "type": "object",
       "required": ["duration", "seed"],
       "properties": {
-        "duration": { "type": "number" },
+        "duration": { "type": "number", "exclusiveMinimum": 0 },
         "seed": { "type": "integer" }
-      }
+      },
+      "additionalProperties": false
     }
   },
-  "definitions": {
+  "$defs": {
     "ProcessorType": {
       "type": "object",
       "required": ["id", "name", "core_count", "speed_factor"],
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
         "core_count": { "type": "integer", "minimum": 1 },
-        "speed_factor": { "type": "number", "minimum": 0 }
-      }
+        "speed_factor": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
     },
     "Core": {
       "type": "object",
       "required": ["id", "type_id", "speed_factor"],
       "properties": {
-        "id": { "type": "string" },
-        "type_id": { "type": "string" },
-        "speed_factor": { "type": "number", "minimum": 0 }
-      }
+        "id": { "type": "string", "minLength": 1 },
+        "type_id": { "type": "string", "minLength": 1 },
+        "speed_factor": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
     },
     "Resource": {
       "type": "object",
       "required": ["id", "name", "bound_core_id", "protocol"],
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "bound_core_id": { "type": "string" },
-        "protocol": { "type": "string" }
-      }
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "bound_core_id": { "type": "string", "minLength": 1 },
+        "protocol": { "type": "string", "enum": ["mutex", "pip", "pcp"] }
+      },
+      "additionalProperties": false
     },
     "TaskGraph": {
       "type": "object",
-      "required": ["id", "name", "task_type", "period", "deadline", "subtasks"],
+      "required": ["id", "name", "task_type", "subtasks"],
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
         "task_type": { "type": "string", "enum": ["time_deterministic", "dynamic_rt", "non_rt"] },
-        "period": { "type": "number" },
-        "deadline": { "type": "number" },
-        "arrival": { "type": "number" },
-        "abort_on_miss": { "type": "boolean" },
+        "period": { "type": "number", "exclusiveMinimum": 0 },
+        "deadline": { "type": "number", "exclusiveMinimum": 0 },
+        "arrival": { "type": "number", "minimum": 0 },
+        "phase_offset": { "type": "number", "minimum": 0 },
+        "min_inter_arrival": { "type": "number", "exclusiveMinimum": 0 },
+        "max_inter_arrival": { "type": "number", "exclusiveMinimum": 0 },
+        "abort_on_miss": { "type": "boolean", "default": false },
         "subtasks": {
           "type": "array",
-          "items": { "$ref": "#/definitions/Subtask" }
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Subtask" }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "Subtask": {
       "type": "object",
       "required": ["id", "segments"],
       "properties": {
-        "id": { "type": "string" },
-        "predecessors": { "type": "array", "items": { "type": "string" } },
-        "successors": { "type": "array", "items": { "type": "string" } },
+        "id": { "type": "string", "minLength": 1 },
+        "predecessors": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "successors": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
         "segments": {
           "type": "array",
-          "items": { "$ref": "#/definitions/Segment" }
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Segment" }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "Segment": {
       "type": "object",
       "required": ["id", "index", "wcet"],
       "properties": {
-        "id": { "type": "string" },
+        "id": { "type": "string", "minLength": 1 },
         "index": { "type": "integer", "minimum": 1 },
-        "wcet": { "type": "number" },
-        "acet": { "type": "number" },
-        "required_resources": { "type": "array", "items": { "type": "string" } },
-        "mapping_hint": { "type": ["string", "null"] }
-      }
+        "wcet": { "type": "number", "exclusiveMinimum": 0 },
+        "acet": { "type": "number", "exclusiveMinimum": 0 },
+        "required_resources": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "mapping_hint": { "type": ["string", "null"] },
+        "preemptible": { "type": "boolean", "default": true },
+        "release_offsets": {
+          "type": ["array", "null"],
+          "items": { "type": "number", "minimum": 0 }
+        }
+      },
+      "additionalProperties": false
     }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -193,6 +242,8 @@ scheduler:
     tie_breaker: fifo
     allow_preempt: true
     event_id_mode: deterministic
+    event_id_validation: warn
+    resource_acquire_policy: legacy_sequential
 
 sim:
   duration: 100
@@ -205,5 +256,16 @@ sim:
 - 分段 index 从 1 递增
 - mapping_hint 必须是存在的 core_id
 - `processor_types.speed_factor` 与 `cores.speed_factor` 必须 `> 0`
-- 实时任务必须提供 `deadline`，时间确定性任务必须提供 `period`
+- `resources` 非必填，默认 `[]`
+- `scheduler.params` 非必填，默认 `{}`
+- `scheduler.params.event_id_validation`：`warn | strict`（默认 `warn`）
+- `scheduler.params.resource_acquire_policy`：`legacy_sequential | atomic_rollback`（默认 `legacy_sequential`）
+- `TaskGraph.period/deadline` 非 schema 必填；语义层约束为：
+  - `time_deterministic` 必须提供 `period`
+  - 非 `non_rt` 任务必须提供 `deadline`
+- `TaskGraph.max_inter_arrival` 仅对 `dynamic_rt` 有效，且需满足：
+  - `min_inter_arrival`（或 `period` 推导值）存在
+  - `max_inter_arrival >= min_inter_arrival`
+- `phase_offset` 仅对 `time_deterministic` 有效（缺省会补为 `0.0`）
+- `Segment.release_offsets` 仅允许出现在 `time_deterministic` 任务中
 - 引用完整性：`required_resources`、`type_id`、`bound_core_id` 必须指向已定义实体

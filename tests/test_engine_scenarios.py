@@ -139,6 +139,55 @@ def test_at06_time_deterministic_is_repeatable() -> None:
     assert release_times == pytest.approx([0.0, 5.0, 10.0, 15.0])
 
 
+def test_dynamic_rt_random_inter_arrival_is_seeded_and_bounded() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "rand",
+                "name": "random-arrival-task",
+                "task_type": "dynamic_rt",
+                "deadline": 30.0,
+                "arrival": 0.0,
+                "min_inter_arrival": 1.0,
+                "max_inter_arrival": 3.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.2}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 12.0, "seed": 17},
+    }
+    events_a, _ = _run_payload(payload)
+    events_b, _ = _run_payload(deepcopy(payload))
+
+    release_times_a = [event["time"] for event in events_a if event["type"] == "JobReleased"]
+    release_times_b = [event["time"] for event in events_b if event["type"] == "JobReleased"]
+    assert release_times_a == pytest.approx(release_times_b)
+    assert len(release_times_a) >= 4
+
+    release_deltas = [release_times_a[idx + 1] - release_times_a[idx] for idx in range(len(release_times_a) - 1)]
+    assert all(1.0 - 1e-9 <= delta <= 3.0 + 1e-9 for delta in release_deltas)
+
+    payload["sim"]["seed"] = 23
+    events_c, _ = _run_payload(payload)
+    release_times_c = [event["time"] for event in events_c if event["type"] == "JobReleased"]
+    assert release_times_c != release_times_a
+
+
 def test_at07_heterogeneous_core_speed_scaling() -> None:
     events, metrics = _run_example("at07_heterogeneous_multicore.yaml")
 
@@ -333,6 +382,72 @@ def test_pcp_lock_holder_releases_before_waiting_high_task_starts() -> None:
         if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("high@")
     )
     assert high_start >= low_end - 1e-9
+
+
+def test_rm_pcp_non_rt_lock_holder_keeps_low_priority_ceiling() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "pcp"}],
+        "tasks": [
+            {
+                "id": "nonrt",
+                "name": "nonrt",
+                "task_type": "non_rt",
+                "arrival": 0.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 3.0, "required_resources": ["r0"]}],
+                    }
+                ],
+            },
+            {
+                "id": "rt",
+                "name": "rt",
+                "task_type": "time_deterministic",
+                "arrival": 0.0,
+                "period": 1.0,
+                "deadline": 1.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.2}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "rm", "params": {}},
+        "sim": {"duration": 4.0, "seed": 1},
+    }
+
+    events, _ = _run_payload(payload)
+    acquire = next(
+        event
+        for event in events
+        if event["type"] == "ResourceAcquire" and str(event.get("job_id", "")).startswith("nonrt@")
+    )
+    assert acquire["payload"]["ceiling_priority"] < -1e10
+
+    rt_1_start = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("rt@1")
+    )
+    assert rt_1_start == pytest.approx(1.0)
+    assert not any(
+        event["type"] == "DeadlineMiss" and str(event.get("job_id", "")).startswith("rt@")
+        for event in events
+    )
 
 
 def test_pcp_system_ceiling_does_not_false_block_high_priority_request() -> None:
@@ -656,6 +771,63 @@ def test_event_id_mode_supports_deterministic_and_random() -> None:
     random_a, _ = _run_payload(random_mode)
     random_b, _ = _run_payload(random_mode)
     assert [event["event_id"] for event in random_a] != [event["event_id"] for event in random_b]
+
+
+def test_event_id_mode_invalid_value_warns_and_falls_back_to_deterministic() -> None:
+    payload = _single_core_payload("mutex")
+    payload["resources"] = []
+    payload["tasks"] = [
+        {
+            "id": "t0",
+            "name": "task",
+            "task_type": "dynamic_rt",
+            "deadline": 10,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                }
+            ],
+        }
+    ]
+    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "warn"}
+
+    with pytest.warns(RuntimeWarning, match="invalid scheduler.params.event_id_mode"):
+        events_a, _ = _run_payload(payload)
+    with pytest.warns(RuntimeWarning, match="invalid scheduler.params.event_id_mode"):
+        events_b, _ = _run_payload(payload)
+
+    assert [event["event_id"] for event in events_a] == [event["event_id"] for event in events_b]
+
+
+def test_event_id_mode_invalid_value_strict_fails_build() -> None:
+    payload = _single_core_payload("mutex")
+    payload["resources"] = []
+    payload["tasks"] = [
+        {
+            "id": "t0",
+            "name": "task",
+            "task_type": "dynamic_rt",
+            "deadline": 10,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                }
+            ],
+        }
+    ]
+    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "strict"}
+    spec = ConfigLoader().load_data(payload)
+    engine = SimEngine()
+    with pytest.raises(ValueError, match="invalid scheduler.params.event_id_mode"):
+        engine.build(spec)
 
 
 def test_metric_report_includes_idle_cores() -> None:
@@ -1355,3 +1527,189 @@ def test_abort_cancel_emits_segment_unblocked_for_woken_waiter() -> None:
         if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("waiter@")
     )
     assert waiter_start >= wake_event["time"] - 1e-9
+
+
+def test_resource_acquire_policy_atomic_rollback_releases_partial_holds() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [
+            {"id": "r0", "name": "lock0", "bound_core_id": "c0", "protocol": "mutex"},
+            {"id": "r1", "name": "lock1", "bound_core_id": "c0", "protocol": "mutex"},
+        ],
+        "tasks": [
+            {
+                "id": "holder",
+                "name": "holder",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 50.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 4.0, "required_resources": ["r1"]}],
+                    }
+                ],
+            },
+            {
+                "id": "waiter",
+                "name": "waiter",
+                "task_type": "dynamic_rt",
+                "arrival": 0.1,
+                "deadline": 5.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1.0, "required_resources": ["r0", "r1"]}],
+                    }
+                ],
+            },
+            {
+                "id": "helper",
+                "name": "helper",
+                "task_type": "dynamic_rt",
+                "arrival": 0.2,
+                "deadline": 10.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.4, "required_resources": ["r0"]}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {
+            "name": "edf",
+            "params": {"resource_acquire_policy": "atomic_rollback"},
+        },
+        "sim": {"duration": 8.0, "seed": 17},
+    }
+
+    events, _ = _run_payload(payload)
+    waiter_blocked = next(
+        event
+        for event in events
+        if event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("waiter@")
+    )
+    assert waiter_blocked["payload"]["resource_acquire_policy"] == "atomic_rollback"
+    assert waiter_blocked["payload"]["rollback_applied"] is True
+    assert waiter_blocked["payload"]["rollback_released_resources"] == ["r0"]
+
+    rollback_release = next(
+        event
+        for event in events
+        if event["type"] == "ResourceRelease"
+        and str(event.get("job_id", "")).startswith("waiter@")
+        and event.get("resource_id") == "r0"
+        and event.get("payload", {}).get("reason") == "acquire_rollback"
+    )
+    helper_acquire = next(
+        event
+        for event in events
+        if event["type"] == "ResourceAcquire"
+        and str(event.get("job_id", "")).startswith("helper@")
+        and event.get("resource_id") == "r0"
+    )
+    assert helper_acquire["time"] >= rollback_release["time"] - 1e-9
+
+
+def test_resource_acquire_policy_legacy_keeps_partial_holds() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [
+            {"id": "r0", "name": "lock0", "bound_core_id": "c0", "protocol": "mutex"},
+            {"id": "r1", "name": "lock1", "bound_core_id": "c0", "protocol": "mutex"},
+        ],
+        "tasks": [
+            {
+                "id": "holder",
+                "name": "holder",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 50.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 4.0, "required_resources": ["r1"]}],
+                    }
+                ],
+            },
+            {
+                "id": "waiter",
+                "name": "waiter",
+                "task_type": "dynamic_rt",
+                "arrival": 0.1,
+                "deadline": 5.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1.0, "required_resources": ["r0", "r1"]}],
+                    }
+                ],
+            },
+            {
+                "id": "helper",
+                "name": "helper",
+                "task_type": "dynamic_rt",
+                "arrival": 0.2,
+                "deadline": 10.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.4, "required_resources": ["r0"]}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {
+            "name": "edf",
+            "params": {"resource_acquire_policy": "legacy_sequential"},
+        },
+        "sim": {"duration": 8.0, "seed": 17},
+    }
+
+    events, _ = _run_payload(payload)
+    waiter_blocked = next(
+        event
+        for event in events
+        if event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("waiter@")
+    )
+    assert waiter_blocked["payload"]["resource_acquire_policy"] == "legacy_sequential"
+    assert waiter_blocked["payload"]["rollback_applied"] is False
+    assert waiter_blocked["payload"]["rollback_released_resources"] == []
+    assert any(
+        event["type"] == "SegmentBlocked"
+        and str(event.get("job_id", "")).startswith("helper@")
+        and event.get("resource_id") == "r0"
+        and event.get("payload", {}).get("reason") == "resource_busy"
+        for event in events
+    )
+    assert not any(
+        event["type"] == "ResourceRelease"
+        and str(event.get("job_id", "")).startswith("waiter@")
+        and event.get("payload", {}).get("reason") == "acquire_rollback"
+        for event in events
+    )

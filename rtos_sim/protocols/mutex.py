@@ -37,7 +37,11 @@ class MutexResourceProtocol(IResourceProtocol):
         if segment_key not in self._waiters[resource_id]:
             self._waiters[resource_id].append(segment_key)
         self.on_block(segment_key, resource_id)
-        return ResourceRequestResult(False, "resource_busy")
+        return ResourceRequestResult(
+            False,
+            "resource_busy",
+            metadata={"owner_segment": owner},
+        )
 
     def release(self, segment_key: str, resource_id: str) -> ResourceReleaseResult:
         if self._owners[resource_id] != segment_key:

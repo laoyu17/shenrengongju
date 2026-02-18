@@ -41,7 +41,20 @@ CONFIG_SCHEMA: dict = {
             "required": ["name"],
             "properties": {
                 "name": {"type": "string"},
-                "params": {"type": "object", "default": {}},
+                "params": {
+                    "type": "object",
+                    "default": {},
+                    "properties": {
+                        "tie_breaker": {"type": "string"},
+                        "allow_preempt": {"type": "boolean"},
+                        "event_id_mode": {"type": "string"},
+                        "event_id_validation": {"type": "string", "enum": ["warn", "strict"]},
+                        "resource_acquire_policy": {
+                            "type": "string",
+                            "enum": ["legacy_sequential", "atomic_rollback"],
+                        },
+                    },
+                },
             },
             "additionalProperties": False,
         },
@@ -103,6 +116,7 @@ CONFIG_SCHEMA: dict = {
                 "arrival": {"type": "number", "minimum": 0},
                 "phase_offset": {"type": "number", "minimum": 0},
                 "min_inter_arrival": {"type": "number", "exclusiveMinimum": 0},
+                "max_inter_arrival": {"type": "number", "exclusiveMinimum": 0},
                 "abort_on_miss": {"type": "boolean", "default": False},
                 "subtasks": {
                     "type": "array",
