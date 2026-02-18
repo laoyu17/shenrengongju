@@ -32,8 +32,15 @@ rtos-sim ui -c examples/at01_single_dag_single_core.yaml
 # 批量实验（参数矩阵）
 rtos-sim batch-run -b examples/batch_matrix.yaml
 
+# 批量实验严格模式：任一子运行失败则返回非 0
+rtos-sim batch-run -b examples/batch_matrix.yaml --strict-fail-on-error
+
+# 对比两份指标文件（FR-13 MVP）
+rtos-sim compare --left-metrics artifacts/base_metrics.json --right-metrics artifacts/new_metrics.json \
+  --out-json artifacts/compare.json --out-csv artifacts/compare.csv
+
 # 性能基线（100/300 tasks，阈值可选）
-python scripts/perf_baseline.py --tasks 100,300 --max-wall-ms 1500,4000
+python scripts/perf_baseline.py --tasks 100,300,1000 --max-wall-ms 1500,4000,12000
 
 # 对比两份性能报告（周报）
 python scripts/perf_compare.py --base artifacts/perf/base.json --current artifacts/perf/new.json
@@ -56,6 +63,8 @@ python -m pytest
 - `scheduler.params.tie_breaker`：`fifo`（默认）/`lifo`/`segment_key`
 - `scheduler.params.allow_preempt`：是否允许抢占（默认 `true`）
 - `scheduler.params.event_id_mode`：`deterministic`（默认）/`random`/`seeded_random`
+- `scheduler.params.event_id_validation`：`warn`（默认）/`strict`
+- `scheduler.params.resource_acquire_policy`：`legacy_sequential`（默认）/`atomic_rollback`
 
 ## 指标口径（S4）
 
@@ -83,3 +92,4 @@ python -m pytest
 - 支持 DAG 连线（Shift+左键拖拽或右键拖拽），内置循环检测并即时提示。
 - 支持可选布局持久化（`ui_layout` 元数据，下次打开可复用）。
 - 支持表格单元格强校验（错误高亮 + 提交前阻断）。
+- 支持 FR-13 MVP 对比区：双方案指标差分 + JSON/CSV 导出。

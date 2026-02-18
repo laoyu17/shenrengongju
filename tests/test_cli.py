@@ -72,6 +72,85 @@ factors:
     assert payload["failed_runs"] == 0
 
 
+def test_cli_batch_run_strict_mode_returns_non_zero_on_failed_runs(tmp_path: Path) -> None:
+    base_config = tmp_path / "base.yaml"
+    base_config.write_text(
+        (EXAMPLES / "at01_single_dag_single_core.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    batch_config = tmp_path / "batch.yaml"
+    batch_config.write_text(
+        """
+version: "0.1"
+base_config: "base.yaml"
+output_dir: "out"
+factors:
+  tasks.*.task_type: ["dynamic_rt", "bad_type"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    code = main(["batch-run", "-b", str(batch_config), "--strict-fail-on-error"])
+    assert code == 2
+
+    payload = json.loads((tmp_path / "out" / "summary.json").read_text(encoding="utf-8"))
+    assert payload["total_runs"] == 2
+    assert payload["succeeded_runs"] == 1
+    assert payload["failed_runs"] == 1
+
+
+def test_cli_compare_outputs_json_and_csv(tmp_path: Path) -> None:
+    left = tmp_path / "left.json"
+    right = tmp_path / "right.json"
+    out_json = tmp_path / "compare.json"
+    out_csv = tmp_path / "compare.csv"
+    left.write_text(
+        json.dumps(
+            {
+                "jobs_completed": 5,
+                "deadline_miss_count": 1,
+                "core_utilization": {"c0": 0.5},
+            }
+        ),
+        encoding="utf-8",
+    )
+    right.write_text(
+        json.dumps(
+            {
+                "jobs_completed": 6,
+                "deadline_miss_count": 0,
+                "core_utilization": {"c0": 0.75},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = main(
+        [
+            "compare",
+            "--left-metrics",
+            str(left),
+            "--right-metrics",
+            str(right),
+            "--left-label",
+            "base",
+            "--right-label",
+            "new",
+            "--out-json",
+            str(out_json),
+            "--out-csv",
+            str(out_csv),
+        ]
+    )
+    assert code == 0
+    assert out_json.exists()
+    assert out_csv.exists()
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["left_label"] == "base"
+    assert payload["right_label"] == "new"
+    assert any(row["metric"] == "jobs_completed" for row in payload["scalar_metrics"])
+
+
 def test_cli_validate_rejects_unknown_scheduler(tmp_path: Path) -> None:
     config = tmp_path / "unknown_scheduler.yaml"
     config.write_text(

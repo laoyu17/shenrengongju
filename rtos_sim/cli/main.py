@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from rtos_sim.analysis import build_audit_report
+from rtos_sim.analysis import build_audit_report, build_compare_report, compare_report_to_rows
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
 
@@ -60,6 +60,27 @@ def _write_events_csv(path: str, rows: list[dict[str, Any]]) -> None:
                     "payload": json.dumps(row.get("payload", {}), ensure_ascii=False),
                 }
             )
+
+
+def _write_rows_csv(path: str, rows: list[dict[str, Any]]) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
+    with output.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _read_json(path: str) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ConfigError(f"metrics file must be object: {path}")
+    return payload
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -169,6 +190,36 @@ def cmd_batch_run(args: argparse.Namespace) -> int:
         f"runs={summary.total_runs}, success={summary.succeeded_runs}, failed={summary.failed_runs}, "
         f"csv={summary.summary_csv}, json={summary.summary_json}"
     )
+    if args.strict_fail_on_error and summary.failed_runs > 0:
+        print("[ERROR] batch simulation contains failed runs in strict mode")
+        return 2
+    return 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    try:
+        left_metrics = _read_json(args.left_metrics)
+        right_metrics = _read_json(args.right_metrics)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] {exc}")
+        return 1
+
+    report = build_compare_report(
+        left_metrics,
+        right_metrics,
+        left_label=args.left_label or "left",
+        right_label=args.right_label or "right",
+    )
+    if args.out_json:
+        _write_json(args.out_json, report)
+    if args.out_csv:
+        _write_rows_csv(args.out_csv, compare_report_to_rows(report))
+
+    print(
+        "[OK] metrics compare completed, "
+        f"left={args.left_metrics}, right={args.right_metrics}, "
+        f"json={args.out_json or '-'}, csv={args.out_csv or '-'}"
+    )
     return 0
 
 
@@ -206,7 +257,21 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--output-dir", default=None, help="batch output directory")
     batch_parser.add_argument("--summary-csv", default=None, help="summary CSV output path")
     batch_parser.add_argument("--summary-json", default=None, help="summary JSON output path")
+    batch_parser.add_argument(
+        "--strict-fail-on-error",
+        action="store_true",
+        help="return non-zero when any batch run fails",
+    )
     batch_parser.set_defaults(func=cmd_batch_run)
+
+    compare_parser = subparsers.add_parser("compare", help="compare two metrics json files")
+    compare_parser.add_argument("--left-metrics", required=True, help="left metrics JSON path")
+    compare_parser.add_argument("--right-metrics", required=True, help="right metrics JSON path")
+    compare_parser.add_argument("--left-label", default="left", help="left side label")
+    compare_parser.add_argument("--right-label", default="right", help="right side label")
+    compare_parser.add_argument("--out-json", default=None, help="compare report JSON path")
+    compare_parser.add_argument("--out-csv", default=None, help="compare rows CSV path")
+    compare_parser.set_defaults(func=cmd_compare)
 
     return parser
 

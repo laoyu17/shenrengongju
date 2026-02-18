@@ -76,6 +76,7 @@ class TaskGraphSpec(BaseModel):
     arrival: float = Field(default=0, ge=0)
     phase_offset: Optional[float] = Field(default=None, ge=0)
     min_inter_arrival: Optional[float] = Field(default=None, gt=0)
+    max_inter_arrival: Optional[float] = Field(default=None, gt=0)
     abort_on_miss: bool = False
     subtasks: list[SubtaskSpec] = Field(min_length=1)
 
@@ -91,6 +92,16 @@ class TaskGraphSpec(BaseModel):
             raise ValueError("real-time task must define deadline")
         if self.period is not None and self.min_inter_arrival is None:
             self.min_inter_arrival = self.period
+        if self.task_type != TaskType.DYNAMIC_RT and self.max_inter_arrival is not None:
+            raise ValueError("max_inter_arrival is only valid for dynamic_rt task")
+        if self.max_inter_arrival is not None and self.min_inter_arrival is None:
+            raise ValueError("max_inter_arrival requires min_inter_arrival or period")
+        if (
+            self.max_inter_arrival is not None
+            and self.min_inter_arrival is not None
+            and self.max_inter_arrival < self.min_inter_arrival - 1e-12
+        ):
+            raise ValueError("max_inter_arrival must be >= min_inter_arrival")
         if self.period is not None and self.deadline is not None and self.deadline <= 0:
             raise ValueError("deadline must be > 0")
         return self
@@ -101,6 +112,21 @@ class SchedulerSpec(BaseModel):
 
     name: str
     params: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_params(self) -> "SchedulerSpec":
+        policy = self.params.get("resource_acquire_policy")
+        if policy is not None and str(policy).strip() not in {"legacy_sequential", "atomic_rollback"}:
+            raise ValueError("scheduler.params.resource_acquire_policy must be legacy_sequential|atomic_rollback")
+
+        event_mode = self.params.get("event_id_mode")
+        if event_mode is not None and not isinstance(event_mode, str):
+            raise ValueError("scheduler.params.event_id_mode must be string")
+
+        validation = self.params.get("event_id_validation")
+        if validation is not None and str(validation).strip() not in {"warn", "strict"}:
+            raise ValueError("scheduler.params.event_id_validation must be warn|strict")
+        return self
 
 
 class SimSpec(BaseModel):
@@ -125,9 +151,20 @@ class PlatformSpec(BaseModel):
         if len(core_ids) != len(set(core_ids)):
             raise ValueError("duplicate cores.id")
         processor_set = set(processor_ids)
+        cores_by_type: dict[str, int] = defaultdict(int)
         for core in self.cores:
             if core.type_id not in processor_set:
                 raise ValueError(f"core {core.id} references unknown processor type {core.type_id}")
+            cores_by_type[core.type_id] += 1
+
+        for processor in self.processor_types:
+            actual = cores_by_type.get(processor.id, 0)
+            if actual != processor.core_count:
+                raise ValueError(
+                    "processor type "
+                    f"'{processor.id}' declares core_count={processor.core_count} "
+                    f"but has {actual} cores in platform.cores"
+                )
         return self
 
 

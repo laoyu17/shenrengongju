@@ -69,6 +69,7 @@ def test_unknown_mapping_hint_detected() -> None:
 
 def test_mapping_hint_conflicts_with_resource_bound_core_detected() -> None:
     payload = _base_payload()
+    payload["platform"]["processor_types"][0]["core_count"] = 2
     payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
     payload["resources"] = [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}]
     segment = payload["tasks"][0]["subtasks"][0]["segments"][0]
@@ -80,6 +81,7 @@ def test_mapping_hint_conflicts_with_resource_bound_core_detected() -> None:
 
 def test_resource_bound_core_is_applied_when_mapping_hint_missing() -> None:
     payload = _base_payload()
+    payload["platform"]["processor_types"][0]["core_count"] = 2
     payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
     payload["resources"] = [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}]
     payload["tasks"][0]["subtasks"][0]["segments"][0]["required_resources"] = ["r0"]
@@ -90,6 +92,7 @@ def test_resource_bound_core_is_applied_when_mapping_hint_missing() -> None:
 
 def test_segment_with_resources_bound_to_multiple_cores_is_rejected() -> None:
     payload = _base_payload()
+    payload["platform"]["processor_types"][0]["core_count"] = 2
     payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
     payload["resources"] = [
         {"id": "r0", "name": "lock0", "bound_core_id": "c0", "protocol": "mutex"},
@@ -114,6 +117,7 @@ def test_time_deterministic_defaults_phase_and_release_offsets() -> None:
 
 def test_time_deterministic_requires_mapping_hint_on_multicore_when_not_derivable() -> None:
     payload = _base_payload()
+    payload["platform"]["processor_types"][0]["core_count"] = 2
     payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
     task = payload["tasks"][0]
     task["task_type"] = "time_deterministic"
@@ -143,4 +147,28 @@ def test_release_offset_must_be_less_than_period() -> None:
     task["period"] = 5
     task["subtasks"][0]["segments"][0]["release_offsets"] = [5.0]
     with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)
+
+
+def test_processor_type_core_count_must_match_declared_cores() -> None:
+    payload = _base_payload()
+    payload["platform"]["processor_types"][0]["core_count"] = 2
+    with pytest.raises(ConfigError, match="core_count"):
+        ConfigLoader().load_data(payload)
+
+
+def test_dynamic_rt_random_arrival_requires_min_inter_arrival() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["max_inter_arrival"] = 2.0
+    payload["tasks"][0].pop("period", None)
+    payload["tasks"][0].pop("min_inter_arrival", None)
+    with pytest.raises(ConfigError, match="max_inter_arrival requires"):
+        ConfigLoader().load_data(payload)
+
+
+def test_dynamic_rt_max_inter_arrival_must_be_ge_min_inter_arrival() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["min_inter_arrival"] = 3.0
+    payload["tasks"][0]["max_inter_arrival"] = 2.0
+    with pytest.raises(ConfigError, match="max_inter_arrival must be"):
         ConfigLoader().load_data(payload)
