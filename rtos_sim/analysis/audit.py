@@ -22,6 +22,22 @@ def _event_segment_key(event: dict[str, Any]) -> str | None:
     return None
 
 
+def _resource_hold_key(event: dict[str, Any]) -> tuple[str, str | None]:
+    segment_key = _event_segment_key(event)
+    if segment_key:
+        segment_identity = f"segment_key:{segment_key}"
+    else:
+        # Backward-compatible fallback for legacy events missing payload.segment_key.
+        job_id = event.get("job_id")
+        segment_id = event.get("segment_id")
+        correlation_id = event.get("correlation_id")
+        segment_identity = f"legacy:{job_id}:{segment_id}:{correlation_id}"
+    resource_id = event.get("resource_id")
+    if not isinstance(resource_id, str) or not resource_id:
+        resource_id = None
+    return segment_identity, resource_id
+
+
 def _find_wait_cycle(wait_for: dict[str, str], start: str) -> list[str]:
     index_by_segment: dict[str, int] = {}
     path: list[str] = []
@@ -39,16 +55,12 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
     issues: list[dict[str, Any]] = []
     checks: dict[str, Any] = {}
 
-    active_holds: defaultdict[tuple[str | None, str | None, str | None], int] = defaultdict(int)
+    active_holds: defaultdict[tuple[str, str | None], int] = defaultdict(int)
     for event in events:
         event_type = event.get("type")
         if event_type not in {"ResourceAcquire", "ResourceRelease"}:
             continue
-        key = (
-            event.get("job_id"),
-            event.get("segment_id"),
-            event.get("resource_id"),
-        )
+        key = _resource_hold_key(event)
         if event_type == "ResourceAcquire":
             active_holds[key] += 1
         else:
@@ -215,6 +227,119 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
         "passed": not partial_hold_issues,
     }
 
+    pip_chain_issues: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("type") != "SegmentBlocked":
+            continue
+        payload = event.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        if payload.get("reason") != "resource_busy":
+            continue
+
+        segment_key = _event_segment_key(event)
+        owner_segment = payload.get("owner_segment")
+        if not isinstance(segment_key, str) or not segment_key:
+            pip_chain_issues.append(
+                {
+                    "event_id": event.get("event_id"),
+                    "reason": "missing_segment_key",
+                }
+            )
+            continue
+        if not isinstance(owner_segment, str) or not owner_segment:
+            pip_chain_issues.append(
+                {
+                    "event_id": event.get("event_id"),
+                    "segment_key": segment_key,
+                    "reason": "missing_owner_segment",
+                }
+            )
+            continue
+        if owner_segment == segment_key:
+            pip_chain_issues.append(
+                {
+                    "event_id": event.get("event_id"),
+                    "segment_key": segment_key,
+                    "owner_segment": owner_segment,
+                    "reason": "self_owner_segment",
+                }
+            )
+
+    if pip_chain_issues:
+        issues.append(
+            {
+                "rule": "pip_priority_chain_consistency",
+                "severity": "error",
+                "message": "resource_busy events must expose a valid owner_segment chain",
+                "samples": pip_chain_issues[:20],
+            }
+        )
+    checks["pip_priority_chain_consistency"] = {"passed": not pip_chain_issues}
+
+    pcp_ceiling_blocked: dict[str, dict[str, Any]] = {}
+    for event in events:
+        event_type = event.get("type")
+        payload = event.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if event_type == "SegmentBlocked" and payload.get("reason") == "system_ceiling_block":
+            segment_key = _event_segment_key(event)
+            if isinstance(segment_key, str) and segment_key:
+                pcp_ceiling_blocked[segment_key] = {
+                    "event_id": event.get("event_id"),
+                    "resource_id": event.get("resource_id"),
+                }
+            continue
+
+        if event_type == "SegmentUnblocked":
+            segment_key = _event_segment_key(event)
+            if isinstance(segment_key, str) and segment_key in pcp_ceiling_blocked:
+                pcp_ceiling_blocked.pop(segment_key, None)
+            continue
+
+        if event_type == "JobComplete":
+            job_id = event.get("job_id")
+            if isinstance(job_id, str) and job_id:
+                prefix = f"{job_id}:"
+                for key in [segment for segment in pcp_ceiling_blocked if segment.startswith(prefix)]:
+                    pcp_ceiling_blocked.pop(key, None)
+            continue
+
+        if event_type == "DeadlineMiss" and payload.get("abort_on_miss"):
+            job_id = event.get("job_id")
+            if isinstance(job_id, str) and job_id:
+                prefix = f"{job_id}:"
+                for key in [segment for segment in pcp_ceiling_blocked if segment.startswith(prefix)]:
+                    pcp_ceiling_blocked.pop(key, None)
+            continue
+
+        if event_type == "Preempt" and payload.get("reason") in {"abort_on_miss", "abort_on_error"}:
+            job_id = event.get("job_id")
+            if isinstance(job_id, str) and job_id:
+                prefix = f"{job_id}:"
+                for key in [segment for segment in pcp_ceiling_blocked if segment.startswith(prefix)]:
+                    pcp_ceiling_blocked.pop(key, None)
+
+    unresolved_ceiling = [
+        {
+            "segment_key": segment_key,
+            **sample,
+        }
+        for segment_key, sample in sorted(pcp_ceiling_blocked.items())
+    ]
+    if unresolved_ceiling:
+        issues.append(
+            {
+                "rule": "pcp_ceiling_transition_consistency",
+                "severity": "error",
+                "message": "segments blocked by system ceiling must be unblocked or terminally cleared",
+                "samples": unresolved_ceiling[:20],
+            }
+        )
+    checks["pcp_ceiling_transition_consistency"] = {"passed": not unresolved_ceiling}
+
     wait_for: dict[str, str] = {}
     resource_owner: dict[str, str] = {}
     deadlock_samples: list[dict[str, Any]] = []
@@ -285,7 +410,18 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
             wait_for.pop(segment_key, None)
             continue
 
-        if event_type in {"JobComplete", "DeadlineMiss"} and isinstance(job_id, str) and job_id:
+        if event_type == "JobComplete" and isinstance(job_id, str) and job_id:
+            prefix = f"{job_id}:"
+            for waiter in [key for key in wait_for if key.startswith(prefix)]:
+                wait_for.pop(waiter, None)
+            for rid, owner in list(resource_owner.items()):
+                if owner.startswith(prefix):
+                    resource_owner.pop(rid, None)
+            continue
+
+        if event_type == "DeadlineMiss" and isinstance(job_id, str) and job_id:
+            if not payload.get("abort_on_miss"):
+                continue
             prefix = f"{job_id}:"
             for waiter in [key for key in wait_for if key.startswith(prefix)]:
                 wait_for.pop(waiter, None)
