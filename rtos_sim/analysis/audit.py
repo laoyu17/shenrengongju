@@ -97,6 +97,7 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
     checks["abort_cancel_release_visibility"] = {"passed": not missing_cancel_release_jobs}
 
     priority_domain_issues: list[dict[str, Any]] = []
+    ceiling_numeric_domain_issues: list[dict[str, Any]] = []
     if _is_edf_scheduler(scheduler_name):
         for event in events:
             if event.get("type") != "SegmentBlocked":
@@ -114,6 +115,14 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
                         "observed": priority_domain,
                     }
                 )
+            system_ceiling = payload.get("system_ceiling")
+            if isinstance(system_ceiling, (int, float)) and system_ceiling >= 0:
+                ceiling_numeric_domain_issues.append(
+                    {
+                        "event_id": event.get("event_id"),
+                        "system_ceiling": float(system_ceiling),
+                    }
+                )
     if priority_domain_issues:
         issues.append(
             {
@@ -125,6 +134,19 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
         )
     checks["pcp_priority_domain_alignment"] = {
         "passed": not priority_domain_issues,
+        "scheduler": scheduler_name,
+    }
+    if ceiling_numeric_domain_issues:
+        issues.append(
+            {
+                "rule": "pcp_ceiling_numeric_domain",
+                "severity": "error",
+                "message": "EDF + PCP system_ceiling should remain in negative priority domain",
+                "samples": ceiling_numeric_domain_issues[:20],
+            }
+        )
+    checks["pcp_ceiling_numeric_domain"] = {
+        "passed": not ceiling_numeric_domain_issues,
         "scheduler": scheduler_name,
     }
 

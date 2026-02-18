@@ -265,7 +265,7 @@ def test_pip_owner_inherits_priority_after_blocking() -> None:
     assert str(next_start["job_id"]).startswith("low@")
 
 
-def test_pcp_ceiling_prevents_medium_task_from_preempting_lock_holder() -> None:
+def test_pcp_lock_holder_releases_before_waiting_high_task_starts() -> None:
     payload = _single_core_payload("pcp")
     payload["tasks"] = [
         {
@@ -303,7 +303,7 @@ def test_pcp_ceiling_prevents_medium_task_from_preempting_lock_holder() -> None:
             "name": "high",
             "task_type": "dynamic_rt",
             "deadline": 5,
-            "arrival": 2.0,
+            "arrival": 0.1,
             "subtasks": [
                 {
                     "id": "s0",
@@ -327,15 +327,15 @@ def test_pcp_ceiling_prevents_medium_task_from_preempting_lock_holder() -> None:
         for event in events
         if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("low@")
     )
-    med_start = next(
+    high_start = next(
         event["time"]
         for event in events
-        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("med@")
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("high@")
     )
-    assert med_start >= low_end - 1e-9
+    assert high_start >= low_end - 1e-9
 
 
-def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
+def test_pcp_system_ceiling_does_not_false_block_high_priority_request() -> None:
     payload = {
         "version": "0.2",
         "platform": {
@@ -379,10 +379,10 @@ def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
             ],
         },
         {
-            "id": "med",
-            "name": "med",
+            "id": "high",
+            "name": "high",
             "task_type": "dynamic_rt",
-            "deadline": 20,
+            "deadline": 5,
             "arrival": 0.5,
             "subtasks": [
                 {
@@ -401,12 +401,77 @@ def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
                 }
             ],
         },
+    ]
+
+    events, _ = _run_payload(payload)
+    assert not any(
+        event["type"] == "SegmentBlocked"
+        and str(event.get("job_id", "")).startswith("high@")
+        and event.get("payload", {}).get("reason") == "system_ceiling_block"
+        for event in events
+    )
+    low_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("low@")
+    )
+    high_start = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("high@")
+    )
+    assert high_start < low_end - 1e-9
+
+
+def test_pcp_system_ceiling_blocks_lower_priority_when_higher_priority_waits() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 2, "speed_factor": 1.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "CPU", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "CPU", "speed_factor": 1.0},
+            ],
+        },
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 20, "seed": 7},
+    }
+    payload["resources"] = [
+        {"id": "r0", "name": "lockA", "bound_core_id": "c0", "protocol": "pcp"},
+        {"id": "r1", "name": "lockB", "bound_core_id": "c1", "protocol": "pcp"},
+    ]
+    payload["tasks"] = [
+        {
+            "id": "low",
+            "name": "low",
+            "task_type": "dynamic_rt",
+            "deadline": 50,
+            "arrival": 0,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [
+                        {
+                            "id": "seg0",
+                            "index": 1,
+                            "wcet": 4,
+                            "required_resources": ["r0"],
+                            "mapping_hint": "c0",
+                        }
+                    ],
+                }
+            ],
+        },
         {
             "id": "high",
             "name": "high",
             "task_type": "dynamic_rt",
             "deadline": 5,
-            "arrival": 2,
+            "arrival": 0.1,
             "subtasks": [
                 {
                     "id": "s0",
@@ -424,6 +489,29 @@ def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
                 }
             ],
         },
+        {
+            "id": "med",
+            "name": "med",
+            "task_type": "dynamic_rt",
+            "deadline": 20,
+            "arrival": 0.2,
+            "subtasks": [
+                {
+                    "id": "s0",
+                    "predecessors": [],
+                    "successors": [],
+                    "segments": [
+                        {
+                            "id": "seg0",
+                            "index": 1,
+                            "wcet": 1,
+                            "required_resources": ["r1"],
+                            "mapping_hint": "c1",
+                        }
+                    ],
+                }
+            ],
+        },
     ]
 
     events, _ = _run_payload(payload)
@@ -434,12 +522,18 @@ def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
     )
     assert blocked["payload"]["reason"] == "system_ceiling_block"
     assert blocked["payload"]["priority_domain"] == "absolute_deadline"
+    assert blocked["payload"]["system_ceiling"] < 0
+    high_end = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentEnd" and str(event.get("job_id", "")).startswith("high@")
+    )
     med_start = next(
         event["time"]
         for event in events
         if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("med@")
     )
-    assert med_start >= 5.0
+    assert med_start >= high_end - 1e-9
 
 
 def test_scheduler_allow_preempt_parameter_can_disable_preemption() -> None:

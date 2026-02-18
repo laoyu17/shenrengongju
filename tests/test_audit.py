@@ -67,3 +67,22 @@ def test_audit_detects_pcp_priority_domain_mismatch() -> None:
     report = build_audit_report(events, scheduler_name="edf")
     assert report["status"] == "fail"
     assert any(issue["rule"] == "pcp_priority_domain_alignment" for issue in report["issues"])
+
+
+def test_audit_detects_non_negative_system_ceiling_in_edf() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "SegmentBlocked",
+            "job_id": "task@0",
+            "payload": {
+                "reason": "system_ceiling_block",
+                "priority_domain": "absolute_deadline",
+                "system_ceiling": 0.0,
+            },
+        }
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+    assert report["status"] == "fail"
+    assert any(issue["rule"] == "pcp_ceiling_numeric_domain" for issue in report["issues"])

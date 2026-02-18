@@ -61,6 +61,25 @@ def test_pcp_system_ceiling_block_and_deferred_wake() -> None:
     assert "waiter" in release.woken
 
 
+def test_pcp_dynamic_ceiling_update_changes_block_decision() -> None:
+    protocol = PCPResourceProtocol()
+    protocol.configure(
+        {
+            "r0": ResourceRuntimeSpec(bound_core_id="c0", ceiling_priority=-1e18),
+            "r1": ResourceRuntimeSpec(bound_core_id="c0", ceiling_priority=-1e18),
+        }
+    )
+    protocol.set_priority_domain("absolute_deadline")
+
+    assert protocol.request("owner", "r0", "c0", priority=-50.0).granted is True
+    protocol.update_resource_ceilings({"r0": -5.0, "r1": -20.0})
+    blocked = protocol.request("waiter", "r1", "c0", priority=-20.0)
+
+    assert blocked.granted is False
+    assert blocked.reason == "system_ceiling_block"
+    assert blocked.metadata["system_ceiling"] == -5.0
+
+
 def test_pcp_cancel_segment_releases_owned_resources_and_noop_for_unknown() -> None:
     protocol = PCPResourceProtocol()
     protocol.configure(_resources("r0", "r1", ceiling=4.0))

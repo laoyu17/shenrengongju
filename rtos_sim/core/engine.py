@@ -299,10 +299,11 @@ class SimEngine(ISimEngine):
 
     def _build_resource_runtime_specs(self, spec: ModelSpec) -> dict[str, ResourceRuntimeSpec]:
         if self._is_edf_scheduler_name(spec.scheduler.name):
+            lowest = self._lowest_priority_value()
             return {
                 resource.id: ResourceRuntimeSpec(
                     bound_core_id=resource.bound_core_id,
-                    ceiling_priority=0.0,
+                    ceiling_priority=lowest,
                 )
                 for resource in spec.resources
             }
@@ -358,7 +359,8 @@ class SimEngine(ISimEngine):
     def _refresh_runtime_resource_ceilings(self) -> None:
         if not self._is_edf_scheduler() or not self._protocol_resources:
             return
-        ceilings = {resource_id: 0.0 for resource_id in self._resource_protocols}
+        lowest = self._lowest_priority_value()
+        ceilings = {resource_id: lowest for resource_id in self._resource_protocols}
         for job_id, priority_value in self._active_job_priorities.items():
             job_runtime = self._jobs.get(job_id)
             if job_runtime is None:
