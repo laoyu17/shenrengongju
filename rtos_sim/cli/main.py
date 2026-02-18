@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from rtos_sim.analysis import build_audit_report
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
 
@@ -126,6 +127,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     _write_json(metrics_out, metrics)
     if args.events_csv_out:
         _write_events_csv(args.events_csv_out, events)
+    if args.audit_out:
+        audit_report = build_audit_report(events, scheduler_name=spec.scheduler.name)
+        _write_json(args.audit_out, audit_report)
+        if audit_report["status"] != "pass":
+            print(f"[ERROR] simulation audit failed, report={args.audit_out}")
+            return 2
 
     print(
         f"[OK] simulation completed, events={len(events)}, now={engine.now:.3f}, "
@@ -179,6 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--events-out", default=None, help="path to write JSONL events")
     run_parser.add_argument("--events-csv-out", default=None, help="path to write CSV events")
     run_parser.add_argument("--metrics-out", default=None, help="path to write metric JSON")
+    run_parser.add_argument("--audit-out", default=None, help="path to write audit report JSON")
     run_parser.add_argument("--step", action="store_true", help="execute simulation by step loop")
     run_parser.add_argument("--delta", type=float, default=None, help="delta for --step mode")
     run_parser.add_argument(

@@ -20,6 +20,7 @@ class PCPResourceProtocol(IResourceProtocol):
         self._segment_effective_priority: dict[str, float] = {}
         self._ceiling_blocked: dict[str, tuple[str, float]] = {}
         self._waiter_order = 0
+        self._priority_domain = "unspecified"
 
     def configure(self, resources: dict[str, ResourceRuntimeSpec]) -> None:
         self._bound_cores = {resource_id: spec.bound_core_id for resource_id, spec in resources.items()}
@@ -31,6 +32,14 @@ class PCPResourceProtocol(IResourceProtocol):
         self._segment_effective_priority = {}
         self._ceiling_blocked = {}
         self._waiter_order = 0
+
+    def update_resource_ceilings(self, ceilings: dict[str, float]) -> None:
+        for resource_id, ceiling in ceilings.items():
+            if resource_id in self._ceilings:
+                self._ceilings[resource_id] = float(ceiling)
+
+    def set_priority_domain(self, domain: str) -> None:
+        self._priority_domain = str(domain).strip() or "unspecified"
 
     def request(
         self, segment_key: str, resource_id: str, core_id: str, priority: float
@@ -49,7 +58,10 @@ class PCPResourceProtocol(IResourceProtocol):
                 return ResourceRequestResult(
                     False,
                     "system_ceiling_block",
-                    metadata={"system_ceiling": system_ceiling},
+                    metadata={
+                        "system_ceiling": system_ceiling,
+                        "priority_domain": self._priority_domain,
+                    },
                 )
             self._owners[resource_id] = segment_key
             self._held_by_segment[segment_key].add(resource_id)
@@ -57,7 +69,10 @@ class PCPResourceProtocol(IResourceProtocol):
             return ResourceRequestResult(
                 True,
                 priority_updates=updates,
-                metadata={"ceiling_priority": self._ceilings.get(resource_id, priority)},
+                metadata={
+                    "ceiling_priority": self._ceilings.get(resource_id, priority),
+                    "priority_domain": self._priority_domain,
+                },
             )
         if owner == segment_key:
             updates = self._recompute_segment_priority(segment_key)

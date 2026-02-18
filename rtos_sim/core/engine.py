@@ -89,6 +89,8 @@ class SimEngine(ISimEngine):
         self._scheduler: IScheduler | None = None
         self._protocol: IResourceProtocol | None = None
         self._resource_protocols: dict[str, IResourceProtocol] = {}
+        self._protocol_resources: dict[IResourceProtocol, set[str]] = {}
+        self._resource_bound_cores: dict[str, str] = {}
         self._etm: IExecutionTimeModel | None = None
         self._overheads: IOverheadModel | None = None
 
@@ -103,6 +105,8 @@ class SimEngine(ISimEngine):
         self._segment_to_subtask: dict[str, tuple[str, str]] = {}
         self._aborted_jobs: set[str] = set()
         self._deterministic_hyper_period: float | None = None
+        self._task_resource_usage: dict[str, set[str]] = {}
+        self._active_job_priorities: dict[str, float] = {}
 
         self._paused = False
         self._stopped = False
@@ -128,6 +132,7 @@ class SimEngine(ISimEngine):
             spec.scheduler.params,
         )
         self._scheduler.init(ScheduleContext(core_ids=[core.id for core in spec.platform.cores]))
+        self._task_resource_usage = self._index_task_resource_usage(spec)
 
         self._setup_protocols(spec)
 
@@ -197,6 +202,8 @@ class SimEngine(ISimEngine):
         self._scheduler = None
         self._protocol = None
         self._resource_protocols = {}
+        self._protocol_resources = {}
+        self._resource_bound_cores = {}
         self._etm = None
         self._overheads = None
         self._cores = {}
@@ -210,6 +217,8 @@ class SimEngine(ISimEngine):
         self._segment_to_subtask = {}
         self._aborted_jobs = set()
         self._deterministic_hyper_period = None
+        self._task_resource_usage = {}
+        self._active_job_priorities = {}
         self._paused = False
         self._stopped = False
 
@@ -247,12 +256,19 @@ class SimEngine(ISimEngine):
     def _setup_protocols(self, spec: ModelSpec) -> None:
         resource_specs = self._build_resource_runtime_specs(spec)
         self._resource_protocols = {}
+        self._protocol_resources = {}
+        self._resource_bound_cores = {
+            resource_id: runtime_spec.bound_core_id for resource_id, runtime_spec in resource_specs.items()
+        }
 
         if self._external_protocol is not None:
             self._protocol = self._external_protocol
             self._protocol.configure(resource_specs)
             for resource_id in resource_specs:
                 self._resource_protocols[resource_id] = self._protocol
+            self._protocol_resources[self._protocol] = set(resource_specs)
+            self._configure_protocol_priority_domain(self._protocol)
+            self._refresh_runtime_resource_ceilings()
             return
 
         if not spec.resources:
@@ -268,16 +284,28 @@ class SimEngine(ISimEngine):
         for protocol_name, protocol_resources in grouped.items():
             protocol = create_protocol(protocol_name)
             protocol.configure(protocol_resources)
+            self._configure_protocol_priority_domain(protocol)
             if self._protocol is None:
                 self._protocol = protocol
             for resource_id in protocol_resources:
                 self._resource_protocols[resource_id] = protocol
+                self._protocol_resources.setdefault(protocol, set()).add(resource_id)
 
         if self._protocol is None:
             self._protocol = create_protocol("mutex")
             self._protocol.configure({})
+            self._configure_protocol_priority_domain(self._protocol)
+        self._refresh_runtime_resource_ceilings()
 
     def _build_resource_runtime_specs(self, spec: ModelSpec) -> dict[str, ResourceRuntimeSpec]:
+        if self._is_edf_scheduler_name(spec.scheduler.name):
+            return {
+                resource.id: ResourceRuntimeSpec(
+                    bound_core_id=resource.bound_core_id,
+                    ceiling_priority=0.0,
+                )
+                for resource in spec.resources
+            }
         resource_ceilings: dict[str, float] = {
             resource.id: self._lowest_priority_value() for resource in spec.resources
         }
@@ -299,6 +327,63 @@ class SimEngine(ISimEngine):
                 ceiling_priority=ceiling,
             )
         return runtime_specs
+
+    @staticmethod
+    def _index_task_resource_usage(spec: ModelSpec) -> dict[str, set[str]]:
+        usage: dict[str, set[str]] = {}
+        for task in spec.tasks:
+            task_resources: set[str] = set()
+            for subtask in task.subtasks:
+                for segment in subtask.segments:
+                    task_resources.update(segment.required_resources)
+            usage[task.id] = task_resources
+        return usage
+
+    @staticmethod
+    def _is_edf_scheduler_name(name: str) -> bool:
+        scheduler_name = str(name).strip().lower()
+        return scheduler_name in {"edf", "earliest_deadline_first"}
+
+    def _is_edf_scheduler(self) -> bool:
+        if self._spec is None:
+            return False
+        return self._is_edf_scheduler_name(self._spec.scheduler.name)
+
+    def _configure_protocol_priority_domain(self, protocol: IResourceProtocol) -> None:
+        if self._is_edf_scheduler():
+            protocol.set_priority_domain("absolute_deadline")
+            return
+        protocol.set_priority_domain("fixed_priority")
+
+    def _refresh_runtime_resource_ceilings(self) -> None:
+        if not self._is_edf_scheduler() or not self._protocol_resources:
+            return
+        ceilings = {resource_id: 0.0 for resource_id in self._resource_protocols}
+        for job_id, priority_value in self._active_job_priorities.items():
+            job_runtime = self._jobs.get(job_id)
+            if job_runtime is None:
+                continue
+            for resource_id in self._task_resource_usage.get(job_runtime.state.task_id, set()):
+                if resource_id in ceilings:
+                    ceilings[resource_id] = max(ceilings[resource_id], priority_value)
+
+        for protocol, resource_ids in self._protocol_resources.items():
+            protocol.update_resource_ceilings(
+                {
+                    resource_id: ceilings.get(resource_id, 0.0)
+                    for resource_id in resource_ids
+                }
+            )
+
+    def _register_active_job_priority(self, job_id: str, priority_value: float) -> None:
+        self._active_job_priorities[job_id] = float(priority_value)
+        self._refresh_runtime_resource_ceilings()
+
+    def _unregister_active_job_priority(self, job_id: str) -> None:
+        if job_id not in self._active_job_priorities:
+            return
+        self._active_job_priorities.pop(job_id, None)
+        self._refresh_runtime_resource_ceilings()
 
     def _protocol_for_resource(self, resource_id: str) -> IResourceProtocol:
         protocol = self._resource_protocols.get(resource_id)
@@ -503,6 +588,7 @@ class SimEngine(ISimEngine):
                 )
 
             self._jobs[job_id] = JobRuntime(state=job_state, task=task, subtasks=subtasks)
+            self._register_active_job_priority(job_id, base_priority)
 
             self._event_bus.publish(
                 event_type=EventType.JOB_RELEASED,
@@ -776,6 +862,23 @@ class SimEngine(ISimEngine):
         if segment.finished or segment.job_id in self._aborted_jobs:
             self._ready.discard(segment_key)
             return "dropped"
+        if segment.mapping_hint is not None and segment.mapping_hint != core_id:
+            self._event_bus.publish(
+                event_type=EventType.ERROR,
+                time=now,
+                correlation_id=segment.job_id,
+                job_id=segment.job_id,
+                segment_id=segment.segment_id,
+                core_id=core_id,
+                payload={
+                    "reason": "mapping_hint_violation",
+                    "segment_key": segment_key,
+                    "expected_core": segment.mapping_hint,
+                    "requested_core": core_id,
+                },
+            )
+            self._abort_job(segment.job_id, now, preempt_reason="abort_on_error")
+            return "error"
 
         for resource_id in segment.required_resources:
             if resource_id in self._held_resources[segment_key]:
@@ -998,6 +1101,7 @@ class SimEngine(ISimEngine):
         if all(job_runtime.state.subtask_completion.values()):
             job_runtime.state.completed = True
             self._scheduler.on_complete(segment.job_id)
+            self._unregister_active_job_priority(segment.job_id)
             self._event_bus.publish(
                 event_type=EventType.JOB_COMPLETE,
                 time=now,
@@ -1040,11 +1144,15 @@ class SimEngine(ISimEngine):
             if segment_key.startswith(f"{job_id}:")
         ]
         segment_protocols: dict[str, list[IResourceProtocol]] = {}
+        segment_release_cores: dict[str, str | None] = {}
+        segment_released_resources: dict[str, list[str]] = {}
         for segment_key in segment_keys:
             segment = self._segments.get(segment_key)
             if segment is None:
                 continue
             segment_protocols[segment_key] = self._protocols_for_segment(segment)
+            segment_release_cores[segment_key] = segment.running_on
+            segment_released_resources[segment_key] = sorted(self._held_resources.get(segment_key, set()))
 
         for core in self._cores.values():
             if core.running_segment_key and core.running_segment_key.startswith(f"{job_id}:"):
@@ -1095,12 +1203,31 @@ class SimEngine(ISimEngine):
                             **cancel_result.metadata,
                         },
                     )
+            segment = self._segments.get(segment_key)
+            for resource_id in segment_released_resources.get(segment_key, []):
+                self._event_bus.publish(
+                    event_type=EventType.RESOURCE_RELEASE,
+                    time=now,
+                    correlation_id=segment.job_id if segment is not None else job_id,
+                    job_id=segment.job_id if segment is not None else job_id,
+                    segment_id=segment.segment_id if segment is not None else None,
+                    core_id=self._resource_bound_cores.get(
+                        resource_id,
+                        segment_release_cores.get(segment_key),
+                    ),
+                    resource_id=resource_id,
+                    payload={
+                        "segment_key": segment_key,
+                        "reason": "cancel_segment",
+                    },
+                )
 
         for segment_key in segment_keys:
             segment = self._segments.get(segment_key)
             if segment is not None:
                 segment.finished = True
             self._held_resources[segment_key] = set()
+        self._unregister_active_job_priority(job_id)
 
     def _protocols_for_segment(self, segment: RuntimeSegmentState) -> list[IResourceProtocol]:
         unique: dict[int, IResourceProtocol] = {}

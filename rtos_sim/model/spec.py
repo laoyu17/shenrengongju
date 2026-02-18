@@ -249,6 +249,14 @@ class ModelSpec(BaseModel):
                             f"task '{task.id}' segment '{seg.id}' mapping_hint '{seg.mapping_hint}' "
                             f"conflicts with required resource core '{bound_core_id}'"
                         )
+                if task.task_type == TaskType.TIME_DETERMINISTIC and seg.mapping_hint is None:
+                    if len(core_ids) == 1:
+                        seg.mapping_hint = sorted(core_ids)[0]
+                    else:
+                        raise ValueError(
+                            f"task '{task.id}' segment '{seg.id}' requires mapping_hint for "
+                            "time_deterministic task on multi-core platform"
+                        )
 
         indegree: dict[str, int] = {sub_id: 0 for sub_id in subtask_ids}
         for src, dst in sorted(edges):

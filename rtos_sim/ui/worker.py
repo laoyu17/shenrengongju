@@ -53,6 +53,9 @@ class SimulationWorker(QThread):
         self._commands.put(("step", delta))
 
     def run(self) -> None:  # noqa: D401
+        self._execute()
+
+    def _execute(self) -> None:
         loader = ConfigLoader()
         try:
             data = yaml.safe_load(self._config_text)

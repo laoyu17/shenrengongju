@@ -174,3 +174,59 @@ def test_cli_run_pause_at_stops_early(tmp_path: Path) -> None:
         if line.strip()
     ]
     assert max(event_times) <= 2.0 + 1e-6
+
+
+def test_cli_run_writes_audit_report(tmp_path: Path) -> None:
+    events_out = tmp_path / "events.jsonl"
+    metrics_out = tmp_path / "metrics.json"
+    audit_out = tmp_path / "audit.json"
+
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--events-out",
+            str(events_out),
+            "--metrics-out",
+            str(metrics_out),
+            "--audit-out",
+            str(audit_out),
+        ]
+    )
+    assert code == 0
+    report = json.loads(audit_out.read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+    assert report["issue_count"] == 0
+
+
+def test_cli_run_returns_error_when_audit_fails(tmp_path: Path, monkeypatch) -> None:
+    events_out = tmp_path / "events.jsonl"
+    metrics_out = tmp_path / "metrics.json"
+    audit_out = tmp_path / "audit.json"
+
+    monkeypatch.setattr(
+        "rtos_sim.cli.main.build_audit_report",
+        lambda events, scheduler_name=None: {  # noqa: ARG005
+            "status": "fail",
+            "issue_count": 1,
+            "issues": [{"rule": "simulated_failure"}],
+            "checks": {},
+        },
+    )
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--events-out",
+            str(events_out),
+            "--metrics-out",
+            str(metrics_out),
+            "--audit-out",
+            str(audit_out),
+        ]
+    )
+    assert code == 2
+    report = json.loads(audit_out.read_text(encoding="utf-8"))
+    assert report["status"] == "fail"

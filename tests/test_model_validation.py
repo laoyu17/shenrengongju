@@ -106,8 +106,20 @@ def test_time_deterministic_defaults_phase_and_release_offsets() -> None:
     task["task_type"] = "time_deterministic"
     task["period"] = 10
     spec = ConfigLoader().load_data(payload)
+    segment = spec.tasks[0].subtasks[0].segments[0]
     assert spec.tasks[0].phase_offset == pytest.approx(0.0)
-    assert spec.tasks[0].subtasks[0].segments[0].release_offsets == [0.0]
+    assert segment.release_offsets == [0.0]
+    assert segment.mapping_hint == "c0"
+
+
+def test_time_deterministic_requires_mapping_hint_on_multicore_when_not_derivable() -> None:
+    payload = _base_payload()
+    payload["platform"]["cores"].append({"id": "c1", "type_id": "CPU", "speed_factor": 1.0})
+    task = payload["tasks"][0]
+    task["task_type"] = "time_deterministic"
+    task["period"] = 10
+    with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)
 
 
 def test_phase_offset_rejected_for_non_time_deterministic() -> None:

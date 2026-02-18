@@ -23,7 +23,8 @@ rtos-sim validate -c examples/at01_single_dag_single_core.yaml
 # 运行仿真并导出事件/指标
 rtos-sim run -c examples/at01_single_dag_single_core.yaml \
   --events-out artifacts/events.jsonl \
-  --metrics-out artifacts/metrics.json
+  --metrics-out artifacts/metrics.json \
+  --audit-out artifacts/audit.json
 
 # 启动 UI（可选）
 rtos-sim ui -c examples/at01_single_dag_single_core.yaml

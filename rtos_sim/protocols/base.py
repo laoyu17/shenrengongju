@@ -54,3 +54,9 @@ class IResourceProtocol(ABC):
 
     def on_wake(self, segment_key: str, resource_id: str) -> None:  # noqa: ARG002
         """Optional callback when segment is woken by resource release."""
+
+    def update_resource_ceilings(self, ceilings: dict[str, float]) -> None:  # noqa: ARG002
+        """Optional callback to update runtime resource ceiling values."""
+
+    def set_priority_domain(self, domain: str) -> None:  # noqa: ARG002
+        """Optional callback to annotate the priority domain used by protocol metadata."""

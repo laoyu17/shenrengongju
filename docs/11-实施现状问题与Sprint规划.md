@@ -2,8 +2,8 @@
 
 ## 0. 文档控制
 - 版本：v0.2
-- 状态：S2 实施更新版
-- 日期：2026-02-17
+- 状态：S2+（协议一致性与审计补强）
+- 日期：2026-02-18
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
 
 ## 1. 已经实现的内容（As-Is）
@@ -19,11 +19,14 @@
 - 已实现关键运行事件：释放、就绪、开始、结束、阻塞/唤醒、抢占、迁移、deadline miss、完成：`project/rtos_sim/core/engine.py:320`
 - 已实现 deadline miss 与 `abort_on_miss` 行为分支：`project/rtos_sim/core/engine.py:623`
 - 已修复 deadline 边界触发与 abort 中止隔离语义（避免中止后再次调度）：`project/rtos_sim/core/engine.py:320`
+- 已统一 EDF+PCP 优先级域（运行时绝对 deadline 域），并支持运行时 ceiling 刷新：`project/rtos_sim/core/engine.py:247`、`project/rtos_sim/protocols/pcp.py:35`
+- 已补齐 abort/cancel 异常路径的 `ResourceRelease` 事件：`project/rtos_sim/core/engine.py:1119`
 
 ### 1.3 配置模型与语义校验
 - 已实现 `0.1 -> 0.2` 配置兼容迁移：`project/rtos_sim/io/loader.py:83`
 - 已实现 Schema 校验 + Pydantic 语义校验：`project/rtos_sim/io/loader.py:38`
 - 已实现关键语义约束（DAG 无环、ID 唯一、引用完整性、mapping_hint 有效性）：`project/rtos_sim/model/spec.py:138`
+- 已收紧 `time_deterministic` 定点约束（多核场景需可推导/显式 mapping_hint）：`project/rtos_sim/model/spec.py:244`
 
 ### 1.4 插件化能力（MVP）
 - 调度器：EDF / RM + 注册机制：`project/rtos_sim/schedulers/registry.py:15`
@@ -35,6 +38,7 @@
 
 ### 1.5 CLI 与 PyQt6 UI
 - CLI 支持 `validate/run/ui/batch-run` 命令：`project/rtos_sim/cli/main.py:95`
+- `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`project/rtos_sim/cli/main.py:81`、`project/rtos_sim/analysis/audit.py:14`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
@@ -53,7 +57,9 @@
 ### 1.6 测试与样例
 - 已新增 8 个样例（含 AT-06/AT-07 与批量实验矩阵）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at07_heterogeneous_multicore.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
-- 当前本地测试状态：`python -m pytest -q` 通过（41 tests）
+- 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
+- 当前本地测试状态：`python -m pytest -q` 通过（80 tests）
+- 当前覆盖率快照：总 86%、engine 89%、loader 57%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。
@@ -63,7 +69,7 @@
 - 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
 - 回归：新增 UI 交互与表单同步测试（含表格 CRUD、DAG 侧栏编辑、未知字段保留）：`project/tests/test_ui_gantt.py:39`
 - 回归：新增 DAG 拖拽连线循环检测、节点自由移动、自动布局、可选布局持久化与表格校验阻断测试：`project/tests/test_ui_gantt.py:344`
-- 当前本地测试状态：`python -m pytest -q` 通过（41 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（80 tests）
 
 ---
 
@@ -71,8 +77,8 @@
 
 ### 2.1 P0（需优先收敛）
 1. **PCP 仍为 MVP 语义（未覆盖全部经典约束证明路径）**
-   - 现状：已实现 ceiling 提升与优先级队列，但尚未实现完整的全局系统天花板分析报告能力。
-   - 证据：`project/rtos_sim/protocols/pcp.py:9`
+   - 现状：已修复 EDF/PCP 优先级域不一致与异常路径事件缺口，但尚未形成“证明级”系统天花板分析报告。
+   - 证据：`project/rtos_sim/protocols/pcp.py:10`、`project/rtos_sim/analysis/audit.py:14`
    - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
@@ -86,10 +92,10 @@
    - 证据：`project/rtos_sim/ui/app.py:209`
    - 影响：基础建模效率明显提升，但复杂图编辑体验仍有提升空间。
 
-3. **UI 自动化测试仍需扩展到交互层**
-   - 现状：已覆盖 UI 可视化 + 表格 CRUD + DAG 侧栏/拖拽编辑 + 校验阻断 + 线程停止恢复 + 文件读写异常路径，仍需补文件对话框平台差异等边缘行为。
-   - 证据：`project/tests/test_ui_gantt.py:31`
-   - 影响：UI 交互级回归风险已下降，但跨平台对话框差异仍需持续观察。
+3. **FR-13 对比视图仍未落地**
+   - 现状：当前 UI 具备 Gantt 与指标文本，但尚无多方案并列对比视图。
+   - 证据：`project/docs/04-详细版SRS.md:83`、`project/rtos_sim/ui/app.py:447`
+   - 影响：实验分析与论文取证仍依赖离线脚本/外部表格对比。
 
 ### 2.3 P2（中期优化）
 1. **性能治理已建立首版基线，仍需持续校准阈值**

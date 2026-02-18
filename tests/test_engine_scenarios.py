@@ -433,6 +433,7 @@ def test_pcp_system_ceiling_blocks_even_when_target_resource_is_free() -> None:
         if event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("med@")
     )
     assert blocked["payload"]["reason"] == "system_ceiling_block"
+    assert blocked["payload"]["priority_domain"] == "absolute_deadline"
     med_start = next(
         event["time"]
         for event in events
@@ -1104,6 +1105,77 @@ def test_time_deterministic_phase_offset_and_release_offsets() -> None:
     assert [event["payload"]["deterministic_window_id"] for event in start_events] == [0, 1, 2]
 
 
+def test_time_deterministic_segment_stays_on_mapping_core() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 2, "speed_factor": 1.0},
+            ],
+            "cores": [
+                {"id": "c0", "type_id": "CPU", "speed_factor": 1.0},
+                {"id": "c1", "type_id": "CPU", "speed_factor": 1.0},
+            ],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "det",
+                "name": "det",
+                "task_type": "time_deterministic",
+                "arrival": 0.0,
+                "phase_offset": 0.0,
+                "period": 2.0,
+                "deadline": 2.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {
+                                "id": "seg0",
+                                "index": 1,
+                                "wcet": 0.5,
+                                "mapping_hint": "c0",
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "bg",
+                "name": "bg",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "period": 1.0,
+                "deadline": 1.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.3, "mapping_hint": "c1"}],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 6.0, "seed": 101},
+    }
+
+    events, _ = _run_payload(payload)
+    det_starts = [
+        event for event in events if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("det@")
+    ]
+    assert det_starts
+    assert all(event["core_id"] == "c0" for event in det_starts)
+    assert not any(
+        event["type"] == "Migrate" and str(event.get("job_id", "")).startswith("det@")
+        for event in events
+    )
+
+
 def test_abort_cancel_emits_segment_unblocked_for_woken_waiter() -> None:
     payload = {
         "version": "0.2",
@@ -1171,8 +1243,17 @@ def test_abort_cancel_emits_segment_unblocked_for_woken_waiter() -> None:
         for event in events
         if event["type"] == "SegmentUnblocked" and str(event.get("job_id", "")).startswith("waiter@")
     )
+    release_event = next(
+        event
+        for event in events
+        if event["type"] == "ResourceRelease"
+        and str(event.get("job_id", "")).startswith("holder@")
+        and event.get("resource_id") == "r0"
+    )
     assert wake_event["payload"]["reason"] == "cancel_segment"
     assert wake_event["time"] == pytest.approx(miss_time)
+    assert release_event["payload"]["reason"] == "cancel_segment"
+    assert release_event["time"] == pytest.approx(miss_time)
 
     waiter_start = next(
         event["time"]
