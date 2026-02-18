@@ -39,7 +39,7 @@ rtos-sim batch-run -b examples/batch_matrix.yaml --strict-fail-on-error
 rtos-sim compare --left-metrics artifacts/base_metrics.json --right-metrics artifacts/new_metrics.json \
   --out-json artifacts/compare.json --out-csv artifacts/compare.csv
 
-# 性能基线（100/300 tasks，阈值可选）
+# 性能基线（100/300/1000 tasks，阈值可选）
 python scripts/perf_baseline.py --tasks 100,300,1000 --max-wall-ms 1500,4000,12000
 
 # 对比两份性能报告（周报）
@@ -55,7 +55,7 @@ python -m pytest
 ## CI 合并门禁（S4）
 
 - **硬门禁**：PR 必须通过 `python -m pytest -q`（Linux/Windows）
-- **软门禁**：性能任务只生成报告与 artifact，不阻断合并
+- **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务
 - 性能报告位置：CI artifact `perf-baseline`（`artifacts/perf/perf-baseline.json`）
 
 ## 调度参数（S3）
@@ -63,8 +63,15 @@ python -m pytest
 - `scheduler.params.tie_breaker`：`fifo`（默认）/`lifo`/`segment_key`
 - `scheduler.params.allow_preempt`：是否允许抢占（默认 `true`）
 - `scheduler.params.event_id_mode`：`deterministic`（默认）/`random`/`seeded_random`
-- `scheduler.params.event_id_validation`：`warn`（默认）/`strict`
+- `scheduler.params.event_id_validation`：`strict`（默认）/`warn`（迁移兼容）
 - `scheduler.params.resource_acquire_policy`：`legacy_sequential`（默认）/`atomic_rollback`
+- `scheduler.params.etm`：`constant`（默认）/`table_based`
+- `scheduler.params.etm_params`：ETM 参数对象（`table_based` 支持 `table` 与 `default_scale`）
+
+## 核心速度口径
+
+- 核运行速度采用乘积口径：`effective_core_speed = core.speed_factor * processor_type.speed_factor`
+- 默认建议：`processor_type` 表示平台族速度，`core` 表示单核微调系数
 
 ## 指标口径（S4）
 
@@ -77,11 +84,14 @@ python -m pytest
 
 - 运行配置（模型）版本：`version: "0.2"`（由 `ConfigLoader` 校验）
 - 批量实验配置版本：`examples/batch_matrix.yaml` 中 `version: "0.1"`（仅用于 batch 文件结构）
+- 到达过程配置：新增 `tasks[*].arrival_process`（`fixed/uniform/poisson/one_shot`），兼容旧字段 `arrival_model/min_inter_arrival/max_inter_arrival`
 
 ## 样例
 
 - `examples/at06_time_deterministic.yaml`：AT-06 时间确定性
 - `examples/at07_heterogeneous_multicore.yaml`：AT-07 异构多核速度缩放
+- `examples/at09_table_based_etm.yaml`：AT-09 表驱动 ETM 缩放
+- `examples/at10_arrival_process.yaml`：统一到达过程（Poisson + One-shot）
 
 ## UI 配置编辑（S3）
 
@@ -93,3 +103,4 @@ python -m pytest
 - 支持可选布局持久化（`ui_layout` 元数据，下次打开可复用）。
 - 支持表格单元格强校验（错误高亮 + 提交前阻断）。
 - 支持 FR-13 MVP 对比区：双方案指标差分 + JSON/CSV 导出。
+- 右侧可视化区采用上下分栏（Gantt 与日志/对比分离），FR-13 对比区默认折叠。

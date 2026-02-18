@@ -55,7 +55,9 @@
             "tie_breaker": { "type": "string" },
             "allow_preempt": { "type": "boolean" },
             "event_id_mode": { "type": "string" },
-            "event_id_validation": { "type": "string", "enum": ["warn", "strict"] },
+            "event_id_validation": { "type": "string", "enum": ["warn", "strict"], "default": "strict" },
+            "etm": { "type": "string" },
+            "etm_params": { "type": "object" },
             "resource_acquire_policy": {
               "type": "string",
               "enum": ["legacy_sequential", "atomic_rollback"]
@@ -121,6 +123,8 @@
         "phase_offset": { "type": "number", "minimum": 0 },
         "min_inter_arrival": { "type": "number", "exclusiveMinimum": 0 },
         "max_inter_arrival": { "type": "number", "exclusiveMinimum": 0 },
+        "arrival_model": { "type": "string", "enum": ["fixed_interval", "uniform_interval"] },
+        "task_mapping_hint": { "type": ["string", "null"] },
         "abort_on_miss": { "type": "boolean", "default": false },
         "subtasks": {
           "type": "array",
@@ -145,6 +149,7 @@
           "items": { "type": "string", "minLength": 1 },
           "default": []
         },
+        "subtask_mapping_hint": { "type": ["string", "null"] },
         "segments": {
           "type": "array",
           "minItems": 1,
@@ -179,6 +184,21 @@
   "additionalProperties": false
 }
 ```
+
+### 2.1 `arrival_process` 补充（v0.2）
+
+`TaskGraph` 支持可选统一到达过程字段：
+
+```yaml
+arrival_process:
+  type: fixed | uniform | poisson | one_shot
+  params: {}        # fixed: interval; uniform: min_interval/max_interval; poisson: rate
+  max_releases: 10  # 可选，限制最大释放次数（one_shot 仅允许 1）
+```
+
+兼容策略：
+- 旧字段 `arrival_model/min_inter_arrival/max_inter_arrival` 继续可用。
+- 当 `arrival_process` 与旧字段同时出现时，优先按 `arrival_process` 语义执行，旧字段作为 fixed/uniform 的回退输入。
 
 ## 3. YAML 示例（草案）
 
@@ -217,11 +237,14 @@ tasks:
     period: 20
     deadline: 20
     arrival: 0
+    arrival_model: fixed_interval
+    task_mapping_hint: c0
     abort_on_miss: true
     subtasks:
       - id: s0
         predecessors: []
         successors: [s1]
+        subtask_mapping_hint: c0
         segments:
           - id: seg0
             index: 1
@@ -242,7 +265,7 @@ scheduler:
     tie_breaker: fifo
     allow_preempt: true
     event_id_mode: deterministic
-    event_id_validation: warn
+    event_id_validation: strict
     resource_acquire_policy: legacy_sequential
 
 sim:
@@ -258,14 +281,27 @@ sim:
 - `processor_types.speed_factor` 与 `cores.speed_factor` 必须 `> 0`
 - `resources` 非必填，默认 `[]`
 - `scheduler.params` 非必填，默认 `{}`
-- `scheduler.params.event_id_validation`：`warn | strict`（默认 `warn`）
+- `scheduler.params.event_id_validation`：`warn | strict`（默认 `strict`）
+- `scheduler.params.event_id_mode`：默认必须取 `deterministic | random | seeded_random`；仅在 `event_id_validation=warn` 时允许兼容回退
 - `scheduler.params.resource_acquire_policy`：`legacy_sequential | atomic_rollback`（默认 `legacy_sequential`）
+- `scheduler.params.etm`：`constant | table_based`（默认 `constant`）
+- `scheduler.params.etm_params`：ETM 参数对象（`table_based` 支持 `table` / `default_scale`）
 - `TaskGraph.period/deadline` 非 schema 必填；语义层约束为：
   - `time_deterministic` 必须提供 `period`
   - 非 `non_rt` 任务必须提供 `deadline`
 - `TaskGraph.max_inter_arrival` 仅对 `dynamic_rt` 有效，且需满足：
   - `min_inter_arrival`（或 `period` 推导值）存在
   - `max_inter_arrival >= min_inter_arrival`
+- `TaskGraph.arrival_model` 仅对 `dynamic_rt` 有效：
+  - `fixed_interval`：固定间隔释放（不允许再配置 `max_inter_arrival`）
+  - `uniform_interval`：在 `[min_inter_arrival, max_inter_arrival]` 区间随机释放
+- `TaskGraph.arrival_process`（可选）：
+  - `fixed`：按 `params.interval` 固定间隔释放
+  - `uniform`：按 `[params.min_interval, params.max_interval]` 区间随机释放
+  - `poisson`：按 `params.rate`（指数分布间隔）随机释放
+  - `one_shot`：只释放一次（默认 `max_releases=1`）
 - `phase_offset` 仅对 `time_deterministic` 有效（缺省会补为 `0.0`）
 - `Segment.release_offsets` 仅允许出现在 `time_deterministic` 任务中
+- 映射提示支持三级回退：`segment.mapping_hint > subtask_mapping_hint > task_mapping_hint`
 - 引用完整性：`required_resources`、`type_id`、`bound_core_id` 必须指向已定义实体
+- 运行时速度口径：`effective_core_speed = core.speed_factor * processor_type.speed_factor`

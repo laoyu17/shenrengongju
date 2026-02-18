@@ -21,18 +21,20 @@
 - 已修复 deadline 边界触发与 abort 中止隔离语义（避免中止后再次调度）：`project/rtos_sim/core/engine.py:320`
 - 已统一 EDF+PCP 优先级域（运行时绝对 deadline 域），并修复 ceiling 初值/刷新域误差导致的误阻塞：`project/rtos_sim/core/engine.py:247`、`project/rtos_sim/protocols/pcp.py:35`
 - 已补齐 abort/cancel 异常路径的 `ResourceRelease` 事件：`project/rtos_sim/core/engine.py:1119`
+- 已统一异构速率口径：`effective_core_speed = core.speed_factor * processor_type.speed_factor`：`project/rtos_sim/core/engine.py:157`
 
 ### 1.3 配置模型与语义校验
 - 已实现 `0.1 -> 0.2` 配置兼容迁移：`project/rtos_sim/io/loader.py:83`
 - 已实现 Schema 校验 + Pydantic 语义校验：`project/rtos_sim/io/loader.py:38`
 - 已实现关键语义约束（DAG 无环、ID 唯一、引用完整性、mapping_hint 有效性）：`project/rtos_sim/model/spec.py:138`
 - 已收紧 `time_deterministic` 定点约束（多核场景需可推导/显式 mapping_hint）：`project/rtos_sim/model/spec.py:244`
+- 已新增统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot`）并兼容 legacy 到达字段：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
 
 ### 1.4 插件化能力（MVP）
 - 调度器：EDF / RM + 注册机制：`project/rtos_sim/schedulers/registry.py:15`
 - 调度器参数：`tie_breaker / allow_preempt` 已生效（S3 第一阶段）：`project/rtos_sim/schedulers/base.py:55`
 - 资源协议：Mutex + PIP + PCP（优先级更新语义）：`project/rtos_sim/protocols/mutex.py:10`、`project/rtos_sim/protocols/pip.py:9`、`project/rtos_sim/protocols/pcp.py:9`
-- ETM：Constant（`wcet / core_speed`）：`project/rtos_sim/etm/registry.py:14`
+- ETM：`Constant + table_based`（段/核查表缩放）：`project/rtos_sim/etm/registry.py:14`
 - 开销模型：Simple 常量开销：`project/rtos_sim/overheads/registry.py:22`
 - 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`project/rtos_sim/metrics/core.py:63`
 
@@ -54,12 +56,13 @@
 - UI 已实现三层编码（Task 颜色 / Subtask 纹理 / Segment 边框+短标签）：`project/rtos_sim/ui/app.py:460`
 - UI 已支持稳定悬停与点击锁定详情面板（专家字段）：`project/rtos_sim/ui/app.py:532`
 - UI 事件增量批推送（64条或150ms）：`project/rtos_sim/ui/worker.py:53`
+- UI 右侧采用“Gantt 上区 + 日志/详情/对比下区”分栏，Compare 默认折叠：`project/rtos_sim/ui/app.py:580`
 
 ### 1.6 测试与样例
-- 已新增 8 个样例（含 AT-06/AT-07 与批量实验矩阵）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at07_heterogeneous_multicore.yaml:1`
+- 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态：`python -m pytest -q` 通过（124 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（以最近一次本地/CI日志为准）
 - 当前覆盖率快照：总 86%、engine 90%、loader 99%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
@@ -70,7 +73,7 @@
 - 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
 - 回归：新增 UI 交互与表单同步测试（含表格 CRUD、DAG 侧栏编辑、未知字段保留）：`project/tests/test_ui_gantt.py:39`
 - 回归：新增 DAG 拖拽连线循环检测、节点自由移动、自动布局、可选布局持久化与表格校验阻断测试：`project/tests/test_ui_gantt.py:344`
-- 当前本地测试状态：`python -m pytest -q` 通过（124 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（以最近一次本地/CI日志为准）
 
 ---
 
@@ -83,10 +86,10 @@
    - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
-1. **动态实时到达模型已扩展到随机区间释放，但仍缺更丰富分布模型**
-   - 现状：`max_inter_arrival` 已支持 seed 固定的区间随机到达，满足周期/最小间隔/随机区间三类基本模式。
-   - 证据：`project/rtos_sim/model/spec.py:78`、`project/rtos_sim/core/engine.py:678`
-   - 影响：可覆盖更多混合实时场景；后续可继续扩展泊松/自定义分布。
+1. **统一到达过程已落地，但仍缺“自定义分布插件化”**
+   - 现状：`arrival_process` 已支持 `fixed/uniform/poisson/one_shot`，并兼容旧字段。
+   - 证据：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
+   - 影响：周期/偶发/零星基础语义已可表达；后续可扩展到用户自定义分布。
 
 1. **调度器参数已从“透传”进入“基础生效”，但参数域仍需继续扩展**
    - 现状：`tie_breaker/allow_preempt` 已在 EDF/RM 生效，尚未覆盖更多算法级业务开关。
@@ -109,7 +112,7 @@
    - 证据：`project/scripts/perf_baseline.py:1`
 
 2. **CI/CD 已建立首版回归门禁，后续需补发布流水线**
-   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流（软门禁）。
+   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流；PR 路径保留 100/300，nightly 增加 1000 非阻断趋势任务。
    - 证据：`project/.github/workflows/ci.yml:1`
    - 影响：基础回归自动化已具备，仍需补打包发布链路。
 
@@ -213,5 +216,10 @@
 
 ### Phase C（P2）已完成（首轮）
 - 性能基线默认场景已扩展至 100/300/1000：`project/scripts/perf_baseline.py:122`
-- CI 性能任务同步扩展至 100/300/1000：`project/.github/workflows/ci.yml:68`
+- CI 性能任务分层：PR 路径 100/300，nightly 非阻断 1000：`project/.github/workflows/ci.yml:68`
 - 文档与命令示例已同步：`project/README.md:42`
+
+### Phase D（研究可复现收敛）已完成（本轮）
+- 统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot`）已落地，且保持 legacy 配置兼容：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
+- 审计新增规则：`pip_priority_chain_consistency`、`pcp_ceiling_transition_consistency`：`project/rtos_sim/analysis/audit.py:220`
+- 回归：新增到达过程与审计规则测试：`project/tests/test_engine_scenarios.py:229`、`project/tests/test_audit.py:91`、`project/tests/test_model_validation.py:201`

@@ -71,3 +71,29 @@
 
 ### 提交记录
 - commit: `HEAD（phase-c 当前提交）`
+
+---
+
+## Phase D（研究可复现收敛）
+
+### 变更项
+- 引入统一到达过程 `arrival_process`：`fixed/uniform/poisson/one_shot`，并兼容 legacy 到达字段
+- 审计新增协议一致性规则：`pip_priority_chain_consistency`、`pcp_ceiling_transition_consistency`
+- 补充到达过程/审计规则回归测试与样例 `examples/at10_arrival_process.yaml`
+
+### 关键文件
+- `rtos_sim/model/spec.py`
+- `rtos_sim/io/schema.py`
+- `rtos_sim/core/engine.py`
+- `rtos_sim/analysis/audit.py`
+- `tests/test_model_validation.py`
+- `tests/test_engine_scenarios.py`
+- `tests/test_audit.py`
+- `examples/at10_arrival_process.yaml`
+
+### 阶段验证
+- `python -m pytest tests/test_model_validation.py tests/test_engine_scenarios.py tests/test_audit.py -q`
+- `python -m pytest -q`
+
+### 提交记录
+- commit: `HEAD（phase-d 当前提交）`
