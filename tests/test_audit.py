@@ -373,3 +373,14 @@ def test_audit_keeps_wait_graph_on_deadline_miss_without_abort() -> None:
     report = build_audit_report(events, scheduler_name="edf")
     assert report["status"] == "fail"
     assert any(issue["rule"] == "wait_for_deadlock" for issue in report["issues"])
+
+
+def test_audit_includes_model_relation_summary_when_provided() -> None:
+    report = build_audit_report(
+        events=[],
+        scheduler_name="edf",
+        model_relation_summary={"task_count": 1, "segment_count": 2},
+    )
+
+    assert report["status"] == "pass"
+    assert report["model_relation_summary"]["task_count"] == 1

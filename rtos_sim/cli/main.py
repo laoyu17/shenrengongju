@@ -8,7 +8,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from rtos_sim.analysis import build_audit_report, build_compare_report, compare_report_to_rows
+from rtos_sim.analysis import (
+    build_audit_report,
+    build_compare_report,
+    build_model_relations_report,
+    compare_report_to_rows,
+    model_relations_report_to_rows,
+)
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
 
@@ -149,7 +155,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.events_csv_out:
         _write_events_csv(args.events_csv_out, events)
     if args.audit_out:
-        audit_report = build_audit_report(events, scheduler_name=spec.scheduler.name)
+        relation_summary = build_model_relations_report(spec).get("summary")
+        audit_report = build_audit_report(
+            events,
+            scheduler_name=spec.scheduler.name,
+            model_relation_summary=relation_summary,
+        )
         _write_json(args.audit_out, audit_report)
         if audit_report["status"] != "pass":
             print(f"[ERROR] simulation audit failed, report={args.audit_out}")
@@ -223,6 +234,28 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_inspect_model(args: argparse.Namespace) -> int:
+    loader = ConfigLoader()
+    try:
+        spec = loader.load(args.config)
+    except ConfigError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+
+    report = build_model_relations_report(spec)
+    out_json = args.out_json or "artifacts/model_relations.json"
+    _write_json(out_json, report)
+    if args.out_csv:
+        _write_rows_csv(args.out_csv, model_relations_report_to_rows(report))
+
+    csv_path = args.out_csv if args.out_csv else "-"
+    print(
+        "[OK] model relation report completed, "
+        f"config={args.config}, json={out_json}, csv={csv_path}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rtos-sim", description="RTOS simulation CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -272,6 +305,12 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--out-json", default=None, help="compare report JSON path")
     compare_parser.add_argument("--out-csv", default=None, help="compare rows CSV path")
     compare_parser.set_defaults(func=cmd_compare)
+
+    inspect_parser = subparsers.add_parser("inspect-model", help="export model relation tables")
+    inspect_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
+    inspect_parser.add_argument("--out-json", default=None, help="relation report JSON path")
+    inspect_parser.add_argument("--out-csv", default=None, help="relation report CSV path")
+    inspect_parser.set_defaults(func=cmd_inspect_model)
 
     return parser
 

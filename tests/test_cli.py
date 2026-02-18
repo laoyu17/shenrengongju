@@ -151,6 +151,33 @@ def test_cli_compare_outputs_json_and_csv(tmp_path: Path) -> None:
     assert any(row["metric"] == "jobs_completed" for row in payload["scalar_metrics"])
 
 
+def test_cli_inspect_model_outputs_json_and_csv(tmp_path: Path) -> None:
+    out_json = tmp_path / "model_relations.json"
+    out_csv = tmp_path / "model_relations.csv"
+
+    code = main(
+        [
+            "inspect-model",
+            "-c",
+            str(EXAMPLES / "at02_resource_mutex.yaml"),
+            "--out-json",
+            str(out_json),
+            "--out-csv",
+            str(out_csv),
+        ]
+    )
+    assert code == 0
+    assert out_json.exists()
+    assert out_csv.exists()
+
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["task_count"] == 2
+    assert any(row["task_id"] == "low" for row in payload["task_to_cores"])
+
+    header = out_csv.read_text(encoding="utf-8").splitlines()[0]
+    assert header.startswith("category,")
+
+
 def test_cli_validate_rejects_unknown_scheduler(tmp_path: Path) -> None:
     config = tmp_path / "unknown_scheduler.yaml"
     config.write_text(
@@ -286,7 +313,7 @@ def test_cli_run_returns_error_when_audit_fails(tmp_path: Path, monkeypatch) -> 
 
     monkeypatch.setattr(
         "rtos_sim.cli.main.build_audit_report",
-        lambda events, scheduler_name=None: {  # noqa: ARG005
+        lambda events, scheduler_name=None, model_relation_summary=None: {  # noqa: ARG005
             "status": "fail",
             "issue_count": 1,
             "issues": [{"rule": "simulated_failure"}],

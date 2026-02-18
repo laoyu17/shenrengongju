@@ -51,7 +51,12 @@ def _find_wait_cycle(wait_for: dict[str, str], start: str) -> list[str]:
     return []
 
 
-def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | None = None) -> dict[str, Any]:
+def build_audit_report(
+    events: list[dict[str, Any]],
+    *,
+    scheduler_name: str | None = None,
+    model_relation_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     checks: dict[str, Any] = {}
 
@@ -440,9 +445,12 @@ def build_audit_report(events: list[dict[str, Any]], *, scheduler_name: str | No
         )
     checks["wait_for_deadlock"] = {"passed": not deadlock_samples}
 
-    return {
+    report = {
         "status": "pass" if not issues else "fail",
         "issue_count": len(issues),
         "issues": issues,
         "checks": checks,
     }
+    if isinstance(model_relation_summary, dict):
+        report["model_relation_summary"] = model_relation_summary
+    return report
