@@ -39,9 +39,10 @@
 - 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`project/rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
-- CLI 支持 `validate/run/ui/batch-run` 命令：`project/rtos_sim/cli/main.py:95`
+- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model` 命令：`project/rtos_sim/cli/main.py:95`
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`project/rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`project/rtos_sim/cli/main.py:81`、`project/rtos_sim/analysis/audit.py:14`
+- `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`project/rtos_sim/cli/main.py:151`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
@@ -105,6 +106,11 @@
    - 现状：已支持双方案指标对比与 JSON/CSV 差分导出，但尚未接入多方案聚合报告与论文模板。
    - 证据：`project/docs/04-详细版SRS.md:83`、`project/rtos_sim/ui/app.py:591`、`project/rtos_sim/cli/main.py:190`
    - 影响：基础对比能力可用，研究级批量分析产物仍需增强。
+
+4. **模型关系导出已落地基础版，仍需向研究模板扩展**
+   - 现状：`inspect-model` 已可导出任务/子任务/分段与核/资源的双向关系表（JSON/CSV），覆盖 docx 关系集合审查的基础产物。
+   - 证据：`project/rtos_sim/analysis/model_relations.py:1`、`project/rtos_sim/cli/main.py:237`
+   - 影响：语义闭环证据链已打通第一步，后续仍需接入更高层实验模板与自动判定规则。
 
 ### 2.3 P2（中期优化）
 1. **性能治理已建立首版基线，仍需持续校准阈值**
@@ -223,3 +229,9 @@
 - 统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot`）已落地，且保持 legacy 配置兼容：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
 - 审计新增规则：`pip_priority_chain_consistency`、`pcp_ceiling_transition_consistency`：`project/rtos_sim/analysis/audit.py:220`
 - 回归：新增到达过程与审计规则测试：`project/tests/test_engine_scenarios.py:229`、`project/tests/test_audit.py:91`、`project/tests/test_model_validation.py:201`
+
+### Phase E（语义闭环）已完成（本轮）
+- 新增 `inspect-model`：导出模型关系集合（任务/子任务/分段 与 核/资源双向关系）：`project/rtos_sim/cli/main.py:237`
+- 新增关系提取模块：`build_model_relations_report` + `model_relations_report_to_rows`：`project/rtos_sim/analysis/model_relations.py:1`
+- 审计报告新增 `model_relation_summary` 摘要挂载：`project/rtos_sim/analysis/audit.py:53`
+- 回归：新增模型关系与 CLI 导出测试：`project/tests/test_model_relations.py:1`、`project/tests/test_cli.py:145`

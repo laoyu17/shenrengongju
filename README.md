@@ -39,6 +39,10 @@ rtos-sim batch-run -b examples/batch_matrix.yaml --strict-fail-on-error
 rtos-sim compare --left-metrics artifacts/base_metrics.json --right-metrics artifacts/new_metrics.json \
   --out-json artifacts/compare.json --out-csv artifacts/compare.csv
 
+# 导出模型关系集合（任务/子任务/分段 与 核/资源）
+rtos-sim inspect-model -c examples/at02_resource_mutex.yaml \
+  --out-json artifacts/model_relations.json --out-csv artifacts/model_relations.csv
+
 # 性能基线（100/300/1000 tasks，阈值可选）
 python scripts/perf_baseline.py --tasks 100,300,1000 --max-wall-ms 1500,4000,12000
 
@@ -56,7 +60,15 @@ python -m pytest
 
 - **硬门禁**：PR 必须通过 `python -m pytest -q`（Linux/Windows）
 - **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务
-- 性能报告位置：CI artifact `perf-baseline`（`artifacts/perf/perf-baseline.json`）
+- 性能报告位置：CI artifact `perf-baseline-pr`（`artifacts/perf/perf-baseline.json`）
+
+## 模型语义审查产物（S5）
+
+- `inspect-model` 产出 docx 对齐关系表：
+  - 任务/子任务/分段到核关系（含 `unbound`）
+  - 任务/子任务/分段到资源关系
+  - 核/资源反向关联集合
+- 适用于“建模语义闭环”审查，不涉及性能优化目标。
 
 ## 调度参数（S3）
 
