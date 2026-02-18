@@ -98,3 +98,37 @@ def test_segment_with_resources_bound_to_multiple_cores_is_rejected() -> None:
     payload["tasks"][0]["subtasks"][0]["segments"][0]["required_resources"] = ["r0", "r1"]
     with pytest.raises(ConfigError):
         ConfigLoader().load_data(payload)
+
+
+def test_time_deterministic_defaults_phase_and_release_offsets() -> None:
+    payload = _base_payload()
+    task = payload["tasks"][0]
+    task["task_type"] = "time_deterministic"
+    task["period"] = 10
+    spec = ConfigLoader().load_data(payload)
+    assert spec.tasks[0].phase_offset == pytest.approx(0.0)
+    assert spec.tasks[0].subtasks[0].segments[0].release_offsets == [0.0]
+
+
+def test_phase_offset_rejected_for_non_time_deterministic() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["phase_offset"] = 1.0
+    with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)
+
+
+def test_release_offsets_rejected_for_non_time_deterministic() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["subtasks"][0]["segments"][0]["release_offsets"] = [0.2]
+    with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)
+
+
+def test_release_offset_must_be_less_than_period() -> None:
+    payload = _base_payload()
+    task = payload["tasks"][0]
+    task["task_type"] = "time_deterministic"
+    task["period"] = 5
+    task["subtasks"][0]["segments"][0]["release_offsets"] = [5.0]
+    with pytest.raises(ConfigError):
+        ConfigLoader().load_data(payload)

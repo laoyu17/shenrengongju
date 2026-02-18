@@ -49,6 +49,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader
 
 from .config_doc import ConfigDocument
@@ -351,6 +352,16 @@ class MainWindow(QMainWindow):
         self._validate_button = QPushButton("Validate")
         self._run_button = QPushButton("Run")
         self._stop_button = QPushButton("Stop")
+        self._pause_button = QPushButton("Pause")
+        self._resume_button = QPushButton("Resume")
+        self._step_button = QPushButton("Step")
+        self._reset_button = QPushButton("Reset")
+        self._step_delta_spin = QDoubleSpinBox()
+        self._step_delta_spin.setRange(0.0, 1_000_000.0)
+        self._step_delta_spin.setDecimals(3)
+        self._step_delta_spin.setSingleStep(0.1)
+        self._step_delta_spin.setSpecialValueText("auto")
+        self._step_delta_spin.setValue(0.0)
         self._load_button = QPushButton("Load")
         self._save_button = QPushButton("Save")
         self._status_label = QLabel("Ready")
@@ -399,6 +410,12 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._validate_button)
         toolbar.addWidget(self._run_button)
         toolbar.addWidget(self._stop_button)
+        toolbar.addWidget(self._pause_button)
+        toolbar.addWidget(self._resume_button)
+        toolbar.addWidget(self._step_button)
+        toolbar.addWidget(QLabel("Step Δ"))
+        toolbar.addWidget(self._step_delta_spin)
+        toolbar.addWidget(self._reset_button)
         toolbar.addStretch(1)
         toolbar.addWidget(self._status_label)
         root_layout.addLayout(toolbar)
@@ -555,7 +572,7 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(splitter)
         self.setCentralWidget(root)
-        self._stop_button.setEnabled(False)
+        self._set_worker_controls(running=False, paused=False)
 
     def _connect_signals(self) -> None:
         self._load_button.clicked.connect(self._pick_load_file)
@@ -563,6 +580,10 @@ class MainWindow(QMainWindow):
         self._validate_button.clicked.connect(self._on_validate)
         self._run_button.clicked.connect(self._on_run)
         self._stop_button.clicked.connect(self._on_stop)
+        self._pause_button.clicked.connect(self._on_pause)
+        self._resume_button.clicked.connect(self._on_resume)
+        self._step_button.clicked.connect(self._on_step)
+        self._reset_button.clicked.connect(self._on_reset)
         self._sync_text_to_form_button.clicked.connect(self._on_sync_text_to_form)
         self._sync_form_to_text_button.clicked.connect(self._on_sync_form_to_text)
         self._legend_toggle_subtask.toggled.connect(self._refresh_legend_details)
@@ -1956,12 +1977,26 @@ class MainWindow(QMainWindow):
             return
         self._status_label.setText(f"Saved: {path}")
 
+    def _set_worker_controls(self, *, running: bool, paused: bool) -> None:
+        self._run_button.setEnabled(not running)
+        self._stop_button.setEnabled(running)
+        self._pause_button.setEnabled(running and not paused)
+        self._resume_button.setEnabled(running and paused)
+        self._step_button.setEnabled(running)
+
+    def _step_delta_value(self) -> float | None:
+        value = float(self._step_delta_spin.value())
+        if value <= 1e-12:
+            return None
+        return value
+
     def _on_validate(self) -> None:
         if not self._sync_form_to_text_if_dirty():
             return
         try:
             payload = self._read_editor_payload()
-            self._loader.load_data(payload)
+            spec = self._loader.load_data(payload)
+            SimEngine().build(spec)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Validation failed", str(exc))
             self._status_label.setText("Validation failed")
@@ -1976,7 +2011,8 @@ class MainWindow(QMainWindow):
             return
         try:
             payload = self._read_editor_payload()
-            self._loader.load_data(payload)
+            spec = self._loader.load_data(payload)
+            SimEngine().build(spec)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Run failed", f"Invalid config: {exc}")
             self._status_label.setText("Run blocked by invalid config")
@@ -1986,20 +2022,51 @@ class MainWindow(QMainWindow):
         self._metrics.clear()
 
         config_text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-        self._worker = SimulationWorker(config_text)
+        self._worker = SimulationWorker(config_text, step_delta=self._step_delta_value())
         self._worker.events_batch.connect(self._on_event_batch)
         self._worker.finished_report.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
 
-        self._run_button.setEnabled(False)
-        self._stop_button.setEnabled(True)
+        self._set_worker_controls(running=True, paused=False)
         self._status_label.setText("Running")
 
     def _on_stop(self) -> None:
         if self._worker:
             self._worker.stop()
         self._status_label.setText("Stopping...")
+
+    def _on_pause(self) -> None:
+        if not self._worker or not self._worker.isRunning():
+            return
+        self._worker.pause()
+        self._set_worker_controls(running=True, paused=True)
+        self._status_label.setText("Paused")
+
+    def _on_resume(self) -> None:
+        if not self._worker or not self._worker.isRunning():
+            return
+        self._worker.resume()
+        self._set_worker_controls(running=True, paused=False)
+        self._status_label.setText("Running")
+
+    def _on_step(self) -> None:
+        if not self._worker or not self._worker.isRunning():
+            return
+        self._worker.pause()
+        self._worker.request_step(self._step_delta_value())
+        self._set_worker_controls(running=True, paused=True)
+        self._status_label.setText("Paused (step)")
+
+    def _on_reset(self) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait(1000)
+        self._worker = None
+        self._reset_viz()
+        self._metrics.clear()
+        self._set_worker_controls(running=False, paused=False)
+        self._status_label.setText("Reset")
 
     def _on_event_batch(self, events: list[dict[str, Any]]) -> None:
         for event in events:
@@ -2396,16 +2463,14 @@ class MainWindow(QMainWindow):
         self._metrics.append("\n=== Metrics ===")
         self._metrics.append(json.dumps(report, ensure_ascii=False, indent=2))
         self._status_label.setText("Completed")
-        self._run_button.setEnabled(True)
-        self._stop_button.setEnabled(False)
+        self._set_worker_controls(running=False, paused=False)
         self._worker = None
 
     def _on_failed(self, error_message: str) -> None:
         self._metrics.append(f"[Error] {error_message}")
         QMessageBox.critical(self, "Simulation failed", error_message)
         self._status_label.setText("Failed")
-        self._run_button.setEnabled(True)
-        self._stop_button.setEnabled(False)
+        self._set_worker_controls(running=False, paused=False)
         self._worker = None
 
     def _reset_viz(self) -> None:

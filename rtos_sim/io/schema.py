@@ -101,6 +101,7 @@ CONFIG_SCHEMA: dict = {
                 "period": {"type": "number", "exclusiveMinimum": 0},
                 "deadline": {"type": "number", "exclusiveMinimum": 0},
                 "arrival": {"type": "number", "minimum": 0},
+                "phase_offset": {"type": "number", "minimum": 0},
                 "min_inter_arrival": {"type": "number", "exclusiveMinimum": 0},
                 "abort_on_miss": {"type": "boolean", "default": False},
                 "subtasks": {
@@ -149,6 +150,10 @@ CONFIG_SCHEMA: dict = {
                 },
                 "mapping_hint": {"type": ["string", "null"]},
                 "preemptible": {"type": "boolean", "default": True},
+                "release_offsets": {
+                    "type": ["array", "null"],
+                    "items": {"type": "number", "minimum": 0},
+                },
             },
             "additionalProperties": False,
         },

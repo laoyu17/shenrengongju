@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 import heapq
-from typing import Callable, Optional
+from math import gcd
+from typing import Any, Callable, Optional
 
 import simpy
 
@@ -96,8 +98,11 @@ class SimEngine(ISimEngine):
         self._ready: set[str] = set()
         self._held_resources: dict[str, set[str]] = {}
         self._release_heap: list[tuple[float, int, str]] = []
+        self._segment_ready_heap: list[tuple[float, str]] = []
+        self._pending_segment_ready_times: dict[str, float] = {}
         self._segment_to_subtask: dict[str, tuple[str, str]] = {}
         self._aborted_jobs: set[str] = set()
+        self._deterministic_hyper_period: float | None = None
 
         self._paused = False
         self._stopped = False
@@ -139,9 +144,10 @@ class SimEngine(ISimEngine):
             core.id: CoreRuntime(core_id=core.id, speed=core.speed_factor)
             for core in spec.platform.cores
         }
+        self._deterministic_hyper_period = self._compute_deterministic_hyper_period(spec)
 
         for task in spec.tasks:
-            heapq.heappush(self._release_heap, (task.arrival, 0, task.id))
+            heapq.heappush(self._release_heap, (self._release_base_time(task), 0, task.id))
 
     def run(self, until: float | None = None) -> None:
         if self._spec is None:
@@ -199,8 +205,11 @@ class SimEngine(ISimEngine):
         self._ready = set()
         self._held_resources = {}
         self._release_heap = []
+        self._segment_ready_heap = []
+        self._pending_segment_ready_times = {}
         self._segment_to_subtask = {}
         self._aborted_jobs = set()
+        self._deterministic_hyper_period = None
         self._paused = False
         self._stopped = False
 
@@ -214,6 +223,10 @@ class SimEngine(ISimEngine):
     @property
     def events(self) -> list[SimEvent]:
         return list(self._events)
+
+    @property
+    def now(self) -> float:
+        return float(self._env.now)
 
     def metric_report(self) -> dict:
         merged: dict = {}
@@ -319,17 +332,51 @@ class SimEngine(ISimEngine):
                 continue
             segment.effective_priority = float(effective_priority)
 
+    @staticmethod
+    def _lcm(lhs: int, rhs: int) -> int:
+        return lhs * rhs // gcd(lhs, rhs)
+
+    def _compute_deterministic_hyper_period(self, spec: ModelSpec) -> float | None:
+        periods = [
+            task.period
+            for task in spec.tasks
+            if task.task_type.value == "time_deterministic" and task.period is not None
+        ]
+        if not periods:
+            return None
+        fractions = [Fraction(str(period)).limit_denominator(1_000_000) for period in periods]
+        denominator_lcm = 1
+        for value in fractions:
+            denominator_lcm = self._lcm(denominator_lcm, value.denominator)
+        numerators: list[int] = []
+        for value in fractions:
+            numerators.append(value.numerator * (denominator_lcm // value.denominator))
+        numerator_lcm = 1
+        for value in numerators:
+            numerator_lcm = self._lcm(numerator_lcm, value)
+        return float(Fraction(numerator_lcm, denominator_lcm))
+
+    @staticmethod
+    def _release_base_time(task: TaskGraphSpec) -> float:
+        phase_offset = task.phase_offset or 0.0
+        if task.task_type.value == "time_deterministic":
+            return task.arrival + phase_offset
+        return task.arrival
+
     def _advance_once(self, horizon: float) -> bool:
         assert self._scheduler and self._etm and self._overheads
 
         now = self._env.now
         self._process_releases(now)
+        self._process_segment_ready_heap(now)
         self._check_deadline_miss(now)
         now = self._schedule_until_stable(now)
 
         next_times: list[float] = []
         if self._release_heap:
             next_times.append(self._release_heap[0][0])
+        if self._segment_ready_heap:
+            next_times.append(self._segment_ready_heap[0][0])
         for core in self._cores.values():
             if core.finish_time is not None:
                 next_times.append(core.finish_time)
@@ -351,9 +398,21 @@ class SimEngine(ISimEngine):
         self._env.run(until=timeout)
 
         now = self._env.now
+        self._process_segment_ready_heap(now)
         self._check_deadline_miss(now)
         self._complete_finished_segments(now)
         return True
+
+    def _process_segment_ready_heap(self, now: float) -> None:
+        while self._segment_ready_heap and self._segment_ready_heap[0][0] <= now + 1e-12:
+            ready_time, segment_key = heapq.heappop(self._segment_ready_heap)
+            pending = self._pending_segment_ready_times.get(segment_key)
+            if pending is None:
+                continue
+            if abs(pending - ready_time) > 1e-12:
+                continue
+            self._pending_segment_ready_times.pop(segment_key, None)
+            self._mark_segment_ready(segment_key, max(now, ready_time))
 
     def _schedule_until_stable(self, now: float) -> float:
         schedule_now = now
@@ -402,6 +461,14 @@ class SimEngine(ISimEngine):
                 segment_keys: list[str] = []
                 for seg in sorted(sub.segments, key=lambda s: s.index):
                     segment_key = f"{job_id}:{sub.id}:{seg.id}"
+                    deterministic_ready_time, deterministic_window_id, deterministic_offset_index = (
+                        self._resolve_deterministic_ready_info(
+                            task=task,
+                            release_idx=release_idx,
+                            release_time=release_time,
+                            release_offsets=seg.release_offsets,
+                        )
+                    )
                     self._segments[segment_key] = RuntimeSegmentState(
                         task_id=task.id,
                         job_id=job_id,
@@ -420,6 +487,9 @@ class SimEngine(ISimEngine):
                         segment_index=seg.index,
                         base_priority=base_priority,
                         effective_priority=base_priority,
+                        deterministic_ready_time=deterministic_ready_time,
+                        deterministic_window_id=deterministic_window_id,
+                        deterministic_offset_index=deterministic_offset_index,
                     )
                     self._segment_to_subtask[segment_key] = (job_id, sub.id)
                     self._held_resources[segment_key] = set()
@@ -443,25 +513,48 @@ class SimEngine(ISimEngine):
                     "task_id": task.id,
                     "release_index": release_idx,
                     "absolute_deadline": absolute_deadline,
+                    "deterministic_hyper_period": self._deterministic_hyper_period,
                 },
             )
             self._scheduler.on_release(job_id)
 
             for subtask in subtasks.values():
                 if not subtask.predecessors:
-                    self._mark_segment_ready(subtask.segment_keys[0], now)
+                    self._queue_segment_ready(subtask.segment_keys[0], now)
 
             next_idx = release_idx + 1
             next_release = self._next_release_time(task, next_idx)
             if next_release is not None and self._spec and next_release <= self._spec.sim.duration + 1e-12:
                 heapq.heappush(self._release_heap, (next_release, next_idx, task.id))
 
+    def _resolve_deterministic_ready_info(
+        self,
+        *,
+        task: TaskGraphSpec,
+        release_idx: int,
+        release_time: float,
+        release_offsets: list[float] | None,
+    ) -> tuple[float | None, int | None, int | None]:
+        if task.task_type.value != "time_deterministic":
+            return None, None, None
+        offsets = release_offsets or [0.0]
+        offset_index = release_idx % len(offsets)
+        ready_time = release_time + offsets[offset_index]
+        base_release = self._release_base_time(task)
+        window_id = release_idx
+        hyper_period = self._deterministic_hyper_period
+        if hyper_period is not None and hyper_period > 1e-12:
+            elapsed = max(0.0, release_time - base_release)
+            window_id = int((elapsed + 1e-12) // hyper_period)
+        return ready_time, window_id, offset_index
+
     @staticmethod
     def _next_release_time(task: TaskGraphSpec, release_idx: int) -> float | None:
         if task.task_type.value == "time_deterministic":
             if task.period is None:
                 return None
-            return task.arrival + task.period * release_idx
+            phase_offset = task.phase_offset or 0.0
+            return task.arrival + phase_offset + task.period * release_idx
         if task.task_type.value == "dynamic_rt":
             interval = task.min_inter_arrival if task.min_inter_arrival is not None else task.period
             if interval is None:
@@ -469,21 +562,43 @@ class SimEngine(ISimEngine):
             return task.arrival + interval * release_idx
         return None
 
+    def _queue_segment_ready(self, segment_key: str, now: float) -> None:
+        segment = self._segments[segment_key]
+        if segment.finished or segment.job_id in self._aborted_jobs:
+            return
+        ready_time = segment.deterministic_ready_time
+        if ready_time is None or ready_time <= now + 1e-12:
+            self._mark_segment_ready(segment_key, now if ready_time is None else max(now, ready_time))
+            return
+        pending = self._pending_segment_ready_times.get(segment_key)
+        if pending is not None and pending <= ready_time + 1e-12:
+            return
+        self._pending_segment_ready_times[segment_key] = ready_time
+        heapq.heappush(self._segment_ready_heap, (ready_time, segment_key))
+
     def _mark_segment_ready(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]
         if segment.finished or segment.job_id in self._aborted_jobs:
             return
         segment.blocked = False
         segment.waiting_resource = None
+        self._pending_segment_ready_times.pop(segment_key, None)
         self._ready.add(segment_key)
         self._scheduler.on_segment_ready(segment_key)
+        payload: dict[str, Any] = {"segment_key": segment.key, "subtask_id": segment.subtask_id}
+        if segment.deterministic_window_id is not None:
+            payload["deterministic_window_id"] = segment.deterministic_window_id
+        if segment.deterministic_offset_index is not None:
+            payload["deterministic_offset_index"] = segment.deterministic_offset_index
+        if segment.deterministic_ready_time is not None:
+            payload["deterministic_ready_time"] = segment.deterministic_ready_time
         self._event_bus.publish(
             event_type=EventType.SEGMENT_READY,
             time=now,
             correlation_id=segment.job_id,
             job_id=segment.job_id,
             segment_id=segment.segment_id,
-            payload={"segment_key": segment.key, "subtask_id": segment.subtask_id},
+            payload=payload,
         )
 
     def _build_snapshot(self, now: float) -> ScheduleSnapshot:
@@ -771,6 +886,8 @@ class SimEngine(ISimEngine):
                 "execution_time": execution_time,
                 "context_overhead": context_cost,
                 "migration_overhead": migration_cost,
+                "deterministic_window_id": segment.deterministic_window_id,
+                "deterministic_offset_index": segment.deterministic_offset_index,
             },
         )
         return "started"
@@ -865,7 +982,7 @@ class SimEngine(ISimEngine):
         subtask.next_index += 1
 
         if subtask.next_index < len(subtask.segment_keys):
-            self._mark_segment_ready(subtask.segment_keys[subtask.next_index], now)
+            self._queue_segment_ready(subtask.segment_keys[subtask.next_index], now)
             return
 
         subtask.completed = True
@@ -876,7 +993,7 @@ class SimEngine(ISimEngine):
             if successor.completed:
                 continue
             if all(job_runtime.state.subtask_completion[pred] for pred in successor.predecessors):
-                self._mark_segment_ready(successor.segment_keys[0], now)
+                self._queue_segment_ready(successor.segment_keys[0], now)
 
         if all(job_runtime.state.subtask_completion.values()):
             job_runtime.state.completed = True
@@ -948,6 +1065,7 @@ class SimEngine(ISimEngine):
             segment.waiting_resource = None
             segment.running_on = None
             self._ready.discard(segment_key)
+            self._pending_segment_ready_times.pop(segment_key, None)
 
         for segment_key in segment_keys:
             for protocol in segment_protocols.get(segment_key, []):
@@ -960,9 +1078,23 @@ class SimEngine(ISimEngine):
                         continue
                     if woken_segment.job_id in self._aborted_jobs:
                         continue
+                    blocked_resource = woken_segment.waiting_resource
                     woken_segment.blocked = False
                     woken_segment.waiting_resource = None
                     self._ready.add(woken_segment_key)
+                    self._event_bus.publish(
+                        event_type=EventType.SEGMENT_UNBLOCKED,
+                        time=now,
+                        correlation_id=woken_segment.job_id,
+                        job_id=woken_segment.job_id,
+                        segment_id=woken_segment.segment_id,
+                        resource_id=blocked_resource,
+                        payload={
+                            "segment_key": woken_segment_key,
+                            "reason": "cancel_segment",
+                            **cancel_result.metadata,
+                        },
+                    )
 
         for segment_key in segment_keys:
             segment = self._segments.get(segment_key)

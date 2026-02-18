@@ -1044,3 +1044,139 @@ def test_release_model_supports_periodic_sporadic_and_aperiodic() -> None:
     assert release_map["periodic"] == pytest.approx([0.0, 5.0, 10.0])
     assert release_map["sporadic"] == pytest.approx([0.0, 3.0, 6.0, 9.0, 12.0])
     assert release_map["aperiodic"] == pytest.approx([1.0])
+
+
+def test_time_deterministic_phase_offset_and_release_offsets() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "det",
+                "name": "det",
+                "task_type": "time_deterministic",
+                "arrival": 0.0,
+                "phase_offset": 1.0,
+                "period": 4.0,
+                "deadline": 4.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {
+                                "id": "seg0",
+                                "index": 1,
+                                "wcet": 0.1,
+                                "release_offsets": [0.5, 1.5],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 12.0, "seed": 19},
+    }
+
+    events, _ = _run_payload(payload)
+
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([1.0, 5.0, 9.0])
+
+    ready_events = [event for event in events if event["type"] == "SegmentReady"]
+    assert [event["time"] for event in ready_events] == pytest.approx([1.5, 6.5, 9.5])
+    assert [event["payload"]["deterministic_offset_index"] for event in ready_events] == [0, 1, 0]
+    assert [event["payload"]["deterministic_window_id"] for event in ready_events] == [0, 1, 2]
+    assert [event["payload"]["deterministic_ready_time"] for event in ready_events] == pytest.approx(
+        [1.5, 6.5, 9.5]
+    )
+
+    start_events = [event for event in events if event["type"] == "SegmentStart"]
+    assert [event["payload"]["deterministic_offset_index"] for event in start_events] == [0, 1, 0]
+    assert [event["payload"]["deterministic_window_id"] for event in start_events] == [0, 1, 2]
+
+
+def test_abort_cancel_emits_segment_unblocked_for_woken_waiter() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [{"id": "r0", "name": "lock", "bound_core_id": "c0", "protocol": "mutex"}],
+        "tasks": [
+            {
+                "id": "holder",
+                "name": "holder",
+                "task_type": "dynamic_rt",
+                "arrival": 0.0,
+                "deadline": 0.5,
+                "abort_on_miss": True,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {"id": "seg0", "index": 1, "wcet": 3.0, "required_resources": ["r0"]}
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "waiter",
+                "name": "waiter",
+                "task_type": "dynamic_rt",
+                "arrival": 0.1,
+                "deadline": 0.2,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {"id": "seg0", "index": 1, "wcet": 0.2, "required_resources": ["r0"]}
+                        ],
+                    }
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 4.0, "seed": 23},
+    }
+
+    events, _ = _run_payload(payload)
+    assert any(
+        event["type"] == "SegmentBlocked" and str(event.get("job_id", "")).startswith("waiter@")
+        for event in events
+    )
+
+    miss_time = next(
+        event["time"]
+        for event in events
+        if event["type"] == "DeadlineMiss" and str(event.get("job_id", "")).startswith("holder@")
+    )
+    wake_event = next(
+        event
+        for event in events
+        if event["type"] == "SegmentUnblocked" and str(event.get("job_id", "")).startswith("waiter@")
+    )
+    assert wake_event["payload"]["reason"] == "cancel_segment"
+    assert wake_event["time"] == pytest.approx(miss_time)
+
+    waiter_start = next(
+        event["time"]
+        for event in events
+        if event["type"] == "SegmentStart" and str(event.get("job_id", "")).startswith("waiter@")
+    )
+    assert waiter_start >= wake_event["time"] - 1e-9

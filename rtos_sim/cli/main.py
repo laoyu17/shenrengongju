@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,41 @@ def _write_json(path: str, payload: dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_events_csv(path: str, rows: list[dict[str, Any]]) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "event_id",
+        "seq",
+        "correlation_id",
+        "time",
+        "type",
+        "job_id",
+        "segment_id",
+        "core_id",
+        "resource_id",
+        "payload",
+    ]
+    with output.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "event_id": row.get("event_id"),
+                    "seq": row.get("seq"),
+                    "correlation_id": row.get("correlation_id"),
+                    "time": row.get("time"),
+                    "type": row.get("type"),
+                    "job_id": row.get("job_id"),
+                    "segment_id": row.get("segment_id"),
+                    "core_id": row.get("core_id"),
+                    "resource_id": row.get("resource_id"),
+                    "payload": json.dumps(row.get("payload", {}), ensure_ascii=False),
+                }
+            )
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -50,9 +86,36 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"[ERROR] {exc}")
         return 1
 
+    if args.step and args.delta is not None and args.delta <= 0:
+        print("[ERROR] --delta must be > 0 when provided")
+        return 1
+    if args.pause_at is not None and args.pause_at < 0:
+        print("[ERROR] --pause-at must be >= 0")
+        return 1
+
     engine = SimEngine()
     engine.build(spec)
-    engine.run(until=args.until)
+    horizon = args.until if args.until is not None else spec.sim.duration
+    stop_at = horizon
+    if args.pause_at is not None:
+        stop_at = min(stop_at, args.pause_at)
+
+    if args.step:
+        step_delta = args.delta
+        while engine.now < stop_at - 1e-12:
+            before = engine.now
+            if step_delta is None:
+                engine.step()
+            else:
+                engine.step(step_delta)
+            if engine.now <= before + 1e-12:
+                break
+        engine.run(until=stop_at)
+    else:
+        engine.run(until=stop_at)
+
+    if args.pause_at is not None and stop_at < horizon - 1e-12:
+        engine.pause()
 
     events = [event.model_dump(mode="json") for event in engine.events]
     metrics = engine.metric_report()
@@ -61,8 +124,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     metrics_out = args.metrics_out or "artifacts/metrics.json"
     _write_jsonl(events_out, events)
     _write_json(metrics_out, metrics)
+    if args.events_csv_out:
+        _write_events_csv(args.events_csv_out, events)
 
-    print(f"[OK] simulation completed, events={len(events)}, metrics={metrics_out}")
+    print(
+        f"[OK] simulation completed, events={len(events)}, now={engine.now:.3f}, "
+        f"metrics={metrics_out}"
+    )
     return 0
 
 
@@ -109,7 +177,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
     run_parser.add_argument("--until", type=float, default=None, help="override simulation duration")
     run_parser.add_argument("--events-out", default=None, help="path to write JSONL events")
+    run_parser.add_argument("--events-csv-out", default=None, help="path to write CSV events")
     run_parser.add_argument("--metrics-out", default=None, help="path to write metric JSON")
+    run_parser.add_argument("--step", action="store_true", help="execute simulation by step loop")
+    run_parser.add_argument("--delta", type=float, default=None, help="delta for --step mode")
+    run_parser.add_argument(
+        "--pause-at",
+        type=float,
+        default=None,
+        help="stop advancing at this simulation time and keep partial results",
+    )
     run_parser.set_defaults(func=cmd_run)
 
     ui_parser = subparsers.add_parser("ui", help="launch PyQt UI")

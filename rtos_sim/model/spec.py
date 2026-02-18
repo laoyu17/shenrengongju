@@ -53,6 +53,7 @@ class SegmentSpec(BaseModel):
     required_resources: list[str] = Field(default_factory=list)
     mapping_hint: Optional[str] = None
     preemptible: bool = True
+    release_offsets: Optional[list[float]] = None
 
 
 class SubtaskSpec(BaseModel):
@@ -73,6 +74,7 @@ class TaskGraphSpec(BaseModel):
     period: Optional[float] = Field(default=None, gt=0)
     deadline: Optional[float] = Field(default=None, gt=0)
     arrival: float = Field(default=0, ge=0)
+    phase_offset: Optional[float] = Field(default=None, ge=0)
     min_inter_arrival: Optional[float] = Field(default=None, gt=0)
     abort_on_miss: bool = False
     subtasks: list[SubtaskSpec] = Field(min_length=1)
@@ -81,6 +83,10 @@ class TaskGraphSpec(BaseModel):
     def validate_timing_fields(self) -> "TaskGraphSpec":
         if self.task_type == TaskType.TIME_DETERMINISTIC and self.period is None:
             raise ValueError("time_deterministic task must define period")
+        if self.task_type == TaskType.TIME_DETERMINISTIC and self.phase_offset is None:
+            self.phase_offset = 0.0
+        if self.task_type != TaskType.TIME_DETERMINISTIC and self.phase_offset not in (None, 0.0):
+            raise ValueError("phase_offset is only valid for time_deterministic task")
         if self.task_type != TaskType.NON_RT and self.deadline is None:
             raise ValueError("real-time task must define deadline")
         if self.period is not None and self.min_inter_arrival is None:
@@ -204,6 +210,26 @@ class ModelSpec(BaseModel):
                     raise ValueError(
                         f"task '{task.id}' segment '{seg.id}' mapping_hint '{seg.mapping_hint}' does not exist"
                     )
+                if seg.release_offsets is not None:
+                    if task.task_type != TaskType.TIME_DETERMINISTIC:
+                        raise ValueError(
+                            f"task '{task.id}' segment '{seg.id}' release_offsets requires time_deterministic task"
+                        )
+                    if not seg.release_offsets:
+                        raise ValueError(
+                            f"task '{task.id}' segment '{seg.id}' release_offsets must not be empty"
+                        )
+                    for offset in seg.release_offsets:
+                        if offset < 0:
+                            raise ValueError(
+                                f"task '{task.id}' segment '{seg.id}' release_offsets must be >= 0"
+                            )
+                        if task.period is not None and offset >= task.period - 1e-12:
+                            raise ValueError(
+                                f"task '{task.id}' segment '{seg.id}' release_offset {offset} must be < period"
+                            )
+                elif task.task_type == TaskType.TIME_DETERMINISTIC:
+                    seg.release_offsets = [0.0]
                 required_bound_cores = {
                     resource_bound_cores[resource_id]
                     for resource_id in seg.required_resources

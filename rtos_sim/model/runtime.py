@@ -89,6 +89,9 @@ class RuntimeSegmentState:
     finished: bool = False
     blocked: bool = False
     waiting_resource: Optional[str] = None
+    deterministic_ready_time: Optional[float] = None
+    deterministic_window_id: Optional[int] = None
+    deterministic_offset_index: Optional[int] = None
 
     @property
     def key(self) -> str:

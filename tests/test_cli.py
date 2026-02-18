@@ -114,3 +114,63 @@ sim:
 
     code = main(["validate", "-c", str(config)])
     assert code == 1
+
+
+def test_cli_run_step_mode_and_csv_export(tmp_path: Path) -> None:
+    events_out = tmp_path / "events.jsonl"
+    metrics_out = tmp_path / "metrics.json"
+    events_csv_out = tmp_path / "events.csv"
+
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--until",
+            "5",
+            "--step",
+            "--delta",
+            "0.5",
+            "--events-out",
+            str(events_out),
+            "--events-csv-out",
+            str(events_csv_out),
+            "--metrics-out",
+            str(metrics_out),
+        ]
+    )
+    assert code == 0
+    assert events_out.exists()
+    assert metrics_out.exists()
+    assert events_csv_out.exists()
+    header = events_csv_out.read_text(encoding="utf-8").splitlines()[0]
+    assert header == "event_id,seq,correlation_id,time,type,job_id,segment_id,core_id,resource_id,payload"
+
+
+def test_cli_run_pause_at_stops_early(tmp_path: Path) -> None:
+    events_out = tmp_path / "events.jsonl"
+    metrics_out = tmp_path / "metrics.json"
+
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--pause-at",
+            "2",
+            "--events-out",
+            str(events_out),
+            "--metrics-out",
+            str(metrics_out),
+        ]
+    )
+    assert code == 0
+    metrics = json.loads(metrics_out.read_text(encoding="utf-8"))
+    assert metrics["max_time"] <= 2.0 + 1e-6
+
+    event_times = [
+        json.loads(line)["time"]
+        for line in events_out.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert max(event_times) <= 2.0 + 1e-6

@@ -544,3 +544,114 @@ def test_ui_save_file_write_error_shows_error(
         assert window._status_label.text() == "Save failed"
     finally:
         window.close()
+
+
+def test_ui_validate_rejects_unknown_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    try:
+        window._editor.setPlainText(
+            """
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+tasks:
+  - id: t0
+    name: task
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 0
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 1
+scheduler:
+  name: not_registered
+  params: {}
+sim:
+  duration: 5
+  seed: 1
+""".strip()
+        )
+
+        calls: list[str] = []
+
+        def _fake_critical(_parent, title: str, message: str) -> None:
+            calls.append(f"{title}:{message}")
+
+        monkeypatch.setattr("rtos_sim.ui.app.QMessageBox.critical", _fake_critical)
+        window._on_validate()
+
+        assert calls
+        assert window._status_label.text() == "Validation failed"
+    finally:
+        window.close()
+
+
+def test_ui_pause_resume_step_and_reset_controls() -> None:
+    class _DummyWorker:
+        def __init__(self) -> None:
+            self.running = True
+            self.calls: list[tuple[str, float | None]] = []
+
+        def isRunning(self) -> bool:
+            return self.running
+
+        def pause(self) -> None:
+            self.calls.append(("pause", None))
+
+        def resume(self) -> None:
+            self.calls.append(("resume", None))
+
+        def request_step(self, delta: float | None = None) -> None:
+            self.calls.append(("step", delta))
+
+        def stop(self) -> None:
+            self.calls.append(("stop", None))
+            self.running = False
+
+        def wait(self, timeout: int) -> bool:
+            self.calls.append(("wait", float(timeout)))
+            return True
+
+    window = MainWindow(config_path="examples/at05_preempt.yaml")
+    try:
+        worker = _DummyWorker()
+        window._worker = worker
+        window._set_worker_controls(running=True, paused=False)
+        window._step_delta_spin.setValue(0.25)
+        window._metrics.setPlainText("pending")
+
+        window._on_pause()
+        window._on_step()
+        window._on_resume()
+
+        assert worker.calls[:4] == [
+            ("pause", None),
+            ("pause", None),
+            ("step", 0.25),
+            ("resume", None),
+        ]
+
+        window._on_reset()
+        assert ("stop", None) in worker.calls
+        assert ("wait", 1000.0) in worker.calls
+        assert window._worker is None
+        assert window._metrics.toPlainText() == ""
+        assert window._status_label.text() == "Reset"
+        assert window._run_button.isEnabled() is True
+        assert window._stop_button.isEnabled() is False
+    finally:
+        window.close()
