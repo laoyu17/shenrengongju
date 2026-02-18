@@ -1,8 +1,8 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.2
-- 状态：S2+（协议一致性与审计补强）
+- 版本：v0.3
+- 状态：S4（Phase A/B/C 首轮落地）
 - 日期：2026-02-18
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
 
@@ -19,7 +19,7 @@
 - 已实现关键运行事件：释放、就绪、开始、结束、阻塞/唤醒、抢占、迁移、deadline miss、完成：`project/rtos_sim/core/engine.py:320`
 - 已实现 deadline miss 与 `abort_on_miss` 行为分支：`project/rtos_sim/core/engine.py:623`
 - 已修复 deadline 边界触发与 abort 中止隔离语义（避免中止后再次调度）：`project/rtos_sim/core/engine.py:320`
-- 已统一 EDF+PCP 优先级域（运行时绝对 deadline 域），并支持运行时 ceiling 刷新：`project/rtos_sim/core/engine.py:247`、`project/rtos_sim/protocols/pcp.py:35`
+- 已统一 EDF+PCP 优先级域（运行时绝对 deadline 域），并修复 ceiling 初值/刷新域误差导致的误阻塞：`project/rtos_sim/core/engine.py:247`、`project/rtos_sim/protocols/pcp.py:35`
 - 已补齐 abort/cancel 异常路径的 `ResourceRelease` 事件：`project/rtos_sim/core/engine.py:1119`
 
 ### 1.3 配置模型与语义校验
@@ -38,6 +38,7 @@
 
 ### 1.5 CLI 与 PyQt6 UI
 - CLI 支持 `validate/run/ui/batch-run` 命令：`project/rtos_sim/cli/main.py:95`
+- `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`project/rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`project/rtos_sim/cli/main.py:81`、`project/rtos_sim/analysis/audit.py:14`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
@@ -58,8 +59,8 @@
 - 已新增 8 个样例（含 AT-06/AT-07 与批量实验矩阵）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at07_heterogeneous_multicore.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态：`python -m pytest -q` 通过（80 tests）
-- 当前覆盖率快照：总 86%、engine 89%、loader 57%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 当前本地测试状态：`python -m pytest -q` 通过（124 tests）
+- 当前覆盖率快照：总 86%、engine 90%、loader 99%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。
@@ -69,7 +70,7 @@
 - 回归：新增测试覆盖“build/reset 后订阅依然有效”：`project/tests/test_engine_scenarios.py:65`
 - 回归：新增 UI 交互与表单同步测试（含表格 CRUD、DAG 侧栏编辑、未知字段保留）：`project/tests/test_ui_gantt.py:39`
 - 回归：新增 DAG 拖拽连线循环检测、节点自由移动、自动布局、可选布局持久化与表格校验阻断测试：`project/tests/test_ui_gantt.py:344`
-- 当前本地测试状态：`python -m pytest -q` 通过（80 tests）
+- 当前本地测试状态：`python -m pytest -q` 通过（124 tests）
 
 ---
 
@@ -82,6 +83,11 @@
    - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
+1. **动态实时到达模型已扩展到随机区间释放，但仍缺更丰富分布模型**
+   - 现状：`max_inter_arrival` 已支持 seed 固定的区间随机到达，满足周期/最小间隔/随机区间三类基本模式。
+   - 证据：`project/rtos_sim/model/spec.py:78`、`project/rtos_sim/core/engine.py:678`
+   - 影响：可覆盖更多混合实时场景；后续可继续扩展泊松/自定义分布。
+
 1. **调度器参数已从“透传”进入“基础生效”，但参数域仍需继续扩展**
    - 现状：`tie_breaker/allow_preempt` 已在 EDF/RM 生效，尚未覆盖更多算法级业务开关。
    - 证据：`project/rtos_sim/schedulers/base.py:55`、`project/rtos_sim/schedulers/edf.py:16`
@@ -92,14 +98,14 @@
    - 证据：`project/rtos_sim/ui/app.py:209`
    - 影响：基础建模效率明显提升，但复杂图编辑体验仍有提升空间。
 
-3. **FR-13 对比视图仍未落地**
-   - 现状：当前 UI 具备 Gantt 与指标文本，但尚无多方案并列对比视图。
-   - 证据：`project/docs/04-详细版SRS.md:83`、`project/rtos_sim/ui/app.py:447`
-   - 影响：实验分析与论文取证仍依赖离线脚本/外部表格对比。
+3. **FR-13 对比视图已落地 MVP，仍需扩展**
+   - 现状：已支持双方案指标对比与 JSON/CSV 差分导出，但尚未接入多方案聚合报告与论文模板。
+   - 证据：`project/docs/04-详细版SRS.md:83`、`project/rtos_sim/ui/app.py:591`、`project/rtos_sim/cli/main.py:190`
+   - 影响：基础对比能力可用，研究级批量分析产物仍需增强。
 
 ### 2.3 P2（中期优化）
 1. **性能治理已建立首版基线，仍需持续校准阈值**
-   - 现状：已提供 `scripts/perf_baseline.py`（100/300 tasks）与阈值门禁入口。
+   - 现状：已提供 `scripts/perf_baseline.py`（100/300/1000 tasks）与阈值门禁入口。
    - 证据：`project/scripts/perf_baseline.py:1`
 
 2. **CI/CD 已建立首版回归门禁，后续需补发布流水线**
@@ -190,3 +196,22 @@
 - 每个 Sprint 固定输出：`设计变更记录 + 代码 + 测试 + 验收报告`
 - 问题清单按 `P0/P1/P2` 每周滚动复盘一次
 - 文档与代码强绑定：接口变更必须同步更新 `08/09/10` 三份设计文档
+
+---
+
+## 6. Phase 实施追踪（2026-02-18）
+
+### Phase A（P0）已完成
+- `core_count` 与 `platform.cores` 实际数量强一致校验已落地：`project/rtos_sim/model/spec.py:135`
+- `batch-run --strict-fail-on-error` 已落地，失败子运行可返回非 0：`project/rtos_sim/cli/main.py:193`
+- 回归：`project/tests/test_model_validation.py:153`、`project/tests/test_cli.py:75`
+
+### Phase B（P1）已完成
+- 动态实时随机区间到达（`min_inter_arrival + max_inter_arrival`）已落地：`project/rtos_sim/core/engine.py:678`
+- 审计新增等待图死锁检测规则 `wait_for_deadlock`：`project/rtos_sim/analysis/audit.py:219`
+- 回归：`project/tests/test_engine_scenarios.py:136`、`project/tests/test_audit.py:175`
+
+### Phase C（P2）已完成（首轮）
+- 性能基线默认场景已扩展至 100/300/1000：`project/scripts/perf_baseline.py:122`
+- CI 性能任务同步扩展至 100/300/1000：`project/.github/workflows/ci.yml:68`
+- 文档与命令示例已同步：`project/README.md:42`

@@ -66,7 +66,7 @@ jobs:
       - name: Run performance baseline
         run: |
           python scripts/perf_baseline.py \
-            --tasks 100,300 \
+            --tasks 100,300,1000 \
             --threshold-version ci-soft-v1 \
             --output artifacts/perf/perf-baseline.json
 

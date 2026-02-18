@@ -120,8 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run baseline perf checks for medium scenarios")
     parser.add_argument(
         "--tasks",
-        default="100,300",
-        help="comma-separated task counts to run, e.g. 100,300",
+        default="100,300,1000",
+        help="comma-separated task counts to run, e.g. 100,300,1000",
     )
     parser.add_argument(
         "--max-wall-ms",
