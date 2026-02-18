@@ -216,3 +216,34 @@ def test_schema_validation_message_is_aggregated_and_limited_to_8_entries() -> N
     details = str(exc.value).split("schema validation failed: ", 1)[1].split(" | ")
     assert len(details) == 8
     assert all(": " in item for item in details)
+
+
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"resource_acquire_policy": "bad"}, "resource_acquire_policy"),
+        ({"event_id_validation": "bad"}, "event_id_validation"),
+        ({"event_id_mode": 123}, "event_id_mode"),
+        ({"etm": 123}, "etm"),
+        ({"etm_params": []}, "etm_params"),
+    ],
+)
+def test_scheduler_params_validation_rules(params: dict[str, Any], expected: str) -> None:
+    payload = _base_payload_v02()
+    payload["scheduler"]["params"] = params
+    with pytest.raises(ConfigError, match=expected):
+        ConfigLoader().load_data(payload)
+
+
+def test_event_id_mode_invalid_string_fails_when_validation_default_strict() -> None:
+    payload = _base_payload_v02()
+    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode"}
+    with pytest.raises(ConfigError, match="event_id_mode"):
+        ConfigLoader().load_data(payload)
+
+
+def test_event_id_mode_invalid_string_allows_warn_compat_mode() -> None:
+    payload = _base_payload_v02()
+    payload["scheduler"]["params"] = {"event_id_mode": "bad_mode", "event_id_validation": "warn"}
+    spec = ConfigLoader().load_data(payload)
+    assert spec.scheduler.params["event_id_mode"] == "bad_mode"

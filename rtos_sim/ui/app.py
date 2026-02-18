@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsLineItem,
@@ -49,6 +51,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from rtos_sim.analysis import build_compare_report, compare_report_to_rows
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader
 
@@ -198,6 +201,10 @@ class MainWindow(QMainWindow):
     ]
     _TASK_TYPE_OPTIONS = {"dynamic_rt", "time_deterministic", "non_rt"}
     _RESOURCE_PROTOCOL_OPTIONS = {"mutex", "pip", "pcp"}
+    _RIGHT_SPLITTER_LOWER_RATIO_COLLAPSED = 0.36
+    _RIGHT_SPLITTER_LOWER_RATIO_EXPANDED = 0.42
+    _RIGHT_SPLITTER_LOWER_MIN_COLLAPSED = 180
+    _RIGHT_SPLITTER_LOWER_MIN_EXPANDED = 260
 
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__()
@@ -230,6 +237,10 @@ class MainWindow(QMainWindow):
 
         self._hovered_segment_key: str | None = None
         self._locked_segment_key: str | None = None
+        self._latest_metrics_report: dict[str, Any] = {}
+        self._compare_left_metrics: dict[str, Any] | None = None
+        self._compare_right_metrics: dict[str, Any] | None = None
+        self._latest_compare_report: dict[str, Any] | None = None
 
         self._editor = QPlainTextEdit()
         self._editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -341,6 +352,10 @@ class MainWindow(QMainWindow):
         self._form_allow_preempt.setChecked(True)
         self._form_event_id_mode = QComboBox()
         self._form_event_id_mode.addItems(["deterministic", "random", "seeded_random"])
+        self._form_event_id_validation = QComboBox()
+        self._form_event_id_validation.addItems(["strict", "warn"])
+        self._form_resource_acquire_policy = QComboBox()
+        self._form_resource_acquire_policy.addItems(["legacy_sequential", "atomic_rollback"])
         self._form_sim_duration = QDoubleSpinBox()
         self._form_sim_duration.setRange(0.001, 1_000_000.0)
         self._form_sim_duration.setDecimals(3)
@@ -372,6 +387,7 @@ class MainWindow(QMainWindow):
         self._plot.setLabel("bottom", "Time")
         self._plot.setLabel("left", "Core")
         self._plot.addLegend(offset=(10, 10))
+        self._plot.setMinimumHeight(320)
 
         self._legend_toggle_subtask = QPushButton("Subtask Legend")
         self._legend_toggle_subtask.setCheckable(True)
@@ -391,6 +407,25 @@ class MainWindow(QMainWindow):
         self._details = QPlainTextEdit()
         self._details.setReadOnly(True)
         self._details.setMaximumHeight(200)
+
+        self._compare_left_label = QLineEdit("baseline")
+        self._compare_right_label = QLineEdit("candidate")
+        self._compare_load_left_button = QPushButton("Load Left Metrics")
+        self._compare_load_right_button = QPushButton("Load Right Metrics")
+        self._compare_use_latest_left_button = QPushButton("Use Latest -> Left")
+        self._compare_use_latest_right_button = QPushButton("Use Latest -> Right")
+        self._compare_build_button = QPushButton("Build Compare")
+        self._compare_export_json_button = QPushButton("Export Compare JSON")
+        self._compare_export_csv_button = QPushButton("Export Compare CSV")
+        self._compare_output = QPlainTextEdit()
+        self._compare_output.setReadOnly(True)
+        self._compare_output.setMinimumHeight(120)
+        self._compare_output.setMaximumHeight(220)
+        self._compare_toggle_button = QPushButton("Show FR-13 Compare")
+        self._compare_toggle_button.setCheckable(True)
+        self._compare_group: QGroupBox | None = None
+        self._telemetry_scroll: QScrollArea | None = None
+        self._right_splitter: QSplitter | None = None
 
         self._build_layout()
         self._connect_signals()
@@ -529,6 +564,11 @@ class MainWindow(QMainWindow):
         runtime_form.addRow("scheduler.params.tie_breaker", self._form_tie_breaker)
         runtime_form.addRow(self._form_allow_preempt)
         runtime_form.addRow("scheduler.params.event_id_mode", self._form_event_id_mode)
+        runtime_form.addRow("scheduler.params.event_id_validation", self._form_event_id_validation)
+        runtime_form.addRow(
+            "scheduler.params.resource_acquire_policy",
+            self._form_resource_acquire_policy,
+        )
         runtime_form.addRow("sim.duration", self._form_sim_duration)
         runtime_form.addRow("sim.seed", self._form_sim_seed)
         form_content_layout.addWidget(runtime_group)
@@ -551,21 +591,68 @@ class MainWindow(QMainWindow):
 
         viz_container = QWidget()
         viz_layout = QVBoxLayout(viz_container)
-        viz_layout.addWidget(self._plot, stretch=3)
+
+        gantt_panel = QWidget()
+        gantt_panel_layout = QVBoxLayout(gantt_panel)
+        gantt_panel_layout.addWidget(self._plot, stretch=1)
 
         legend_toolbar = QHBoxLayout()
         legend_toolbar.addWidget(QLabel("Legend"))
         legend_toolbar.addWidget(self._legend_toggle_subtask)
         legend_toolbar.addWidget(self._legend_toggle_segment)
         legend_toolbar.addStretch(1)
-        viz_layout.addLayout(legend_toolbar)
-        viz_layout.addWidget(self._legend_detail)
-        viz_layout.addWidget(self._hover_hint)
+        gantt_panel_layout.addLayout(legend_toolbar)
+        gantt_panel_layout.addWidget(self._legend_detail)
+        gantt_panel_layout.addWidget(self._hover_hint)
 
-        viz_layout.addWidget(QLabel("Metrics / Logs"))
-        viz_layout.addWidget(self._metrics, stretch=2)
-        viz_layout.addWidget(QLabel("Segment Details (Hover/Click lock)"))
-        viz_layout.addWidget(self._details, stretch=2)
+        telemetry_panel = QWidget()
+        telemetry_layout = QVBoxLayout(telemetry_panel)
+        telemetry_layout.addWidget(QLabel("Metrics / Logs"))
+        telemetry_layout.addWidget(self._metrics, stretch=2)
+        telemetry_layout.addWidget(QLabel("Segment Details (Hover/Click lock)"))
+        telemetry_layout.addWidget(self._details, stretch=2)
+        telemetry_layout.addWidget(self._compare_toggle_button)
+
+        self._compare_group = QGroupBox("FR-13 Compare (MVP)")
+        compare_layout = QVBoxLayout(self._compare_group)
+        compare_label_form = QFormLayout()
+        compare_label_form.addRow("left label", self._compare_left_label)
+        compare_label_form.addRow("right label", self._compare_right_label)
+        compare_layout.addLayout(compare_label_form)
+        compare_actions_grid = QGridLayout()
+        compare_actions_grid.addWidget(self._compare_load_left_button, 0, 0)
+        compare_actions_grid.addWidget(self._compare_load_right_button, 0, 1)
+        compare_actions_grid.addWidget(self._compare_use_latest_left_button, 1, 0)
+        compare_actions_grid.addWidget(self._compare_use_latest_right_button, 1, 1)
+        compare_actions_grid.setColumnStretch(0, 1)
+        compare_actions_grid.setColumnStretch(1, 1)
+        compare_layout.addLayout(compare_actions_grid)
+        compare_export_grid = QGridLayout()
+        compare_export_grid.addWidget(self._compare_build_button, 0, 0)
+        compare_export_grid.addWidget(self._compare_export_json_button, 0, 1)
+        compare_export_grid.addWidget(self._compare_export_csv_button, 1, 0, 1, 2)
+        compare_export_grid.setColumnStretch(0, 1)
+        compare_export_grid.setColumnStretch(1, 1)
+        compare_layout.addLayout(compare_export_grid)
+        compare_layout.addWidget(self._compare_output)
+        self._compare_group.setVisible(False)
+        telemetry_layout.addWidget(self._compare_group)
+
+        self._telemetry_scroll = QScrollArea()
+        self._telemetry_scroll.setWidgetResizable(True)
+        self._telemetry_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._telemetry_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._telemetry_scroll.setWidget(telemetry_panel)
+
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.addWidget(gantt_panel)
+        self._right_splitter.addWidget(self._telemetry_scroll)
+        self._right_splitter.setCollapsible(0, False)
+        self._right_splitter.setCollapsible(1, False)
+        self._right_splitter.setStretchFactor(0, 3)
+        self._right_splitter.setStretchFactor(1, 2)
+        self._right_splitter.setSizes([520, 300])
+        viz_layout.addWidget(self._right_splitter)
 
         splitter.addWidget(viz_container)
         splitter.setSizes([560, 940])
@@ -603,6 +690,14 @@ class MainWindow(QMainWindow):
         self._dag_remove_edge_button.clicked.connect(self._on_dag_remove_edge)
         self._dag_auto_layout_button.clicked.connect(self._on_dag_auto_layout)
         self._dag_persist_layout.toggled.connect(self._on_dag_persist_layout_toggled)
+        self._compare_toggle_button.toggled.connect(self._on_compare_toggle)
+        self._compare_load_left_button.clicked.connect(self._on_compare_load_left)
+        self._compare_load_right_button.clicked.connect(self._on_compare_load_right)
+        self._compare_use_latest_left_button.clicked.connect(self._on_compare_use_latest_left)
+        self._compare_use_latest_right_button.clicked.connect(self._on_compare_use_latest_right)
+        self._compare_build_button.clicked.connect(self._on_compare_build)
+        self._compare_export_json_button.clicked.connect(self._on_compare_export_json)
+        self._compare_export_csv_button.clicked.connect(self._on_compare_export_csv)
 
         self._editor.textChanged.connect(self._on_text_edited)
         self._register_form_change_signals()
@@ -637,6 +732,8 @@ class MainWindow(QMainWindow):
             self._form_scheduler_name,
             self._form_tie_breaker,
             self._form_event_id_mode,
+            self._form_event_id_validation,
+            self._form_resource_acquire_policy,
         ]
         for widget in combo_boxes:
             widget.currentIndexChanged.connect(self._mark_form_dirty)
@@ -802,6 +899,14 @@ class MainWindow(QMainWindow):
             self._set_combo_value(self._form_tie_breaker, str(params.get("tie_breaker", "fifo")))
             self._form_allow_preempt.setChecked(self._to_bool(params.get("allow_preempt"), True))
             self._set_combo_value(self._form_event_id_mode, str(params.get("event_id_mode", "deterministic")))
+            self._set_combo_value(
+                self._form_event_id_validation,
+                str(params.get("event_id_validation", "strict")),
+            )
+            self._set_combo_value(
+                self._form_resource_acquire_policy,
+                str(params.get("resource_acquire_policy", "legacy_sequential")),
+            )
             self._form_sim_duration.setValue(self._safe_float(sim.get("duration"), 10.0))
             self._form_sim_seed.setValue(int(self._safe_float(sim.get("seed"), 42)))
         finally:
@@ -1488,6 +1593,10 @@ class MainWindow(QMainWindow):
                 "tie_breaker": self._form_tie_breaker.currentText().strip() or "fifo",
                 "allow_preempt": bool(self._form_allow_preempt.isChecked()),
                 "event_id_mode": self._form_event_id_mode.currentText().strip() or "deterministic",
+                "event_id_validation": self._form_event_id_validation.currentText().strip()
+                or "strict",
+                "resource_acquire_policy": self._form_resource_acquire_policy.currentText().strip()
+                or "legacy_sequential",
             },
         )
         doc.patch_sim(float(self._form_sim_duration.value()), int(self._form_sim_seed.value()))
@@ -1977,6 +2086,160 @@ class MainWindow(QMainWindow):
             return
         self._status_label.setText(f"Saved: {path}")
 
+    def _pick_metrics_file(self) -> str | None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open metrics json",
+            str(Path.cwd()),
+            "JSON Files (*.json)",
+        )
+        return path or None
+
+    def _on_compare_toggle(self, checked: bool) -> None:
+        if self._compare_group is None:
+            return
+        self._compare_group.setVisible(checked)
+        self._compare_toggle_button.setText("Hide FR-13 Compare" if checked else "Show FR-13 Compare")
+        self._rebalance_right_splitter(compare_open=checked)
+        if checked:
+            self._ensure_compare_visible()
+
+    def _rebalance_right_splitter(self, *, compare_open: bool) -> None:
+        if self._right_splitter is None:
+            return
+        sizes = self._right_splitter.sizes()
+        total = sum(s for s in sizes if s > 0)
+        if total <= 0:
+            total = max(self._right_splitter.height(), 1)
+        lower_ratio = (
+            self._RIGHT_SPLITTER_LOWER_RATIO_EXPANDED
+            if compare_open
+            else self._RIGHT_SPLITTER_LOWER_RATIO_COLLAPSED
+        )
+        lower_min = (
+            self._RIGHT_SPLITTER_LOWER_MIN_EXPANDED
+            if compare_open
+            else self._RIGHT_SPLITTER_LOWER_MIN_COLLAPSED
+        )
+        lower_target = max(lower_min, int(total * lower_ratio))
+        if lower_target >= total - 60:
+            lower_target = max(60, total - 60)
+        upper_target = max(60, total - lower_target)
+        self._right_splitter.setSizes([upper_target, lower_target])
+
+    def _ensure_compare_visible(self) -> None:
+        if self._telemetry_scroll is None or self._compare_group is None:
+            return
+        if not self._compare_group.isVisible():
+            return
+        self._telemetry_scroll.ensureWidgetVisible(self._compare_group, 0, 24)
+
+    @staticmethod
+    def _read_metrics_json(path: str) -> dict[str, Any]:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("metrics json root must be object")
+        return payload
+
+    def _on_compare_load_left(self) -> None:
+        path = self._pick_metrics_file()
+        if not path:
+            return
+        try:
+            self._compare_left_metrics = self._read_metrics_json(path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Compare load failed", str(exc))
+            return
+        self._compare_output.appendPlainText(f"[Compare] left metrics loaded: {path}")
+
+    def _on_compare_load_right(self) -> None:
+        path = self._pick_metrics_file()
+        if not path:
+            return
+        try:
+            self._compare_right_metrics = self._read_metrics_json(path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Compare load failed", str(exc))
+            return
+        self._compare_output.appendPlainText(f"[Compare] right metrics loaded: {path}")
+
+    def _on_compare_use_latest_left(self) -> None:
+        if not self._latest_metrics_report:
+            QMessageBox.information(self, "Compare", "No latest run metrics available.")
+            return
+        self._compare_left_metrics = dict(self._latest_metrics_report)
+        self._compare_output.appendPlainText("[Compare] left metrics set from latest run")
+
+    def _on_compare_use_latest_right(self) -> None:
+        if not self._latest_metrics_report:
+            QMessageBox.information(self, "Compare", "No latest run metrics available.")
+            return
+        self._compare_right_metrics = dict(self._latest_metrics_report)
+        self._compare_output.appendPlainText("[Compare] right metrics set from latest run")
+
+    def _on_compare_build(self) -> None:
+        if self._compare_left_metrics is None or self._compare_right_metrics is None:
+            QMessageBox.information(self, "Compare", "Please load/set both left and right metrics first.")
+            return
+        report = build_compare_report(
+            self._compare_left_metrics,
+            self._compare_right_metrics,
+            left_label=self._compare_left_label.text().strip() or "left",
+            right_label=self._compare_right_label.text().strip() or "right",
+        )
+        self._latest_compare_report = report
+        self._compare_output.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
+
+    def _on_compare_export_json(self) -> None:
+        if self._latest_compare_report is None:
+            QMessageBox.information(self, "Compare", "Build compare report first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save compare report json",
+            str(Path.cwd() / "compare_report.json"),
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(
+                json.dumps(self._latest_compare_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        self._status_label.setText(f"Compare JSON exported: {path}")
+
+    def _on_compare_export_csv(self) -> None:
+        if self._latest_compare_report is None:
+            QMessageBox.information(self, "Compare", "Build compare report first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save compare report csv",
+            str(Path.cwd() / "compare_report.csv"),
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+        rows = compare_report_to_rows(self._latest_compare_report)
+        fieldnames: list[str] = []
+        for row in rows:
+            for key in row:
+                if key not in fieldnames:
+                    fieldnames.append(key)
+        try:
+            with Path(path).open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        self._status_label.setText(f"Compare CSV exported: {path}")
+
     def _set_worker_controls(self, *, running: bool, paused: bool) -> None:
         self._run_button.setEnabled(not running)
         self._stop_button.setEnabled(running)
@@ -2460,6 +2723,7 @@ class MainWindow(QMainWindow):
     def _on_finished(self, report: dict[str, Any], tail_events: list[dict[str, Any]]) -> None:
         if tail_events:
             self._on_event_batch(tail_events)
+        self._latest_metrics_report = dict(report)
         self._metrics.append("\n=== Metrics ===")
         self._metrics.append(json.dumps(report, ensure_ascii=False, indent=2))
         self._status_label.setText("Completed")

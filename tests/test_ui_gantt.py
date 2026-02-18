@@ -144,6 +144,7 @@ def test_ui_structured_form_apply_to_text() -> None:
         assert payload["scheduler"]["params"]["tie_breaker"] == "lifo"
         assert payload["scheduler"]["params"]["allow_preempt"] is False
         assert payload["scheduler"]["params"]["event_id_mode"] == "random"
+        assert payload["scheduler"]["params"]["event_id_validation"] == "strict"
         assert payload["sim"]["seed"] == 99
         assert payload["resources"][0]["protocol"] == "pcp"
     finally:
@@ -211,6 +212,7 @@ sim:
         assert window._form_segment_required_resources.text() == "r0"
         assert window._form_tie_breaker.currentText() == "segment_key"
         assert window._form_event_id_mode.currentText() == "seeded_random"
+        assert window._form_event_id_validation.currentText() == "strict"
         assert window._form_sim_seed.value() == 123
     finally:
         window.close()
@@ -275,6 +277,73 @@ def test_ui_dag_sidebar_edit_sync() -> None:
         task = payload["tasks"][0]
         ids = {sub["id"] for sub in task["subtasks"]}
         assert "s2" in ids
+    finally:
+        window.close()
+
+
+def test_ui_compare_mvp_builds_report_from_metrics() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        window._compare_left_metrics = {
+            "jobs_completed": 3,
+            "deadline_miss_count": 1,
+            "core_utilization": {"c0": 0.5},
+        }
+        window._compare_right_metrics = {
+            "jobs_completed": 4,
+            "deadline_miss_count": 0,
+            "core_utilization": {"c0": 0.75},
+        }
+        window._compare_left_label.setText("base")
+        window._compare_right_label.setText("new")
+
+        window._on_compare_build()
+        payload = yaml.safe_load(window._compare_output.toPlainText())
+        assert payload["left_label"] == "base"
+        assert payload["right_label"] == "new"
+        assert any(row["metric"] == "jobs_completed" for row in payload["scalar_metrics"])
+        assert any(row["core_id"] == "c0" for row in payload["core_utilization"])
+    finally:
+        window.close()
+
+
+def test_ui_gantt_has_min_height_and_compare_starts_collapsed() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        assert window._plot.minimumHeight() >= 320
+        assert window._compare_group is not None
+        assert window._right_splitter is not None
+        assert window._telemetry_scroll is not None
+        assert window._compare_group.isHidden() is True
+        assert window._compare_toggle_button.isChecked() is False
+
+        window._compare_toggle_button.setChecked(True)
+        assert window._compare_group.isHidden() is False
+    finally:
+        window.close()
+
+
+def test_ui_compare_expand_rebalances_splitter_and_enables_scroll() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        assert window._right_splitter is not None
+        assert window._telemetry_scroll is not None
+        window.resize(960, 320)
+        window.show()
+        APP.processEvents()
+        before_sizes = window._right_splitter.sizes()
+
+        window._compare_toggle_button.setChecked(True)
+        APP.processEvents()
+        after_sizes = window._right_splitter.sizes()
+
+        assert len(before_sizes) == 2
+        assert len(after_sizes) == 2
+        assert after_sizes[1] >= before_sizes[1]
+
+        scrollbar = window._telemetry_scroll.verticalScrollBar()
+        assert scrollbar.maximum() > 0
+        assert scrollbar.value() > 0
     finally:
         window.close()
 
