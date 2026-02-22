@@ -1,7 +1,7 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.5
+- 版本：v0.6
 - 状态：S6（Phase A/B/C + D/E/F + G 语义闭环深化）
 - 日期：2026-02-22
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
@@ -46,6 +46,7 @@
 - `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`project/rtos_sim/cli/main.py:151`
 - 审计报告新增 `rule_version` 与 `evidence`，支持跨批次追溯：`project/rtos_sim/analysis/audit.py:7`
 - 审计报告新增 `protocol_proof_assets`，沉淀 PIP/PCP 证明辅助轨迹：`project/rtos_sim/analysis/audit.py:79`
+- 审计报告新增 `compliance_profiles`（`engineering_v1/research_v1`），支持研究闭环机读判定：`project/rtos_sim/analysis/audit.py:727`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
@@ -66,8 +67,11 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-02-22）：`python -m pytest -q` 通过，`192 passed`
-- 当前覆盖率快照（2026-02-22）：总 87%、engine 89%、cli/main 100%、loader 98%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 当前本地测试状态（2026-02-22）：`python -m pytest --maxfail=1` 通过，`211 passed`
+- 当前覆盖率快照（2026-02-22）：总覆盖率 87%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 新增质量快照脚本（用于文档事实对齐）：`project/scripts/quality_snapshot.py`
+  - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
+  - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。

@@ -56,6 +56,10 @@ python scripts/perf_compare.py --base artifacts/perf/base.json --current artifac
 # 生成 nightly 昨日 delta 摘要（CI 同款）
 python scripts/perf_delta.py --current artifacts/perf/perf-nightly-1000.json \
   --base artifacts/perf/perf-nightly-1000.base.json --out artifacts/perf/perf-delta-summary.json
+
+# 生成测试/覆盖率质量快照（用于文档与评审同步）
+python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json \
+  --coverage-json artifacts/quality/coverage.json
 ```
 
 ## 测试
@@ -80,6 +84,7 @@ python -m pytest
 - 报告附带语义判定摘要：`status`（`pass/warn/fail`）+ `checks`（含规则级结果）
 - 适用于“建模语义闭环”审查，不涉及性能优化目标。
 - 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`（Docx 条目到代码/测试/审计规则映射）
+- 研究闭环验收基线：`docs/15-研究闭环验收基线.md`（`compliance_profiles` 机读判定口径）
 
 ## 调度参数（S3）
 

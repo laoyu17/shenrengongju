@@ -471,3 +471,36 @@ def test_audit_detects_pip_owner_hold_mismatch() -> None:
     report = build_audit_report(events, scheduler_name="edf")
     assert report["status"] == "fail"
     assert any(issue["rule"] == "pip_owner_hold_consistency" for issue in report["issues"])
+
+
+def test_audit_includes_compliance_profiles() -> None:
+    report = build_audit_report(events=[], scheduler_name="edf")
+
+    profiles = report["compliance_profiles"]
+    assert profiles["profile_version"] == "0.1"
+    assert profiles["default_profile"] == "research_v1"
+    assert profiles["profiles"]["engineering_v1"]["status"] == "pass"
+    assert profiles["profiles"]["research_v1"]["status"] == "pass"
+
+
+def test_audit_compliance_profile_tracks_check_failures() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "SegmentBlocked",
+            "job_id": "waiter@0",
+            "resource_id": "r0",
+            "payload": {
+                "segment_key": "waiter@0:s0:seg0",
+                "reason": "resource_busy",
+            },
+        }
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+    research_profile = report["compliance_profiles"]["profiles"]["research_v1"]
+    engineering_profile = report["compliance_profiles"]["profiles"]["engineering_v1"]
+
+    assert research_profile["status"] == "fail"
+    assert "pip_priority_chain_consistency" in research_profile["failed_checks"]
+    assert engineering_profile["status"] == "pass"

@@ -7,6 +7,26 @@ from typing import Any
 
 
 AUDIT_RULE_VERSION = "0.2"
+AUDIT_COMPLIANCE_PROFILE_VERSION = "0.1"
+
+ENGINEERING_REQUIRED_CHECKS: tuple[str, ...] = (
+    "resource_release_balance",
+    "abort_cancel_release_visibility",
+    "resource_partial_hold_on_block",
+    "wait_for_deadlock",
+)
+
+RESEARCH_REQUIRED_CHECKS: tuple[str, ...] = (
+    "resource_release_balance",
+    "abort_cancel_release_visibility",
+    "pcp_priority_domain_alignment",
+    "pcp_ceiling_numeric_domain",
+    "resource_partial_hold_on_block",
+    "pip_priority_chain_consistency",
+    "pcp_ceiling_transition_consistency",
+    "wait_for_deadlock",
+    "pip_owner_hold_consistency",
+)
 
 
 def _is_edf_scheduler(name: str | None) -> bool:
@@ -242,6 +262,48 @@ def _build_protocol_proof_assets(events: list[dict[str, Any]]) -> dict[str, Any]
         "pcp_ceiling_resolutions": pcp_ceiling_resolutions[:50],
         "pcp_ceiling_unresolved_count": len(unresolved),
         "pcp_ceiling_unresolved_samples": unresolved[:20],
+    }
+
+
+def _build_profile_status(checks: dict[str, Any], required_checks: tuple[str, ...]) -> dict[str, Any]:
+    passed: list[str] = []
+    failed: list[str] = []
+    missing: list[str] = []
+    for check_name in required_checks:
+        result = checks.get(check_name)
+        if not isinstance(result, dict):
+            missing.append(check_name)
+            continue
+        if result.get("passed") is True:
+            passed.append(check_name)
+        else:
+            failed.append(check_name)
+
+    total = len(required_checks)
+    return {
+        "status": "pass" if not failed and not missing else "fail",
+        "required_checks": list(required_checks),
+        "passed_checks": passed,
+        "failed_checks": failed,
+        "missing_checks": missing,
+        "pass_rate": 1.0 if total == 0 else len(passed) / total,
+    }
+
+
+def _build_compliance_profiles(checks: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profile_version": AUDIT_COMPLIANCE_PROFILE_VERSION,
+        "default_profile": "research_v1",
+        "profiles": {
+            "engineering_v1": {
+                "description": "工程交付基线，覆盖资源平衡/终止路径/死锁基础安全项",
+                **_build_profile_status(checks, ENGINEERING_REQUIRED_CHECKS),
+            },
+            "research_v1": {
+                "description": "研究复现基线，覆盖协议域一致性与证明辅助链路",
+                **_build_profile_status(checks, RESEARCH_REQUIRED_CHECKS),
+            },
+        },
     }
 
 
@@ -662,6 +724,7 @@ def build_audit_report(
         "checks": checks,
         "evidence": _build_audit_evidence(events, checks, scheduler_name=scheduler_name),
         "protocol_proof_assets": protocol_proof_assets,
+        "compliance_profiles": _build_compliance_profiles(checks),
     }
     if isinstance(model_relation_summary, dict):
         report["model_relation_summary"] = model_relation_summary
