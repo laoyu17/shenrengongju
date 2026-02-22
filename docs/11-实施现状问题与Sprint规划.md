@@ -14,7 +14,7 @@
 - 已补充运行说明与命令示例：`project/README.md:5`
 
 ### 1.2 核心仿真链路（SimPy）
-- 引擎已支持 `build/run/step/pause/reset/stop` 生命周期与事件推进：`project/rtos_sim/core/engine.py:101`
+- 引擎已支持 `build/run/step/pause/resume/stop/reset` 生命周期与事件推进：`project/rtos_sim/core/engine.py:101`
 - 已接入调度器、资源协议、ETM、开销模型插件点：`project/rtos_sim/core/engine.py:105`
 - 已实现关键运行事件：释放、就绪、开始、结束、阻塞/唤醒、抢占、迁移、deadline miss、完成：`project/rtos_sim/core/engine.py:320`
 - 已实现 deadline miss 与 `abort_on_miss` 行为分支：`project/rtos_sim/core/engine.py:623`
@@ -63,8 +63,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态：`python -m pytest -q` 通过（以最近一次本地/CI日志为准）
-- 当前覆盖率快照：总 86%、engine 90%、loader 99%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 当前本地测试状态（2026-02-22）：`python -m pytest -q` 通过，`192 passed`
+- 当前覆盖率快照（2026-02-22）：总 87%、engine 89%、cli/main 100%、loader 98%、pcp 97%、ui/worker 86%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。

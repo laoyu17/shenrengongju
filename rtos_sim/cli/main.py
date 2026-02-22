@@ -121,14 +121,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
     try:
         spec = loader.load(args.config)
+        # Build-time plugin resolution must pass during validate.
+        SimEngine().build(spec)
     except ConfigError as exc:
         print(f"[ERROR] {args.config}: {exc}")
         return 1
-    try:
-        # Build-time plugin resolution must pass during validate.
-        SimEngine().build(spec)
     except ValueError as exc:
         print(f"[ERROR] {args.config}: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI should not leak traceback by default.
+        print(f"[ERROR] {args.config}: unexpected validation error: {exc}")
         return 1
     print("[OK] config validation passed")
     return 0
@@ -150,49 +152,59 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     engine = SimEngine()
-    engine.build(spec)
-    horizon = args.until if args.until is not None else spec.sim.duration
-    stop_at = horizon
-    if args.pause_at is not None:
-        stop_at = min(stop_at, args.pause_at)
+    try:
+        engine.build(spec)
+        horizon = args.until if args.until is not None else spec.sim.duration
+        stop_at = horizon
+        if args.pause_at is not None:
+            stop_at = min(stop_at, args.pause_at)
 
-    if args.step:
-        step_delta = args.delta
-        while engine.now < stop_at - 1e-12:
-            before = engine.now
-            if step_delta is None:
-                engine.step()
-            else:
-                engine.step(step_delta)
-            if engine.now <= before + 1e-12:
-                break
-        engine.run(until=stop_at)
-    else:
-        engine.run(until=stop_at)
+        if args.step:
+            step_delta = args.delta
+            while engine.now < stop_at - 1e-12:
+                before = engine.now
+                if step_delta is None:
+                    engine.step()
+                else:
+                    engine.step(step_delta)
+                if engine.now <= before + 1e-12:
+                    break
+            engine.run(until=stop_at)
+        else:
+            engine.run(until=stop_at)
 
-    if args.pause_at is not None and stop_at < horizon - 1e-12:
-        engine.pause()
+        if args.pause_at is not None and stop_at < horizon - 1e-12:
+            engine.pause()
 
-    events = [event.model_dump(mode="json") for event in engine.events]
-    metrics = engine.metric_report()
+        events = [event.model_dump(mode="json") for event in engine.events]
+        metrics = engine.metric_report()
 
-    events_out = args.events_out or "artifacts/events.jsonl"
-    metrics_out = args.metrics_out or "artifacts/metrics.json"
-    _write_jsonl(events_out, events)
-    _write_json(metrics_out, metrics)
-    if args.events_csv_out:
-        _write_events_csv(args.events_csv_out, events)
-    if args.audit_out:
-        relation_summary = build_model_relations_report(spec).get("summary")
-        audit_report = build_audit_report(
-            events,
-            scheduler_name=spec.scheduler.name,
-            model_relation_summary=relation_summary,
-        )
-        _write_json(args.audit_out, audit_report)
-        if audit_report["status"] != "pass":
-            print(f"[ERROR] simulation audit failed, report={args.audit_out}")
-            return 2
+        events_out = args.events_out or "artifacts/events.jsonl"
+        metrics_out = args.metrics_out or "artifacts/metrics.json"
+        _write_jsonl(events_out, events)
+        _write_json(metrics_out, metrics)
+        if args.events_csv_out:
+            _write_events_csv(args.events_csv_out, events)
+        if args.audit_out:
+            relation_summary = build_model_relations_report(spec).get("summary")
+            audit_report = build_audit_report(
+                events,
+                scheduler_name=spec.scheduler.name,
+                model_relation_summary=relation_summary,
+            )
+            _write_json(args.audit_out, audit_report)
+            if audit_report["status"] != "pass":
+                print(f"[ERROR] simulation audit failed, report={args.audit_out}")
+                return 2
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+    except RuntimeError as exc:
+        print(f"[ERROR] simulation runtime error: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - CLI should provide stable non-zero exit.
+        print(f"[ERROR] unexpected simulation error: {exc}")
+        return 1
 
     print(
         f"[OK] simulation completed, events={len(events)}, now={engine.now:.3f}, "
@@ -207,7 +219,11 @@ def cmd_ui(args: argparse.Namespace) -> int:
     except ImportError as exc:  # pragma: no cover - environment dependent
         print(f"[ERROR] UI dependencies missing: {exc}")
         return 1
-    run_ui(config_path=args.config)
+    try:
+        run_ui(config_path=args.config)
+    except Exception as exc:  # noqa: BLE001 - UI errors should still return non-zero cleanly.
+        print(f"[ERROR] UI launch failed: {exc}")
+        return 1
     return 0
 
 
@@ -222,6 +238,9 @@ def cmd_batch_run(args: argparse.Namespace) -> int:
         )
     except ConfigError as exc:
         print(f"[ERROR] {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] unexpected batch-run error: {exc}")
         return 1
 
     print(
@@ -269,12 +288,19 @@ def cmd_inspect_model(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"[ERROR] {exc}")
         return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] unexpected inspect-model error: {exc}")
+        return 1
 
-    report = build_model_relations_report(spec)
-    out_json = args.out_json or "artifacts/model_relations.json"
-    _write_json(out_json, report)
-    if args.out_csv:
-        _write_rows_csv(args.out_csv, model_relations_report_to_rows(report))
+    try:
+        report = build_model_relations_report(spec)
+        out_json = args.out_json or "artifacts/model_relations.json"
+        _write_json(out_json, report)
+        if args.out_csv:
+            _write_rows_csv(args.out_csv, model_relations_report_to_rows(report))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] unexpected inspect-model error: {exc}")
+        return 1
 
     csv_path = args.out_csv if args.out_csv else "-"
     print(
@@ -294,10 +320,17 @@ def cmd_migrate_config(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"[ERROR] {exc}")
         return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] unexpected migrate-config error: {exc}")
+        return 1
 
-    _write_config_payload(args.output_config, migrated)
-    if args.report_out:
-        _write_json(args.report_out, report)
+    try:
+        _write_config_payload(args.output_config, migrated)
+        if args.report_out:
+            _write_json(args.report_out, report)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] failed to write migrate-config outputs: {exc}")
+        return 1
 
     print(
         "[OK] config migration completed, "

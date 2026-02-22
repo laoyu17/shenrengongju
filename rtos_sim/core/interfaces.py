@@ -29,6 +29,14 @@ class ISimEngine(ABC):
         """Pause simulation loop (for UI control)."""
 
     @abstractmethod
+    def resume(self) -> None:
+        """Resume simulation loop after pause()."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Stop simulation loop and prevent further advancement."""
+
+    @abstractmethod
     def reset(self) -> None:
         """Reset engine state."""
 
