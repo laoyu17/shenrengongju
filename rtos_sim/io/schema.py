@@ -188,15 +188,39 @@ CONFIG_SCHEMA: dict = {
             "properties": {
                 "type": {
                     "type": "string",
-                    "enum": ["fixed", "uniform", "poisson", "one_shot"],
+                    "enum": ["fixed", "uniform", "poisson", "one_shot", "custom"],
                 },
                 "params": {
                     "type": "object",
-                    "additionalProperties": {"type": "number", "exclusiveMinimum": 0},
+                    "additionalProperties": {
+                        "anyOf": [
+                            {"type": "number"},
+                            {"type": "string"},
+                            {"type": "boolean"},
+                        ]
+                    },
                     "default": {},
                 },
                 "max_releases": {"type": ["integer", "null"], "minimum": 1},
             },
+            "allOf": [
+                {
+                    "if": {"properties": {"type": {"const": "custom"}}},
+                    "then": {
+                        "properties": {
+                            "params": {
+                                "required": ["generator"],
+                                "properties": {
+                                    "generator": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    }
+                                },
+                            }
+                        }
+                    },
+                }
+            ],
             "additionalProperties": False,
         },
     },

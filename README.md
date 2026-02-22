@@ -77,7 +77,9 @@ python -m pytest
   - 任务/子任务/分段到核关系（含 `unbound`）
   - 任务/子任务/分段到资源关系
   - 核/资源反向关联集合
+- 报告附带语义判定摘要：`status`（`pass/warn/fail`）+ `checks`（含规则级结果）
 - 适用于“建模语义闭环”审查，不涉及性能优化目标。
+- 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`（Docx 条目到代码/测试/审计规则映射）
 
 ## 调度参数（S3）
 
@@ -105,7 +107,8 @@ python -m pytest
 
 - 运行配置（模型）版本：`version: "0.2"`（由 `ConfigLoader` 校验）
 - 批量实验配置版本：`examples/batch_matrix.yaml` 中 `version: "0.1"`（仅用于 batch 文件结构）
-- 到达过程配置：新增 `tasks[*].arrival_process`（`fixed/uniform/poisson/one_shot`），兼容旧字段 `arrival_model/min_inter_arrival/max_inter_arrival`
+- 到达过程配置：新增 `tasks[*].arrival_process`（`fixed/uniform/poisson/one_shot/custom`），兼容旧字段 `arrival_model/min_inter_arrival/max_inter_arrival`
+- `arrival_process.type=custom` 通过 `params.generator` 选择已注册生成器（内置 `constant_interval/uniform_interval/poisson_rate/sequence`）
 - 配置迁移命令：`rtos-sim migrate-config --in <old> --out <new>`（会移除已废弃字段并可输出迁移报告）
 
 ## 样例

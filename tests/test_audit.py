@@ -384,3 +384,90 @@ def test_audit_includes_model_relation_summary_when_provided() -> None:
 
     assert report["status"] == "pass"
     assert report["model_relation_summary"]["task_count"] == 1
+
+
+def test_audit_includes_rule_version_and_evidence() -> None:
+    report = build_audit_report(events=[], scheduler_name="edf")
+
+    assert report["rule_version"] == "0.2"
+    assert report["evidence"]["scheduler_name"] == "edf"
+    assert report["evidence"]["event_count"] == 0
+    assert report["evidence"]["checks_evaluated"] >= 1
+
+
+def test_audit_protocol_proof_assets_include_pip_and_pcp_traces() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "ResourceAcquire",
+            "job_id": "owner@0",
+            "resource_id": "r0",
+            "payload": {"segment_key": "owner@0:s0:seg0"},
+        },
+        {
+            "event_id": "e2",
+            "type": "SegmentBlocked",
+            "job_id": "waiter@0",
+            "resource_id": "r0",
+            "payload": {
+                "segment_key": "waiter@0:s0:seg0",
+                "reason": "resource_busy",
+                "owner_segment": "owner@0:s0:seg0",
+            },
+        },
+        {
+            "event_id": "e3",
+            "type": "SegmentBlocked",
+            "job_id": "waiter@0",
+            "resource_id": "r1",
+            "payload": {
+                "segment_key": "waiter@0:s0:seg1",
+                "reason": "system_ceiling_block",
+                "priority_domain": "absolute_deadline",
+                "system_ceiling": -8.0,
+            },
+        },
+        {
+            "event_id": "e4",
+            "type": "SegmentUnblocked",
+            "job_id": "waiter@0",
+            "resource_id": "r1",
+            "payload": {"segment_key": "waiter@0:s0:seg1"},
+        },
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+
+    assets = report["protocol_proof_assets"]
+    assert assets["pip_wait_edge_count"] == 1
+    assert assets["pcp_ceiling_block_count"] == 1
+    assert assets["pcp_ceiling_resolution_count"] == 1
+    assert assets["pcp_ceiling_unresolved_count"] == 0
+    assert report["checks"]["pip_owner_hold_consistency"]["passed"] is True
+
+
+def test_audit_detects_pip_owner_hold_mismatch() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "ResourceAcquire",
+            "job_id": "owner@0",
+            "resource_id": "r0",
+            "payload": {"segment_key": "owner@0:s0:seg0"},
+        },
+        {
+            "event_id": "e2",
+            "type": "SegmentBlocked",
+            "job_id": "waiter@0",
+            "resource_id": "r0",
+            "payload": {
+                "segment_key": "waiter@0:s0:seg0",
+                "reason": "resource_busy",
+                "owner_segment": "another@0:s0:seg0",
+            },
+        },
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+    assert report["status"] == "fail"
+    assert any(issue["rule"] == "pip_owner_hold_consistency" for issue in report["issues"])

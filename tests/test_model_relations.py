@@ -18,6 +18,8 @@ def test_model_relations_tracks_unbound_segments() -> None:
     assert report["summary"]["task_count"] == 1
     assert report["summary"]["segment_count"] == 2
     assert report["summary"]["unbound_segment_count"] == 2
+    assert report["status"] == "warn"
+    assert report["checks"]["segment_core_binding_coverage"]["passed"] is False
     assert {"task_id": "t0", "core_id": UNBOUND_CORE_ID} in report["task_to_cores"]
     assert {
         "task_id": "t0",
@@ -34,6 +36,9 @@ def test_model_relations_maps_resource_bound_segments_to_cores() -> None:
     report = build_model_relations_report(spec)
 
     assert report["summary"]["unbound_segment_count"] == 0
+    assert report["status"] == "pass"
+    assert report["checks"]["segment_core_binding_coverage"]["passed"] is True
+    assert report["checks"]["resource_segment_bound_core_alignment"]["passed"] is True
     assert all(item["core_id"] == "c0" for item in report["segment_to_core"])
     assert {
         "resource_id": "r0",
@@ -62,3 +67,12 @@ def test_model_relations_rows_include_all_sections() -> None:
         if report[section]:
             assert section in categories
     assert all("category" in row for row in rows)
+
+
+def test_model_relations_report_contains_check_version() -> None:
+    spec = ConfigLoader().load(str(EXAMPLES / "at01_single_dag_single_core.yaml"))
+
+    report = build_model_relations_report(spec)
+
+    assert report["check_version"] == "0.1"
+    assert "core_reverse_relation_consistency" in report["checks"]

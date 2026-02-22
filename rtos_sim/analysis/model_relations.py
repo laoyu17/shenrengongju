@@ -23,6 +23,7 @@ RELATION_SECTIONS: tuple[str, ...] = (
     "core_to_subtasks",
     "core_to_segments",
 )
+RELATION_CHECK_VERSION = "0.1"
 
 
 def _segment_key(task_id: str, subtask_id: str, segment_id: str) -> str:
@@ -37,6 +38,110 @@ def _sorted_tuple_rows(
         {field: value for field, value in zip(fields, row, strict=True)}
         for row in sorted(rows)
     ]
+
+
+def build_model_relations_checks(report: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate deterministic semantic checks from relation report."""
+
+    summary = report.get("summary", {})
+    segment_to_core = report.get("segment_to_core", [])
+    segment_to_resources = report.get("segment_to_resources", [])
+    core_to_segments = report.get("core_to_segments", [])
+
+    checks: dict[str, dict[str, Any]] = {}
+
+    unbound_count = int(summary.get("unbound_segment_count", 0) or 0)
+    checks["segment_core_binding_coverage"] = {
+        "passed": unbound_count == 0,
+        "severity": "warn",
+        "message": "all segments should bind to concrete cores for deterministic replay",
+        "unbound_segment_count": unbound_count,
+    }
+
+    core_by_segment_key = {
+        str(item.get("segment_key")): str(item.get("core_id"))
+        for item in segment_to_core
+        if isinstance(item, dict) and item.get("segment_key") is not None
+    }
+    resources_on_unbound_segments: list[dict[str, str]] = []
+    for item in segment_to_resources:
+        if not isinstance(item, dict):
+            continue
+        segment_key = item.get("segment_key")
+        if not isinstance(segment_key, str):
+            continue
+        if core_by_segment_key.get(segment_key) == UNBOUND_CORE_ID:
+            resources_on_unbound_segments.append(
+                {
+                    "segment_key": segment_key,
+                    "resource_id": str(item.get("resource_id")),
+                }
+            )
+    checks["resource_segment_bound_core_alignment"] = {
+        "passed": not resources_on_unbound_segments,
+        "severity": "error",
+        "message": "segments requiring resources should not remain unbound",
+        "samples": resources_on_unbound_segments[:20],
+    }
+
+    core_reverse = {
+        (
+            str(item.get("core_id")),
+            str(item.get("task_id")),
+            str(item.get("subtask_id")),
+            str(item.get("segment_id")),
+            str(item.get("segment_key")),
+        )
+        for item in core_to_segments
+        if isinstance(item, dict)
+    }
+    missing_reverse: list[dict[str, str]] = []
+    for item in segment_to_core:
+        if not isinstance(item, dict):
+            continue
+        relation_key = (
+            str(item.get("core_id")),
+            str(item.get("task_id")),
+            str(item.get("subtask_id")),
+            str(item.get("segment_id")),
+            str(item.get("segment_key")),
+        )
+        if relation_key not in core_reverse:
+            missing_reverse.append(
+                {
+                    "core_id": relation_key[0],
+                    "task_id": relation_key[1],
+                    "subtask_id": relation_key[2],
+                    "segment_id": relation_key[3],
+                    "segment_key": relation_key[4],
+                }
+            )
+    checks["core_reverse_relation_consistency"] = {
+        "passed": not missing_reverse,
+        "severity": "error",
+        "message": "segment_to_core rows must have reverse core_to_segments rows",
+        "samples": missing_reverse[:20],
+    }
+
+    has_error_failure = any(
+        (not result.get("passed", False)) and result.get("severity") == "error"
+        for result in checks.values()
+    )
+    has_warn_failure = any(
+        (not result.get("passed", False)) and result.get("severity") == "warn"
+        for result in checks.values()
+    )
+    status = "pass"
+    if has_error_failure:
+        status = "fail"
+    elif has_warn_failure:
+        status = "warn"
+
+    return {
+        "check_version": RELATION_CHECK_VERSION,
+        "status": status,
+        "checks": checks,
+    }
 
 
 def build_model_relations_report(spec: ModelSpec) -> dict[str, Any]:
@@ -128,12 +233,14 @@ def build_model_relations_report(spec: ModelSpec) -> dict[str, Any]:
         "relation_row_count": sum(len(sections[name]) for name in RELATION_SECTIONS),
     }
 
-    return {
+    report = {
         "relation_version": "0.1",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "summary": summary,
         **sections,
     }
+    report.update(build_model_relations_checks(report))
+    return report
 
 
 def model_relations_report_to_rows(report: dict[str, Any]) -> list[dict[str, Any]]:

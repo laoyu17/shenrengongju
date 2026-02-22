@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from enum import Enum
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -31,13 +31,14 @@ class ArrivalProcessType(str, Enum):
     UNIFORM = "uniform"
     POISSON = "poisson"
     ONE_SHOT = "one_shot"
+    CUSTOM = "custom"
 
 
 class ArrivalProcessSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: ArrivalProcessType
-    params: dict[str, float] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     max_releases: Optional[int] = Field(default=None, ge=1)
 
     @model_validator(mode="after")
@@ -47,16 +48,25 @@ class ArrivalProcessSpec(BaseModel):
             ArrivalProcessType.UNIFORM: {"min_interval", "max_interval"},
             ArrivalProcessType.POISSON: {"rate"},
             ArrivalProcessType.ONE_SHOT: set(),
+            ArrivalProcessType.CUSTOM: set(),
         }
-        unknown = sorted(set(self.params) - allowed[self.type])
-        if unknown:
-            joined = ", ".join(unknown)
-            raise ValueError(f"arrival_process.params contains unsupported keys: {joined}")
-        for key, value in self.params.items():
-            if not isinstance(value, (int, float)):
-                raise ValueError(f"arrival_process.params.{key} must be number")
-            if float(value) <= 0:
-                raise ValueError(f"arrival_process.params.{key} must be > 0")
+        if self.type == ArrivalProcessType.CUSTOM:
+            generator = self.params.get("generator")
+            if not isinstance(generator, str) or not generator.strip():
+                raise ValueError("arrival_process type=custom requires params.generator")
+            for key, value in self.params.items():
+                if isinstance(value, (dict, list)):
+                    raise ValueError(f"arrival_process.params.{key} must be scalar")
+        else:
+            unknown = sorted(set(self.params) - allowed[self.type])
+            if unknown:
+                joined = ", ".join(unknown)
+                raise ValueError(f"arrival_process.params contains unsupported keys: {joined}")
+            for key, value in self.params.items():
+                if not isinstance(value, (int, float)):
+                    raise ValueError(f"arrival_process.params.{key} must be number")
+                if float(value) <= 0:
+                    raise ValueError(f"arrival_process.params.{key} must be > 0")
         if self.type == ArrivalProcessType.ONE_SHOT and self.max_releases not in (None, 1):
             raise ValueError("arrival_process type=one_shot only supports max_releases=1")
         return self
@@ -171,7 +181,7 @@ class TaskGraphSpec(BaseModel):
         return self
 
     @staticmethod
-    def _resolve_positive_param(params: dict[str, float], key: str) -> float | None:
+    def _resolve_positive_param(params: dict[str, Any], key: str) -> float | None:
         value = params.get(key)
         if value is None:
             return None
@@ -226,6 +236,11 @@ class TaskGraphSpec(BaseModel):
             rate = self._resolve_positive_param(process.params, "rate")
             if rate is None:
                 raise ValueError("arrival_process type=poisson requires params.rate")
+            return
+
+        if process_type == ArrivalProcessType.CUSTOM:
+            if self.task_type == TaskType.DYNAMIC_RT:
+                self.arrival_model = None
             return
 
         if process_type == ArrivalProcessType.ONE_SHOT and self.task_type == TaskType.DYNAMIC_RT:

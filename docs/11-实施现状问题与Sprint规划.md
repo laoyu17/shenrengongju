@@ -1,9 +1,9 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.4
-- 状态：S5（Phase A/B/C + D/E 语义闭环与配置治理）
-- 日期：2026-02-18
+- 版本：v0.5
+- 状态：S6（Phase A/B/C + D/E/F + G 语义闭环深化）
+- 日期：2026-02-22
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
 
 ## 1. 已经实现的内容（As-Is）
@@ -28,7 +28,7 @@
 - 已实现 Schema 校验 + Pydantic 语义校验：`project/rtos_sim/io/loader.py:38`
 - 已实现关键语义约束（DAG 无环、ID 唯一、引用完整性、mapping_hint 有效性）：`project/rtos_sim/model/spec.py:138`
 - 已收紧 `time_deterministic` 定点约束（多核场景需可推导/显式 mapping_hint）：`project/rtos_sim/model/spec.py:244`
-- 已新增统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot`）并兼容 legacy 到达字段：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
+- 已新增统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot/custom`）并兼容 legacy 到达字段：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
 
 ### 1.4 插件化能力（MVP）
 - 调度器：EDF / RM + 注册机制：`project/rtos_sim/schedulers/registry.py:15`
@@ -36,6 +36,7 @@
 - 资源协议：Mutex + PIP + PCP（优先级更新语义）：`project/rtos_sim/protocols/mutex.py:10`、`project/rtos_sim/protocols/pip.py:9`、`project/rtos_sim/protocols/pcp.py:9`
 - ETM：`Constant + table_based`（段/核查表缩放）：`project/rtos_sim/etm/registry.py:14`
 - 开销模型：Simple 常量开销：`project/rtos_sim/overheads/registry.py:22`
+- 到达过程生成器：`arrival.custom` 注册机制（内置 `constant_interval/uniform_interval/poisson_rate/sequence`）：`project/rtos_sim/arrival/registry.py:1`
 - 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`project/rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
@@ -43,6 +44,8 @@
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`project/rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`project/rtos_sim/cli/main.py:81`、`project/rtos_sim/analysis/audit.py:14`
 - `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`project/rtos_sim/cli/main.py:151`
+- 审计报告新增 `rule_version` 与 `evidence`，支持跨批次追溯：`project/rtos_sim/analysis/audit.py:7`
+- 审计报告新增 `protocol_proof_assets`，沉淀 PIP/PCP 证明辅助轨迹：`project/rtos_sim/analysis/audit.py:79`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
@@ -87,10 +90,10 @@
    - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
-1. **统一到达过程已落地，但仍缺“自定义分布插件化”**
-   - 现状：`arrival_process` 已支持 `fixed/uniform/poisson/one_shot`，并兼容旧字段。
-   - 证据：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
-   - 影响：周期/偶发/零星基础语义已可表达；后续可扩展到用户自定义分布。
+1. **统一到达过程已落地并接入自定义生成器，但生态仍需扩展**
+   - 现状：`arrival_process` 已支持 `fixed/uniform/poisson/one_shot/custom`，`custom` 通过 `params.generator` 调用注册生成器（内置 `constant_interval/uniform_interval/poisson_rate/sequence`）。
+   - 证据：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`、`project/rtos_sim/arrival/registry.py:1`
+   - 影响：可满足插件化扩展入口；后续需补充更多分布模板与文档示例。
 
 1. **调度器参数已从“透传”进入“基础生效”，但参数域仍需继续扩展**
    - 现状：`tie_breaker/allow_preempt` 已在 EDF/RM 生效，尚未覆盖更多算法级业务开关。
@@ -107,8 +110,8 @@
    - 证据：`project/docs/04-详细版SRS.md:83`、`project/rtos_sim/ui/app.py:591`、`project/rtos_sim/cli/main.py:190`
    - 影响：基础对比能力可用，研究级批量分析产物仍需增强。
 
-4. **模型关系导出已落地基础版，仍需向研究模板扩展**
-   - 现状：`inspect-model` 已可导出任务/子任务/分段与核/资源的双向关系表（JSON/CSV），覆盖 docx 关系集合审查的基础产物。
+4. **模型关系导出已进入“基础自动判定”阶段，仍需向研究模板扩展**
+   - 现状：`inspect-model` 已可导出任务/子任务/分段与核/资源双向关系表，并附带 `status/checks` 自动判定摘要。
    - 证据：`project/rtos_sim/analysis/model_relations.py:1`、`project/rtos_sim/cli/main.py:237`
    - 影响：语义闭环证据链已打通第一步，后续仍需接入更高层实验模板与自动判定规则。
 
@@ -227,7 +230,7 @@
 - 文档与命令示例已同步：`project/README.md:42`
 
 ### Phase D（研究可复现收敛）已完成（本轮）
-- 统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot`）已落地，且保持 legacy 配置兼容：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
+- 统一到达过程 `arrival_process`（`fixed/uniform/poisson/one_shot/custom`）已落地，且保持 legacy 配置兼容：`project/rtos_sim/model/spec.py:76`、`project/rtos_sim/core/engine.py:686`
 - 审计新增规则：`pip_priority_chain_consistency`、`pcp_ceiling_transition_consistency`：`project/rtos_sim/analysis/audit.py:220`
 - 回归：新增到达过程与审计规则测试：`project/tests/test_engine_scenarios.py:229`、`project/tests/test_audit.py:91`、`project/tests/test_model_validation.py:201`
 
@@ -242,3 +245,11 @@
 - nightly 上一日基线提取改为固定文件名 `perf-nightly-1000.json`，避免 artifact 内多 json 时误选：`project/.github/workflows/ci.yml:196`
 - `perf_delta` 改为按目标 `task_count` 严格匹配（无匹配不再回退首 case）：`project/scripts/perf_delta.py:20`
 - 回归：新增 delta 严格匹配与迁移命令测试：`project/tests/test_perf_delta.py:62`、`project/tests/test_cli.py:341`
+
+### Phase G（语义闭环深化）已完成（2026-02-22）
+- 到达过程新增 `custom` 类型与生成器注册机制；`params.generator` 可选择注册生成器：`project/rtos_sim/model/spec.py:30`、`project/rtos_sim/arrival/registry.py:1`、`project/rtos_sim/core/engine.py:712`
+- 审计报告新增 `rule_version` 与 `evidence` 字段，提升审计追溯性：`project/rtos_sim/analysis/audit.py:7`
+- 审计报告新增 `protocol_proof_assets` 与 `pip_owner_hold_consistency`，增强协议可证明性证据：`project/rtos_sim/analysis/audit.py:79`、`project/rtos_sim/analysis/audit.py:653`
+- 模型关系报告新增 `status/checks` 自动判定摘要：`project/rtos_sim/analysis/model_relations.py:42`
+- 新增 docx 需求追踪矩阵：`project/docs/14-docx需求追踪矩阵.md`
+- 回归：新增 custom 到达过程、审计证据字段、关系自动判定测试：`project/tests/test_engine_scenarios.py:360`、`project/tests/test_audit.py:388`、`project/tests/test_model_relations.py:56`

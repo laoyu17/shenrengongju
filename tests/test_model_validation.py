@@ -249,6 +249,38 @@ def test_arrival_process_rejects_unsupported_params() -> None:
         ConfigLoader().load_data(payload)
 
 
+def test_arrival_process_custom_requires_generator() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["arrival_process"] = {
+        "type": "custom",
+        "params": {"interval": 1.0},
+    }
+    with pytest.raises(ConfigError, match="generator"):
+        ConfigLoader().load_data(payload)
+
+
+def test_arrival_process_custom_allows_generator_and_scalar_params() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["arrival_process"] = {
+        "type": "custom",
+        "params": {"generator": "constant_interval", "interval": 1.5, "mode": "demo"},
+    }
+    spec = ConfigLoader().load_data(payload)
+    process = spec.tasks[0].arrival_process
+    assert process is not None
+    assert process.params["generator"] == "constant_interval"
+
+
+def test_arrival_process_custom_rejects_nested_params() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["arrival_process"] = {
+        "type": "custom",
+        "params": {"generator": "constant_interval", "options": {"k": 1}},
+    }
+    with pytest.raises(ConfigError, match="scalar|given schemas"):
+        ConfigLoader().load_data(payload)
+
+
 def test_task_mapping_hint_applies_to_segments_without_mapping_hint() -> None:
     payload = _base_payload()
     payload["platform"]["processor_types"][0]["core_count"] = 2

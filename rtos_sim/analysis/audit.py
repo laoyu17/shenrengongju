@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
+
+
+AUDIT_RULE_VERSION = "0.2"
 
 
 def _is_edf_scheduler(name: str | None) -> bool:
@@ -49,6 +52,197 @@ def _find_wait_cycle(wait_for: dict[str, str], start: str) -> list[str]:
         path.append(cursor)
         cursor = wait_for[cursor]
     return []
+
+
+def _build_audit_evidence(
+    events: list[dict[str, Any]],
+    checks: dict[str, Any],
+    *,
+    scheduler_name: str | None,
+) -> dict[str, Any]:
+    event_type_counts = Counter(str(event.get("type", "unknown")) for event in events)
+    failed_checks = sorted(
+        rule
+        for rule, result in checks.items()
+        if isinstance(result, dict) and result.get("passed") is False
+    )
+    return {
+        "scheduler_name": scheduler_name,
+        "event_count": len(events),
+        "event_type_counts": dict(sorted(event_type_counts.items())),
+        "checks_evaluated": len(checks),
+        "checks_failed": failed_checks,
+        "checks_passed": len(checks) - len(failed_checks),
+    }
+
+
+def _build_protocol_proof_assets(events: list[dict[str, Any]]) -> dict[str, Any]:
+    resource_owner: dict[str, str] = {}
+    pip_wait_edges: list[dict[str, Any]] = []
+    pip_owner_mismatch: list[dict[str, Any]] = []
+    pcp_ceiling_blocked: dict[str, dict[str, Any]] = {}
+    pcp_ceiling_blocks: list[dict[str, Any]] = []
+    pcp_ceiling_resolutions: list[dict[str, Any]] = []
+
+    def resolve_ceiling_blocks(
+        *,
+        segment_prefix: str | None,
+        reason: str,
+        resolver_event_id: str | None,
+        resolver_event_type: str,
+    ) -> None:
+        if not segment_prefix:
+            return
+        for segment_key in sorted(
+            key for key in pcp_ceiling_blocked if key.startswith(segment_prefix)
+        ):
+            block_info = pcp_ceiling_blocked.pop(segment_key)
+            pcp_ceiling_resolutions.append(
+                {
+                    "segment_key": segment_key,
+                    "blocked_event_id": block_info.get("event_id"),
+                    "resolved_event_id": resolver_event_id,
+                    "resolved_by": reason,
+                    "resolver_event_type": resolver_event_type,
+                }
+            )
+
+    for event in events:
+        event_type = str(event.get("type", ""))
+        payload = event.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        event_id = event.get("event_id")
+        segment_key = _event_segment_key(event)
+        resource_id = event.get("resource_id")
+        job_id = event.get("job_id")
+
+        if event_type == "ResourceAcquire":
+            if (
+                isinstance(resource_id, str)
+                and resource_id
+                and isinstance(segment_key, str)
+                and segment_key
+            ):
+                resource_owner[resource_id] = segment_key
+            continue
+
+        if event_type == "ResourceRelease":
+            if (
+                isinstance(resource_id, str)
+                and resource_id
+                and isinstance(segment_key, str)
+                and segment_key
+                and resource_owner.get(resource_id) == segment_key
+            ):
+                resource_owner.pop(resource_id, None)
+            continue
+
+        if event_type == "SegmentBlocked":
+            reason = payload.get("reason")
+            if reason == "resource_busy":
+                owner_segment = payload.get("owner_segment")
+                if (
+                    (not isinstance(owner_segment, str) or not owner_segment)
+                    and isinstance(resource_id, str)
+                    and resource_id
+                ):
+                    owner_segment = resource_owner.get(resource_id)
+                row = {
+                    "event_id": event_id,
+                    "segment_key": segment_key,
+                    "resource_id": resource_id,
+                    "owner_segment": owner_segment,
+                    "request_priority": payload.get("request_priority"),
+                }
+                pip_wait_edges.append(row)
+                if (
+                    isinstance(owner_segment, str)
+                    and owner_segment
+                    and isinstance(resource_id, str)
+                    and resource_id
+                ):
+                    expected_owner = resource_owner.get(resource_id)
+                    if expected_owner is not None and expected_owner != owner_segment:
+                        pip_owner_mismatch.append(
+                            {
+                                "event_id": event_id,
+                                "resource_id": resource_id,
+                                "reported_owner": owner_segment,
+                                "expected_owner": expected_owner,
+                                "segment_key": segment_key,
+                            }
+                        )
+                continue
+
+            if reason == "system_ceiling_block":
+                if isinstance(segment_key, str) and segment_key:
+                    block_row = {
+                        "event_id": event_id,
+                        "segment_key": segment_key,
+                        "resource_id": resource_id,
+                        "system_ceiling": payload.get("system_ceiling"),
+                        "priority_domain": payload.get("priority_domain"),
+                    }
+                    pcp_ceiling_blocked[segment_key] = block_row
+                    pcp_ceiling_blocks.append(block_row)
+                continue
+
+        if event_type == "SegmentUnblocked":
+            if isinstance(segment_key, str) and segment_key in pcp_ceiling_blocked:
+                resolve_ceiling_blocks(
+                    segment_prefix=segment_key,
+                    reason="segment_unblocked",
+                    resolver_event_id=event_id,
+                    resolver_event_type=event_type,
+                )
+            continue
+
+        if event_type == "JobComplete":
+            if isinstance(job_id, str) and job_id:
+                resolve_ceiling_blocks(
+                    segment_prefix=f"{job_id}:",
+                    reason="job_complete",
+                    resolver_event_id=event_id,
+                    resolver_event_type=event_type,
+                )
+            continue
+
+        if event_type == "DeadlineMiss" and payload.get("abort_on_miss"):
+            if isinstance(job_id, str) and job_id:
+                resolve_ceiling_blocks(
+                    segment_prefix=f"{job_id}:",
+                    reason="deadline_abort",
+                    resolver_event_id=event_id,
+                    resolver_event_type=event_type,
+                )
+            continue
+
+        if event_type == "Preempt" and payload.get("reason") in {"abort_on_miss", "abort_on_error"}:
+            if isinstance(job_id, str) and job_id:
+                resolve_ceiling_blocks(
+                    segment_prefix=f"{job_id}:",
+                    reason="preempt_abort",
+                    resolver_event_id=event_id,
+                    resolver_event_type=event_type,
+                )
+
+    unresolved = [
+        {"segment_key": segment_key, **row}
+        for segment_key, row in sorted(pcp_ceiling_blocked.items())
+    ]
+    return {
+        "pip_wait_edge_count": len(pip_wait_edges),
+        "pip_wait_edges": pip_wait_edges[:50],
+        "pip_owner_mismatch_count": len(pip_owner_mismatch),
+        "pip_owner_mismatch_samples": pip_owner_mismatch[:20],
+        "pcp_ceiling_block_count": len(pcp_ceiling_blocks),
+        "pcp_ceiling_blocks": pcp_ceiling_blocks[:50],
+        "pcp_ceiling_resolution_count": len(pcp_ceiling_resolutions),
+        "pcp_ceiling_resolutions": pcp_ceiling_resolutions[:50],
+        "pcp_ceiling_unresolved_count": len(unresolved),
+        "pcp_ceiling_unresolved_samples": unresolved[:20],
+    }
 
 
 def build_audit_report(
@@ -445,11 +639,29 @@ def build_audit_report(
         )
     checks["wait_for_deadlock"] = {"passed": not deadlock_samples}
 
+    protocol_proof_assets = _build_protocol_proof_assets(events)
+    pip_owner_mismatch_count = int(protocol_proof_assets["pip_owner_mismatch_count"])
+    if pip_owner_mismatch_count > 0:
+        issues.append(
+            {
+                "rule": "pip_owner_hold_consistency",
+                "severity": "error",
+                "message": "resource_busy owner_segment must match active resource owner",
+                "samples": protocol_proof_assets["pip_owner_mismatch_samples"],
+            }
+        )
+    checks["pip_owner_hold_consistency"] = {
+        "passed": pip_owner_mismatch_count == 0,
+    }
+
     report = {
+        "rule_version": AUDIT_RULE_VERSION,
         "status": "pass" if not issues else "fail",
         "issue_count": len(issues),
         "issues": issues,
         "checks": checks,
+        "evidence": _build_audit_evidence(events, checks, scheduler_name=scheduler_name),
+        "protocol_proof_assets": protocol_proof_assets,
     }
     if isinstance(model_relation_summary, dict):
         report["model_relation_summary"] = model_relation_summary

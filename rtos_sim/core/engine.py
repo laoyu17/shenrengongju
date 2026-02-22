@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 
 import simpy
 
+from rtos_sim.arrival import IArrivalGenerator, create_arrival_generator
 from rtos_sim.etm import IExecutionTimeModel, create_etm
 from rtos_sim.events import EventBus, EventType, SimEvent
 from rtos_sim.metrics import CoreMetrics, IMetric
@@ -84,6 +85,7 @@ class SimEngine(ISimEngine):
         self._event_id_mode = self.DEFAULT_EVENT_ID_MODE
         self._event_id_seed: int | None = None
         self._arrival_rng = random.Random(0)
+        self._arrival_generators: dict[str, IArrivalGenerator] = {}
         self._resource_acquire_policy = self.DEFAULT_RESOURCE_ACQUIRE_POLICY
 
         self._env = simpy.Environment()
@@ -207,6 +209,7 @@ class SimEngine(ISimEngine):
         self._events = []
         self._setup_event_pipeline()
         self._arrival_rng = random.Random(0)
+        self._arrival_generators = {}
 
         self._spec = None
         self._scheduler = None
@@ -710,6 +713,26 @@ class SimEngine(ISimEngine):
                     raise ValueError("arrival_process type=poisson requires rate")
                 return current_release + self._arrival_rng.expovariate(rate)
 
+            if process_type == "custom":
+                generator_name = params.get("generator")
+                if not isinstance(generator_name, str) or not generator_name.strip():
+                    raise ValueError("arrival_process type=custom requires params.generator")
+                generator = self._resolve_arrival_generator(generator_name)
+                interval = generator.next_interval(
+                    task=task,
+                    now=self._env.now,
+                    current_release=current_release,
+                    release_index=release_idx,
+                    params=dict(params),
+                    rng=self._arrival_rng,
+                )
+                if not isinstance(interval, (int, float)):
+                    raise ValueError("custom arrival generator must return numeric interval")
+                resolved_interval = float(interval)
+                if resolved_interval <= 0:
+                    raise ValueError("custom arrival generator interval must be > 0")
+                return current_release + resolved_interval
+
             raise ValueError(f"unsupported arrival_process type: {process_type}")
 
         if task.task_type.value == "time_deterministic":
@@ -745,6 +768,12 @@ class SimEngine(ISimEngine):
         if resolved <= 0:
             raise ValueError("computed dynamic release interval must be > 0")
         return resolved
+
+    def _resolve_arrival_generator(self, name: str) -> IArrivalGenerator:
+        key = name.strip().lower()
+        if key not in self._arrival_generators:
+            self._arrival_generators[key] = create_arrival_generator(key)
+        return self._arrival_generators[key]
 
     def _queue_segment_ready(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]
