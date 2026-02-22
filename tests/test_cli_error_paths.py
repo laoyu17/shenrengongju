@@ -28,6 +28,13 @@ def test_cli_validate_returns_error_on_unexpected_exception(monkeypatch: pytest.
     assert code == 1
 
 
+def test_cli_validate_reports_batch_hint_for_batch_matrix(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["validate", "-c", str(EXAMPLES / "batch_matrix.yaml")])
+    assert code == 1
+    output = capsys.readouterr().out
+    assert "batch-run -b" in output
+
+
 def test_cli_run_returns_error_when_config_missing(tmp_path: Path) -> None:
     code = main(["run", "-c", str(tmp_path / "missing.yaml")])
     assert code == 1

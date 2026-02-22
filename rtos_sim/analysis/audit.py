@@ -6,8 +6,10 @@ from collections import Counter, defaultdict
 from typing import Any
 
 
-AUDIT_RULE_VERSION = "0.2"
+AUDIT_RULE_VERSION = "0.3"
 AUDIT_COMPLIANCE_PROFILE_VERSION = "0.1"
+AUDIT_PROOF_ASSET_VERSION = "0.2"
+AUDIT_CHECK_CATALOG_VERSION = "0.1"
 
 ENGINEERING_REQUIRED_CHECKS: tuple[str, ...] = (
     "resource_release_balance",
@@ -27,6 +29,54 @@ RESEARCH_REQUIRED_CHECKS: tuple[str, ...] = (
     "wait_for_deadlock",
     "pip_owner_hold_consistency",
 )
+
+CHECK_CATALOG: dict[str, dict[str, Any]] = {
+    "resource_release_balance": {
+        "severity": "error",
+        "description": "ResourceAcquire/ResourceRelease must remain balanced per segment-resource hold key.",
+        "profiles": ["engineering_v1", "research_v1"],
+    },
+    "abort_cancel_release_visibility": {
+        "severity": "error",
+        "description": "Aborted jobs that held resources must emit cancel-segment ResourceRelease records.",
+        "profiles": ["engineering_v1", "research_v1"],
+    },
+    "pcp_priority_domain_alignment": {
+        "severity": "error",
+        "description": "EDF+PCP blocked events must use absolute_deadline priority domain.",
+        "profiles": ["research_v1"],
+    },
+    "pcp_ceiling_numeric_domain": {
+        "severity": "error",
+        "description": "EDF+PCP system ceiling should stay in negative numeric domain.",
+        "profiles": ["research_v1"],
+    },
+    "resource_partial_hold_on_block": {
+        "severity": "error",
+        "description": "atomic_rollback blocked segments must not keep partially acquired resources.",
+        "profiles": ["engineering_v1", "research_v1"],
+    },
+    "pip_priority_chain_consistency": {
+        "severity": "error",
+        "description": "resource_busy events must expose a valid non-self owner_segment chain.",
+        "profiles": ["research_v1"],
+    },
+    "pcp_ceiling_transition_consistency": {
+        "severity": "error",
+        "description": "system_ceiling_block segments must be unblocked or terminally cleared.",
+        "profiles": ["research_v1"],
+    },
+    "wait_for_deadlock": {
+        "severity": "error",
+        "description": "wait-for graph must remain acyclic among blocked segments.",
+        "profiles": ["engineering_v1", "research_v1"],
+    },
+    "pip_owner_hold_consistency": {
+        "severity": "error",
+        "description": "resource_busy owner_segment must match the active runtime owner of the same resource.",
+        "profiles": ["research_v1"],
+    },
+}
 
 
 def _is_edf_scheduler(name: str | None) -> bool:
@@ -74,6 +124,70 @@ def _find_wait_cycle(wait_for: dict[str, str], start: str) -> list[str]:
     return []
 
 
+def _compute_wait_chain_max_depth(wait_edges: list[dict[str, Any]]) -> int:
+    graph: dict[str, str] = {}
+    for edge in wait_edges:
+        segment_key = edge.get("segment_key")
+        owner_segment = edge.get("owner_segment")
+        if isinstance(segment_key, str) and segment_key and isinstance(owner_segment, str) and owner_segment:
+            graph[segment_key] = owner_segment
+
+    max_depth = 0
+    for start in graph:
+        seen: set[str] = set()
+        depth = 0
+        cursor = start
+        while cursor in graph and cursor not in seen:
+            seen.add(cursor)
+            depth += 1
+            cursor = graph[cursor]
+        max_depth = max(max_depth, depth)
+    return max_depth
+
+
+def _collect_issue_event_ids(issue: dict[str, Any]) -> list[str]:
+    ids: set[str] = set()
+    direct_event_id = issue.get("event_id")
+    if isinstance(direct_event_id, str) and direct_event_id:
+        ids.add(direct_event_id)
+
+    samples = issue.get("samples")
+    if isinstance(samples, list):
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            event_id = sample.get("event_id")
+            if isinstance(event_id, str) and event_id:
+                ids.add(event_id)
+    return sorted(ids)
+
+
+def _enrich_checks_with_issue_refs(checks: dict[str, Any], issues: list[dict[str, Any]]) -> None:
+    by_rule: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for issue in issues:
+        rule = issue.get("rule")
+        if isinstance(rule, str) and rule:
+            by_rule[rule].append(issue)
+
+    for rule, result in checks.items():
+        if not isinstance(result, dict):
+            continue
+        related = by_rule.get(rule, [])
+        result["issue_count"] = len(related)
+        event_ids: set[str] = set()
+        for issue in related:
+            event_ids.update(_collect_issue_event_ids(issue))
+        if event_ids:
+            result["sample_event_ids"] = sorted(event_ids)[:20]
+
+
+def _build_check_catalog() -> dict[str, Any]:
+    return {
+        "catalog_version": AUDIT_CHECK_CATALOG_VERSION,
+        "checks": CHECK_CATALOG,
+    }
+
+
 def _build_audit_evidence(
     events: list[dict[str, Any]],
     checks: dict[str, Any],
@@ -86,6 +200,14 @@ def _build_audit_evidence(
         for rule, result in checks.items()
         if isinstance(result, dict) and result.get("passed") is False
     )
+    failed_check_event_refs = {
+        rule: result.get("sample_event_ids", [])
+        for rule, result in checks.items()
+        if isinstance(result, dict)
+        and result.get("passed") is False
+        and isinstance(result.get("sample_event_ids"), list)
+        and result.get("sample_event_ids")
+    }
     return {
         "scheduler_name": scheduler_name,
         "event_count": len(events),
@@ -93,6 +215,7 @@ def _build_audit_evidence(
         "checks_evaluated": len(checks),
         "checks_failed": failed_checks,
         "checks_passed": len(checks) - len(failed_checks),
+        "failed_check_event_refs": failed_check_event_refs,
     }
 
 
@@ -251,17 +374,40 @@ def _build_protocol_proof_assets(events: list[dict[str, Any]]) -> dict[str, Any]
         {"segment_key": segment_key, **row}
         for segment_key, row in sorted(pcp_ceiling_blocked.items())
     ]
+    pip_wait_edge_count = len(pip_wait_edges)
+    pip_owner_known_count = sum(
+        1
+        for edge in pip_wait_edges
+        if isinstance(edge.get("owner_segment"), str) and str(edge.get("owner_segment")).strip()
+    )
+    pip_wait_owner_coverage = (
+        1.0 if pip_wait_edge_count == 0 else pip_owner_known_count / pip_wait_edge_count
+    )
+    pcp_ceiling_block_count = len(pcp_ceiling_blocks)
+    pcp_ceiling_resolution_count = len(pcp_ceiling_resolutions)
+    pcp_ceiling_unresolved_count = len(unresolved)
+    pcp_resolution_reason_counts = Counter(
+        str(item.get("resolved_by", "unknown")) for item in pcp_ceiling_resolutions
+    )
+    pcp_ceiling_unresolved_ratio = (
+        0.0 if pcp_ceiling_block_count == 0 else pcp_ceiling_unresolved_count / pcp_ceiling_block_count
+    )
     return {
-        "pip_wait_edge_count": len(pip_wait_edges),
+        "proof_asset_version": AUDIT_PROOF_ASSET_VERSION,
+        "pip_wait_edge_count": pip_wait_edge_count,
         "pip_wait_edges": pip_wait_edges[:50],
+        "pip_wait_chain_max_depth": _compute_wait_chain_max_depth(pip_wait_edges),
+        "pip_wait_owner_coverage": pip_wait_owner_coverage,
         "pip_owner_mismatch_count": len(pip_owner_mismatch),
         "pip_owner_mismatch_samples": pip_owner_mismatch[:20],
-        "pcp_ceiling_block_count": len(pcp_ceiling_blocks),
+        "pcp_ceiling_block_count": pcp_ceiling_block_count,
         "pcp_ceiling_blocks": pcp_ceiling_blocks[:50],
-        "pcp_ceiling_resolution_count": len(pcp_ceiling_resolutions),
+        "pcp_ceiling_resolution_count": pcp_ceiling_resolution_count,
         "pcp_ceiling_resolutions": pcp_ceiling_resolutions[:50],
-        "pcp_ceiling_unresolved_count": len(unresolved),
+        "pcp_ceiling_resolution_reason_counts": dict(sorted(pcp_resolution_reason_counts.items())),
+        "pcp_ceiling_unresolved_count": pcp_ceiling_unresolved_count,
         "pcp_ceiling_unresolved_samples": unresolved[:20],
+        "pcp_ceiling_unresolved_ratio": pcp_ceiling_unresolved_ratio,
     }
 
 
@@ -715,6 +861,7 @@ def build_audit_report(
     checks["pip_owner_hold_consistency"] = {
         "passed": pip_owner_mismatch_count == 0,
     }
+    _enrich_checks_with_issue_refs(checks, issues)
 
     report = {
         "rule_version": AUDIT_RULE_VERSION,
@@ -722,6 +869,7 @@ def build_audit_report(
         "issue_count": len(issues),
         "issues": issues,
         "checks": checks,
+        "check_catalog": _build_check_catalog(),
         "evidence": _build_audit_evidence(events, checks, scheduler_name=scheduler_name),
         "protocol_proof_assets": protocol_proof_assets,
         "compliance_profiles": _build_compliance_profiles(checks),

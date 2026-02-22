@@ -110,7 +110,7 @@ class ConfigLoader:
         return data
 
     def _normalize_version(self, payload: dict[str, Any]) -> dict[str, Any]:
-        normalized_payload = dict(payload)
+        normalized_payload = deepcopy(payload)
         # UI-only layout metadata must not participate in schema/model validation.
         normalized_payload.pop("ui_layout", None)
         version = str(normalized_payload.get("version", "0.1"))

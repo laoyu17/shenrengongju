@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -145,6 +146,17 @@ def test_migrate_01_to_02_fills_default_fields() -> None:
     assert subtask.successors == []
     assert segment.required_resources == []
     assert segment.preemptible is True
+
+
+def test_migrate_data_does_not_mutate_input_payload() -> None:
+    payload = _base_payload_v01()
+    snapshot = deepcopy(payload)
+
+    ConfigLoader().migrate_data(payload)
+
+    assert payload == snapshot
+    assert "arrival" not in payload["tasks"][0]
+    assert "abort_on_miss" not in payload["tasks"][0]
 
 
 @pytest.mark.parametrize(

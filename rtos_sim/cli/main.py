@@ -108,6 +108,12 @@ def _read_config_payload(path: str) -> dict[str, Any]:
     return payload
 
 
+def _looks_like_batch_payload(payload: dict[str, Any]) -> bool:
+    has_batch_fields = isinstance(payload.get("base_config"), str) and isinstance(payload.get("factors"), dict)
+    has_runtime_fields = {"platform", "tasks", "scheduler", "sim"}.issubset(payload.keys())
+    return has_batch_fields and not has_runtime_fields
+
+
 def _write_config_payload(path: str, payload: dict[str, Any]) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,12 +125,16 @@ def _write_config_payload(path: str, payload: dict[str, Any]) -> None:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
+    payload: dict[str, Any] | None = None
     try:
-        spec = loader.load(args.config)
+        payload = _read_config_payload(args.config)
+        spec = loader.load_data(payload)
         # Build-time plugin resolution must pass during validate.
         SimEngine().build(spec)
     except ConfigError as exc:
         print(f"[ERROR] {args.config}: {exc}")
+        if payload is not None and _looks_like_batch_payload(payload):
+            print("[HINT] batch matrix detected, use `rtos-sim batch-run -b <file>`")
         return 1
     except ValueError as exc:
         print(f"[ERROR] {args.config}: {exc}")

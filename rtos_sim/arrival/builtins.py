@@ -91,6 +91,20 @@ class SequenceArrivalGenerator(IArrivalGenerator):
     """Return intervals from a numeric sequence string (comma-separated)."""
 
     @staticmethod
+    def _parse_repeat(raw: Any) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)) and raw in (0, 1):
+            return bool(raw)
+        if isinstance(raw, str):
+            token = raw.strip().lower()
+            if token in {"true", "1", "yes", "on"}:
+                return True
+            if token in {"false", "0", "no", "off"}:
+                return False
+        raise ValueError("custom arrival generator sequence requires params.repeat as boolean")
+
+    @staticmethod
     def _parse_sequence(raw: Any) -> list[float]:
         if isinstance(raw, (int, float)):
             values = [float(raw)]
@@ -119,8 +133,7 @@ class SequenceArrivalGenerator(IArrivalGenerator):
         values = self._parse_sequence(params.get("sequence"))
         # Engine passes the target release index (first interval uses release_index=1).
         interval_index = max(0, release_index - 1)
-        repeat_raw = params.get("repeat", True)
-        repeat = bool(repeat_raw)
+        repeat = self._parse_repeat(params.get("repeat", True))
         if repeat:
             return values[interval_index % len(values)]
         idx = min(interval_index, len(values) - 1)

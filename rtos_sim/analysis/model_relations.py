@@ -23,7 +23,18 @@ RELATION_SECTIONS: tuple[str, ...] = (
     "core_to_subtasks",
     "core_to_segments",
 )
-RELATION_CHECK_VERSION = "0.1"
+RELATION_CHECK_VERSION = "0.2"
+RELATION_PROFILE_VERSION = "0.1"
+ENGINEERING_REQUIRED_CHECKS: tuple[str, ...] = (
+    "segment_core_binding_coverage",
+    "resource_segment_bound_core_alignment",
+    "core_reverse_relation_consistency",
+    "resource_bound_core_consistency",
+)
+RESEARCH_REQUIRED_CHECKS: tuple[str, ...] = (
+    *ENGINEERING_REQUIRED_CHECKS,
+    "time_deterministic_segment_binding_strict",
+)
 
 
 def _segment_key(task_id: str, subtask_id: str, segment_id: str) -> str:
@@ -40,6 +51,48 @@ def _sorted_tuple_rows(
     ]
 
 
+def _build_profile_status(checks: dict[str, Any], required_checks: tuple[str, ...]) -> dict[str, Any]:
+    passed: list[str] = []
+    failed: list[str] = []
+    missing: list[str] = []
+    for name in required_checks:
+        check = checks.get(name)
+        if not isinstance(check, dict):
+            missing.append(name)
+            continue
+        if check.get("passed") is True:
+            passed.append(name)
+        else:
+            failed.append(name)
+
+    total = len(required_checks)
+    return {
+        "status": "pass" if not failed and not missing else "fail",
+        "required_checks": list(required_checks),
+        "passed_checks": passed,
+        "failed_checks": failed,
+        "missing_checks": missing,
+        "pass_rate": 1.0 if total == 0 else len(passed) / total,
+    }
+
+
+def _build_relation_profiles(checks: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profile_version": RELATION_PROFILE_VERSION,
+        "default_profile": "research_v1",
+        "profiles": {
+            "engineering_v1": {
+                "description": "工程语义基线，覆盖核心映射一致性与反向关系一致性",
+                **_build_profile_status(checks, ENGINEERING_REQUIRED_CHECKS),
+            },
+            "research_v1": {
+                "description": "研究语义基线，补充时间确定性绑定严格约束",
+                **_build_profile_status(checks, RESEARCH_REQUIRED_CHECKS),
+            },
+        },
+    }
+
+
 def build_model_relations_checks(report: dict[str, Any]) -> dict[str, Any]:
     """Evaluate deterministic semantic checks from relation report."""
 
@@ -47,6 +100,15 @@ def build_model_relations_checks(report: dict[str, Any]) -> dict[str, Any]:
     segment_to_core = report.get("segment_to_core", [])
     segment_to_resources = report.get("segment_to_resources", [])
     core_to_segments = report.get("core_to_segments", [])
+    metadata = report.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    task_types = metadata.get("task_types", {})
+    if not isinstance(task_types, dict):
+        task_types = {}
+    resource_bound_cores = metadata.get("resource_bound_cores", {})
+    if not isinstance(resource_bound_cores, dict):
+        resource_bound_cores = {}
 
     checks: dict[str, dict[str, Any]] = {}
 
@@ -123,6 +185,61 @@ def build_model_relations_checks(report: dict[str, Any]) -> dict[str, Any]:
         "samples": missing_reverse[:20],
     }
 
+    resource_core_mismatch: list[dict[str, str]] = []
+    for item in segment_to_resources:
+        if not isinstance(item, dict):
+            continue
+        segment_key = item.get("segment_key")
+        resource_id = item.get("resource_id")
+        if not isinstance(segment_key, str) or not segment_key:
+            continue
+        if not isinstance(resource_id, str) or not resource_id:
+            continue
+        expected_core = resource_bound_cores.get(resource_id)
+        if not isinstance(expected_core, str) or not expected_core:
+            continue
+        observed_core = core_by_segment_key.get(segment_key)
+        if observed_core != expected_core:
+            resource_core_mismatch.append(
+                {
+                    "segment_key": segment_key,
+                    "resource_id": resource_id,
+                    "expected_core_id": expected_core,
+                    "observed_core_id": str(observed_core),
+                }
+            )
+    checks["resource_bound_core_consistency"] = {
+        "passed": not resource_core_mismatch,
+        "severity": "error",
+        "message": "segments requiring bound resources must execute on the resource bound core",
+        "samples": resource_core_mismatch[:20],
+    }
+
+    td_unbound_segments: list[dict[str, str]] = []
+    for item in segment_to_core:
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get("task_id")
+        if not isinstance(task_id, str):
+            continue
+        if task_types.get(task_id) != "time_deterministic":
+            continue
+        if item.get("core_id") == UNBOUND_CORE_ID:
+            td_unbound_segments.append(
+                {
+                    "task_id": task_id,
+                    "subtask_id": str(item.get("subtask_id")),
+                    "segment_id": str(item.get("segment_id")),
+                    "segment_key": str(item.get("segment_key")),
+                }
+            )
+    checks["time_deterministic_segment_binding_strict"] = {
+        "passed": not td_unbound_segments,
+        "severity": "error",
+        "message": "time_deterministic segments must be bound to concrete cores",
+        "samples": td_unbound_segments[:20],
+    }
+
     has_error_failure = any(
         (not result.get("passed", False)) and result.get("severity") == "error"
         for result in checks.values()
@@ -141,6 +258,7 @@ def build_model_relations_checks(report: dict[str, Any]) -> dict[str, Any]:
         "check_version": RELATION_CHECK_VERSION,
         "status": status,
         "checks": checks,
+        "compliance_profiles": _build_relation_profiles(checks),
     }
 
 
@@ -236,6 +354,10 @@ def build_model_relations_report(spec: ModelSpec) -> dict[str, Any]:
     report = {
         "relation_version": "0.1",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "metadata": {
+            "task_types": {task.id: task.task_type.value for task in spec.tasks},
+            "resource_bound_cores": {resource.id: resource.bound_core_id for resource in spec.resources},
+        },
         "summary": summary,
         **sections,
     }

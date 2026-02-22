@@ -1,7 +1,7 @@
 # Docx 需求追踪矩阵（需求 → 代码 → 测试 → 审计）
 
 ## 0. 文档控制
-- 版本：v0.2
+- 版本：v0.3
 - 日期：2026-02-22
 - 基线：`250909-仿真工具-基础模型.docx`
 - 追踪范围：`project/` 当前主干实现
@@ -16,7 +16,7 @@
 | M-04 | DAG 任务图（无环/引用完整） | `rtos_sim/model/spec.py:488` | `tests/test_model_validation.py:41` | `rtos-sim validate` 错误可定位 | 已实现 |
 | M-05 | 子任务分段顺序执行，可阻塞/可抢占 | `rtos_sim/model/spec.py:410`；`rtos_sim/core/engine.py:1178` | `tests/test_engine_scenarios.py:35`；`tests/test_engine_scenarios.py:118` | 事件流 `SegmentStart/End/Blocked/Unblocked/Preempt` | 已实现 |
 | M-06 | 任务/子任务/分段三级映射与回退 | `rtos_sim/model/spec.py:413` | `tests/test_model_validation.py:284`；`tests/test_model_validation.py:293`；`tests/test_model_validation.py:304` | `inspect-model` 映射输出（`segment_to_core`） | 已实现 |
-| M-07 | 任务/子任务/分段 与 核/资源关系集合 | `rtos_sim/analysis/model_relations.py:147`；`rtos_sim/analysis/model_relations.py:242` | `tests/test_model_relations.py:13`；`tests/test_cli.py:155` | `inspect-model` 报告 `status/checks/check_version` | 已实现（自动判定基础版） |
+| M-07 | 任务/子任务/分段 与 核/资源关系集合 | `rtos_sim/analysis/model_relations.py:202`；`rtos_sim/analysis/model_relations.py:344` | `tests/test_model_relations.py:13`；`tests/test_cli.py:155` | `inspect-model` 报告 `status/checks/check_version/compliance_profiles` | 已实现（工程/研究画像） |
 | M-08 | 周期/偶发/零星 + 随机到达模型 | `rtos_sim/model/spec.py:193`；`rtos_sim/core/engine.py:676`；`rtos_sim/core/engine.py:716`；`rtos_sim/arrival/registry.py:20` | `tests/test_engine_scenarios.py:229`；`tests/test_engine_scenarios.py:437`；`tests/test_engine_scenarios.py:488`；`tests/test_engine_scenarios.py:537` | 到达过程校验：`tests/test_model_validation.py:252` | 已实现（可扩展） |
 | M-09 | 时间确定性（定时定点/超周期重复） | `rtos_sim/core/engine.py:654`；`rtos_sim/core/engine.py:465` | `tests/test_engine_scenarios.py:131`；`tests/test_engine_scenarios.py:1794` | 协议一致性审计：`rtos_sim/analysis/audit.py:362`；`rtos_sim/analysis/audit.py:534` | 部分实现（证明级资产仍需补） |
 | M-10 | 动态实时截止期约束与超期处理 | `rtos_sim/core/engine.py:1293`；`rtos_sim/core/engine.py:1320` | `tests/test_engine_scenarios.py:112` | 审计 `abort_cancel_release_visibility`：`rtos_sim/analysis/audit.py:324` | 已实现 |
@@ -31,6 +31,8 @@
 - 死锁证明辅助：`wait_for_deadlock`（`rtos_sim/analysis/audit.py:702`）
 - 证明资产导出：`protocol_proof_assets`（`rtos_sim/analysis/audit.py:726`）
 - 研究闭环画像：`compliance_profiles`（`engineering_v1/research_v1`，`rtos_sim/analysis/audit.py:727`）
+- 研究反例基准集：`examples/research_counterexamples.json` + `scripts/research_case_suite.py`（严格匹配：`missing_expected_checks` + `unexpected_actual_checks`）
+- 研究模板化报告：`scripts/research_report.py`（Markdown/CSV/JSON，失败项聚合 `issue_count/sample_count/sample_event_ids`）
 
 ## 3. 研究闭环 DoD（research_v1）
 
@@ -54,4 +56,8 @@
 2. 再运行 `rtos-sim run ... --audit-out artifacts/audit.json`，获取规则判定与证明资产。
 3. 并行执行 `rtos-sim inspect-model ... --out-json ... --out-csv ...`，确认关系矩阵与 `status/checks`。
 4. 运行 `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`，固化测试/覆盖率快照。
-5. 评审时以本矩阵为索引，逐条核对 Docx 条目与证据链是否一致。
+5. 运行 `python scripts/research_case_suite.py --cases examples/research_counterexamples.json ...`，核对反例基准集匹配率。
+   - 单案例需校验：`missing_expected_checks` 与 `unexpected_actual_checks` 均为空。
+6. 运行 `python scripts/research_report.py --audit ... --relations ... --quality ...`，生成评审模板化报告。
+   - 失败项需核对：同一 rule 的 `issue_count/sample_count/sample_event_ids` 聚合是否完整。
+7. 评审时以本矩阵为索引，逐条核对 Docx 条目与证据链是否一致。

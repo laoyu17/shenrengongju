@@ -106,6 +106,127 @@ jobs:
           name: perf-baseline-pr
           path: artifacts/perf/perf-baseline.json
 
+  research_audit:
+    name: Research Audit (non-blocking)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Linux Qt runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libxkbcommon-x11-0 \
+            libdbus-1-3 \
+            libxcb-cursor0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev,ui]
+
+      - name: Run research counterexample suite
+        run: |
+          python scripts/research_case_suite.py \
+            --cases examples/research_counterexamples.json \
+            --out-json artifacts/research/research-case-summary.json \
+            --out-csv artifacts/research/research-case-summary.csv \
+            --audit-dir artifacts/research/case-audits
+
+      - name: Build research review artifacts
+        if: always()
+        run: |
+          python -m rtos_sim.cli.main run \
+            -c examples/at02_resource_mutex.yaml \
+            --events-out artifacts/research/events.jsonl \
+            --metrics-out artifacts/research/metrics.json \
+            --audit-out artifacts/research/audit.json
+          python -m rtos_sim.cli.main inspect-model \
+            -c examples/at02_resource_mutex.yaml \
+            --out-json artifacts/research/model_relations.json
+          python scripts/quality_snapshot.py \
+            --output artifacts/research/quality-snapshot.json \
+            --coverage-json artifacts/research/coverage.json \
+            --allow-fail
+          python scripts/research_report.py \
+            --audit artifacts/research/audit.json \
+            --relations artifacts/research/model_relations.json \
+            --quality artifacts/research/quality-snapshot.json \
+            --out-markdown artifacts/research/research-report.md \
+            --out-csv artifacts/research/research-summary.csv \
+            --out-json artifacts/research/research-report.json
+
+      - name: Add research summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_lines = ["## Research Audit (non-blocking)"]
+          case_path = Path("artifacts/research/research-case-summary.json")
+          report_path = Path("artifacts/research/research-report.json")
+
+          if case_path.exists():
+              case_summary = json.loads(case_path.read_text(encoding="utf-8"))
+              summary_lines.append(
+                  f"- counterexamples: {case_summary.get('matched_cases')}/{case_summary.get('total_cases')} matched"
+              )
+              summary_lines.append(f"- counterexample.status: {case_summary.get('status')}")
+          else:
+              summary_lines.append("- counterexamples: missing")
+
+          if report_path.exists():
+              report = json.loads(report_path.read_text(encoding="utf-8"))
+              statuses = report.get("statuses", {})
+              summary_lines.append(f"- report.status: {report.get('status')}")
+              summary_lines.append(f"- research_v1: {statuses.get('research_v1')}")
+              summary_lines.append(f"- engineering_v1: {statuses.get('engineering_v1')}")
+              failed = report.get("failed_check_details", [])
+              summary_lines.append(f"- failed_checks: {len(failed)}")
+          else:
+              summary_lines.append("- report: missing")
+
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload research audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-audit-report
+          path: |
+            artifacts/research/research-report.md
+            artifacts/research/research-report.json
+            artifacts/research/research-summary.csv
+
+      - name: Upload research audit summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-audit-summary
+          path: |
+            artifacts/research/research-case-summary.json
+            artifacts/research/research-case-summary.csv
+            artifacts/research/case-audits/
+            artifacts/research/audit.json
+            artifacts/research/model_relations.json
+            artifacts/research/quality-snapshot.json
+
   perf_nightly:
     name: Perf Nightly Trend (1000, non-blocking)
     if: github.event_name == 'schedule'

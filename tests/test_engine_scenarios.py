@@ -574,6 +574,125 @@ def test_arrival_process_custom_sequence_repeats_pattern() -> None:
     assert release_times == pytest.approx([0.0, 1.0, 3.0, 6.0, 7.0, 9.0, 12.0])
 
 
+def test_arrival_process_custom_sequence_repeat_false_uses_tail_interval() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "custom-seq",
+                "name": "custom-sequence-arrival-task",
+                "task_type": "non_rt",
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "custom",
+                    "params": {"generator": "sequence", "sequence": "1.0,2.0,3.0", "repeat": False},
+                    "max_releases": 6,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 30.0, "seed": 45},
+    }
+
+    events, _ = _run_payload(payload)
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([0.0, 1.0, 3.0, 6.0, 9.0, 12.0])
+
+
+def test_arrival_process_custom_sequence_repeat_accepts_false_string() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "custom-seq",
+                "name": "custom-sequence-arrival-task",
+                "task_type": "non_rt",
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "custom",
+                    "params": {"generator": "sequence", "sequence": "1.0,2.0,3.0", "repeat": "false"},
+                    "max_releases": 6,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 30.0, "seed": 45},
+    }
+
+    events, _ = _run_payload(payload)
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([0.0, 1.0, 3.0, 6.0, 9.0, 12.0])
+
+
+def test_arrival_process_custom_sequence_repeat_rejects_ambiguous_string() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "custom-seq",
+                "name": "custom-sequence-arrival-task",
+                "task_type": "non_rt",
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "custom",
+                    "params": {"generator": "sequence", "sequence": "1.0,2.0,3.0", "repeat": "sometimes"},
+                    "max_releases": 4,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 15.0, "seed": 45},
+    }
+
+    with pytest.raises(ValueError, match="params.repeat as boolean"):
+        _run_payload(payload)
+
+
 def test_task_mapping_hint_controls_dispatch_core_without_segment_hint() -> None:
     payload = {
         "version": "0.2",

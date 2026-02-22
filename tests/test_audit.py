@@ -389,7 +389,9 @@ def test_audit_includes_model_relation_summary_when_provided() -> None:
 def test_audit_includes_rule_version_and_evidence() -> None:
     report = build_audit_report(events=[], scheduler_name="edf")
 
-    assert report["rule_version"] == "0.2"
+    assert report["rule_version"] == "0.3"
+    assert report["check_catalog"]["catalog_version"] == "0.1"
+    assert "resource_release_balance" in report["check_catalog"]["checks"]
     assert report["evidence"]["scheduler_name"] == "edf"
     assert report["evidence"]["event_count"] == 0
     assert report["evidence"]["checks_evaluated"] >= 1
@@ -439,10 +441,15 @@ def test_audit_protocol_proof_assets_include_pip_and_pcp_traces() -> None:
     report = build_audit_report(events, scheduler_name="edf")
 
     assets = report["protocol_proof_assets"]
+    assert assets["proof_asset_version"] == "0.2"
     assert assets["pip_wait_edge_count"] == 1
+    assert assets["pip_wait_chain_max_depth"] == 1
+    assert assets["pip_wait_owner_coverage"] == 1.0
     assert assets["pcp_ceiling_block_count"] == 1
     assert assets["pcp_ceiling_resolution_count"] == 1
+    assert assets["pcp_ceiling_resolution_reason_counts"]["segment_unblocked"] == 1
     assert assets["pcp_ceiling_unresolved_count"] == 0
+    assert assets["pcp_ceiling_unresolved_ratio"] == 0.0
     assert report["checks"]["pip_owner_hold_consistency"]["passed"] is True
 
 
@@ -504,3 +511,26 @@ def test_audit_compliance_profile_tracks_check_failures() -> None:
     assert research_profile["status"] == "fail"
     assert "pip_priority_chain_consistency" in research_profile["failed_checks"]
     assert engineering_profile["status"] == "pass"
+
+
+def test_audit_check_contains_sample_event_ids_for_failed_rule() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "SegmentBlocked",
+            "job_id": "waiter@0",
+            "resource_id": "r0",
+            "payload": {
+                "segment_key": "waiter@0:s0:seg0",
+                "reason": "resource_busy",
+            },
+        }
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+    failed = report["checks"]["pip_priority_chain_consistency"]
+
+    assert failed["passed"] is False
+    assert failed["issue_count"] == 1
+    assert failed["sample_event_ids"] == ["e1"]
+    assert report["evidence"]["failed_check_event_refs"]["pip_priority_chain_consistency"] == ["e1"]

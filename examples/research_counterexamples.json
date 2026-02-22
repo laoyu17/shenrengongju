@@ -1,0 +1,452 @@
+{
+  "version": "0.1",
+  "description": "Research counterexample fixtures for audit-rule regression",
+  "cases": [
+    {
+      "id": "abort_cancel_release_visibility_fail",
+      "group": "abort_cancel_release_visibility",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "fail",
+        "failed_checks": ["abort_cancel_release_visibility"]
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "holder@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "holder@0:s0:seg0"}
+        },
+        {
+          "event_id": "e2",
+          "type": "DeadlineMiss",
+          "job_id": "holder@0",
+          "payload": {"abort_on_miss": true}
+        },
+        {
+          "event_id": "e3",
+          "type": "ResourceRelease",
+          "job_id": "holder@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "holder@0:s0:seg0", "reason": "normal_release"}
+        }
+      ]
+    },
+    {
+      "id": "abort_cancel_release_visibility_fixed",
+      "group": "abort_cancel_release_visibility",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "pass",
+        "failed_checks": []
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "holder@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "holder@0:s0:seg0"}
+        },
+        {
+          "event_id": "e2",
+          "type": "DeadlineMiss",
+          "job_id": "holder@0",
+          "payload": {"abort_on_miss": true}
+        },
+        {
+          "event_id": "e3",
+          "type": "ResourceRelease",
+          "job_id": "holder@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "holder@0:s0:seg0", "reason": "cancel_segment"}
+        }
+      ]
+    },
+    {
+      "id": "pip_owner_hold_consistency_fail",
+      "group": "pip_owner_hold_consistency",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "fail",
+        "failed_checks": ["pip_owner_hold_consistency"]
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "owner@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "owner@0:s0:seg0"}
+        },
+        {
+          "event_id": "e2",
+          "type": "SegmentBlocked",
+          "job_id": "waiter@0",
+          "resource_id": "r0",
+          "payload": {
+            "segment_key": "waiter@0:s0:seg0",
+            "reason": "resource_busy",
+            "owner_segment": "wrong@0:s0:seg0"
+          }
+        },
+        {
+          "event_id": "e3",
+          "type": "ResourceRelease",
+          "job_id": "owner@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "owner@0:s0:seg0"}
+        }
+      ]
+    },
+    {
+      "id": "pip_owner_hold_consistency_fixed",
+      "group": "pip_owner_hold_consistency",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "pass",
+        "failed_checks": []
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "owner@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "owner@0:s0:seg0"}
+        },
+        {
+          "event_id": "e2",
+          "type": "SegmentBlocked",
+          "job_id": "waiter@0",
+          "resource_id": "r0",
+          "payload": {
+            "segment_key": "waiter@0:s0:seg0",
+            "reason": "resource_busy",
+            "owner_segment": "owner@0:s0:seg0"
+          }
+        },
+        {
+          "event_id": "e3",
+          "type": "ResourceRelease",
+          "job_id": "owner@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "owner@0:s0:seg0"}
+        }
+      ]
+    },
+    {
+      "id": "pcp_ceiling_transition_fail",
+      "group": "pcp_ceiling_transition_consistency",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "fail",
+        "failed_checks": ["pcp_ceiling_transition_consistency"]
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "SegmentBlocked",
+          "job_id": "task@0",
+          "resource_id": "r1",
+          "payload": {
+            "segment_key": "task@0:s0:seg1",
+            "reason": "system_ceiling_block",
+            "priority_domain": "absolute_deadline",
+            "system_ceiling": -5.0
+          }
+        }
+      ]
+    },
+    {
+      "id": "pcp_ceiling_transition_fixed",
+      "group": "pcp_ceiling_transition_consistency",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "pass",
+        "failed_checks": []
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "SegmentBlocked",
+          "job_id": "task@0",
+          "resource_id": "r1",
+          "payload": {
+            "segment_key": "task@0:s0:seg1",
+            "reason": "system_ceiling_block",
+            "priority_domain": "absolute_deadline",
+            "system_ceiling": -5.0
+          }
+        },
+        {
+          "event_id": "e2",
+          "type": "SegmentUnblocked",
+          "job_id": "task@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "task@0:s0:seg1"}
+        }
+      ]
+    },
+    {
+      "id": "wait_for_deadlock_fail",
+      "group": "wait_for_deadlock",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "fail",
+        "failed_checks": ["wait_for_deadlock"]
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "a@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "a@0:s0:segA"}
+        },
+        {
+          "event_id": "e2",
+          "type": "ResourceAcquire",
+          "job_id": "b@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "b@0:s0:segB"}
+        },
+        {
+          "event_id": "e3",
+          "type": "SegmentBlocked",
+          "job_id": "a@0",
+          "resource_id": "r1",
+          "payload": {
+            "segment_key": "a@0:s0:segA",
+            "reason": "resource_busy",
+            "owner_segment": "b@0:s0:segB"
+          }
+        },
+        {
+          "event_id": "e4",
+          "type": "SegmentBlocked",
+          "job_id": "b@0",
+          "resource_id": "r0",
+          "payload": {
+            "segment_key": "b@0:s0:segB",
+            "reason": "resource_busy",
+            "owner_segment": "a@0:s0:segA"
+          }
+        },
+        {
+          "event_id": "e5",
+          "type": "ResourceRelease",
+          "job_id": "a@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "a@0:s0:segA"}
+        },
+        {
+          "event_id": "e6",
+          "type": "ResourceRelease",
+          "job_id": "b@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "b@0:s0:segB"}
+        }
+      ]
+    },
+    {
+      "id": "wait_for_deadlock_fixed",
+      "group": "wait_for_deadlock",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "pass",
+        "failed_checks": []
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "a@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "a@0:s0:segA"}
+        },
+        {
+          "event_id": "e2",
+          "type": "SegmentBlocked",
+          "job_id": "b@0",
+          "resource_id": "r0",
+          "payload": {
+            "segment_key": "b@0:s0:segB",
+            "reason": "resource_busy",
+            "owner_segment": "a@0:s0:segA"
+          }
+        },
+        {
+          "event_id": "e3",
+          "type": "ResourceRelease",
+          "job_id": "a@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "a@0:s0:segA"}
+        }
+      ]
+    },
+    {
+      "id": "resource_partial_hold_on_block_fail",
+      "group": "resource_partial_hold_on_block",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "fail",
+        "failed_checks": ["resource_partial_hold_on_block"]
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "holder@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "holder@0:s0:seg0"}
+        },
+        {
+          "event_id": "e2",
+          "type": "ResourceAcquire",
+          "job_id": "waiter@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "waiter@0:s0:seg0"}
+        },
+        {
+          "event_id": "e3",
+          "type": "SegmentBlocked",
+          "job_id": "waiter@0",
+          "resource_id": "r1",
+          "payload": {
+            "segment_key": "waiter@0:s0:seg0",
+            "reason": "resource_busy",
+            "owner_segment": "holder@0:s0:seg0",
+            "resource_acquire_policy": "atomic_rollback"
+          }
+        },
+        {
+          "event_id": "e4",
+          "type": "ResourceRelease",
+          "job_id": "waiter@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "waiter@0:s0:seg0", "reason": "acquire_rollback"}
+        },
+        {
+          "event_id": "e5",
+          "type": "ResourceRelease",
+          "job_id": "holder@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "holder@0:s0:seg0"}
+        }
+      ]
+    },
+    {
+      "id": "resource_partial_hold_on_block_fixed",
+      "group": "resource_partial_hold_on_block",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "pass",
+        "failed_checks": []
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "ResourceAcquire",
+          "job_id": "holder@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "holder@0:s0:seg0"}
+        },
+        {
+          "event_id": "e2",
+          "type": "ResourceAcquire",
+          "job_id": "waiter@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "waiter@0:s0:seg0"}
+        },
+        {
+          "event_id": "e3",
+          "type": "ResourceRelease",
+          "job_id": "waiter@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "waiter@0:s0:seg0", "reason": "acquire_rollback"}
+        },
+        {
+          "event_id": "e4",
+          "type": "SegmentBlocked",
+          "job_id": "waiter@0",
+          "resource_id": "r1",
+          "payload": {
+            "segment_key": "waiter@0:s0:seg0",
+            "reason": "resource_busy",
+            "owner_segment": "holder@0:s0:seg0",
+            "resource_acquire_policy": "atomic_rollback"
+          }
+        },
+        {
+          "event_id": "e5",
+          "type": "ResourceRelease",
+          "job_id": "holder@0",
+          "resource_id": "r1",
+          "payload": {"segment_key": "holder@0:s0:seg0"}
+        }
+      ]
+    },
+    {
+      "id": "pcp_priority_domain_alignment_fail",
+      "group": "pcp_priority_domain_alignment",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "fail",
+        "failed_checks": ["pcp_priority_domain_alignment"]
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "SegmentBlocked",
+          "job_id": "pcp@0",
+          "resource_id": "r0",
+          "payload": {
+            "segment_key": "pcp@0:s0:seg0",
+            "reason": "system_ceiling_block",
+            "priority_domain": "fixed_priority",
+            "system_ceiling": -3.0
+          }
+        },
+        {
+          "event_id": "e2",
+          "type": "SegmentUnblocked",
+          "job_id": "pcp@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "pcp@0:s0:seg0"}
+        }
+      ]
+    },
+    {
+      "id": "pcp_priority_domain_alignment_fixed",
+      "group": "pcp_priority_domain_alignment",
+      "scheduler_name": "edf",
+      "expected": {
+        "status": "pass",
+        "failed_checks": []
+      },
+      "events": [
+        {
+          "event_id": "e1",
+          "type": "SegmentBlocked",
+          "job_id": "pcp@0",
+          "resource_id": "r0",
+          "payload": {
+            "segment_key": "pcp@0:s0:seg0",
+            "reason": "system_ceiling_block",
+            "priority_domain": "absolute_deadline",
+            "system_ceiling": -3.0
+          }
+        },
+        {
+          "event_id": "e2",
+          "type": "SegmentUnblocked",
+          "job_id": "pcp@0",
+          "resource_id": "r0",
+          "payload": {"segment_key": "pcp@0:s0:seg0"}
+        }
+      ]
+    }
+  ]
+}

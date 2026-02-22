@@ -7,6 +7,11 @@ from .model_relations import (
     build_model_relations_report,
     model_relations_report_to_rows,
 )
+from .research_report import (
+    build_research_report_payload,
+    render_research_report_markdown,
+    research_report_to_rows,
+)
 
 __all__ = [
     "build_audit_report",
@@ -15,4 +20,7 @@ __all__ = [
     "build_model_relations_checks",
     "build_model_relations_report",
     "model_relations_report_to_rows",
+    "build_research_report_payload",
+    "render_research_report_markdown",
+    "research_report_to_rows",
 ]

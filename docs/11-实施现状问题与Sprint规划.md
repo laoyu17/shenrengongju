@@ -1,8 +1,8 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.6
-- 状态：S6（Phase A/B/C + D/E/F + G 语义闭环深化）
+- 版本：v0.8
+- 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-02-22
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
 
@@ -67,7 +67,7 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-02-22）：`python -m pytest --maxfail=1` 通过，`211 passed`
+- 当前本地测试状态（2026-02-22）：`python -m pytest --maxfail=1` 通过，`225 passed`
 - 当前覆盖率快照（2026-02-22）：总覆盖率 87%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 - 新增质量快照脚本（用于文档事实对齐）：`project/scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -157,6 +157,10 @@
 ---
 
 ## 4. 后续 Sprint 规划（建议 1–2 周/迭代）
+
+### S7（研究口径收敛）执行清单
+- 研究口径可执行 Issue backlog 与工时估算见：`project/docs/16-研究口径Issue拆解与排期.md`
+- 本节继续保留阶段性里程碑说明；具体“做什么/谁先做/何时验收”以 `docs/16` 为准
 
 ### Sprint S1（已完成）— MVP 内核打通
 - 范围：核心引擎、基础插件、CLI/UI MVP、样例与测试基线。
@@ -257,3 +261,32 @@
 - 模型关系报告新增 `status/checks` 自动判定摘要：`project/rtos_sim/analysis/model_relations.py:42`
 - 新增 docx 需求追踪矩阵：`project/docs/14-docx需求追踪矩阵.md`
 - 回归：新增 custom 到达过程、审计证据字段、关系自动判定测试：`project/tests/test_engine_scenarios.py:360`、`project/tests/test_audit.py:388`、`project/tests/test_model_relations.py:56`
+
+### Phase H（研究执行闭环）已完成（2026-02-22）
+- R-001：研究反例基准集已落地（6 组 fail/fix 对照，共 12 案例）：
+  - `project/examples/research_counterexamples.json`
+  - `project/scripts/research_case_suite.py`
+  - `project/tests/test_research_case_suite.py`
+- R-002：审计证明资产与规则说明增强：
+  - `rule_version` 升级至 `0.3`，新增 `check_catalog` 与失败事件定位字段：`project/rtos_sim/analysis/audit.py`
+  - 新增证明资产统计（链深、owner 覆盖率、ceiling 未闭环比率）：`project/rtos_sim/analysis/audit.py`
+- R-003：研究模板化报告生成能力已落地：
+  - `project/rtos_sim/analysis/research_report.py`
+  - `project/scripts/research_report.py`
+  - `project/tests/test_research_report.py`
+- R-004：CI 新增研究口径非阻断任务与产物：
+  - workflow job `research_audit`：`project/.github/workflows/ci.yml`
+  - artifacts：`research-audit-report`、`research-audit-summary`
+- R-005：`inspect-model` 研究语义判定增强：
+  - 新增 `resource_bound_core_consistency`、`time_deterministic_segment_binding_strict`
+  - 新增 `compliance_profiles`（engineering_v1/research_v1）：`project/rtos_sim/analysis/model_relations.py`
+  - 回归：`project/tests/test_model_relations.py`
+- R-006：文档与追踪矩阵已同步至 S7：
+  - `project/README.md`
+  - `project/docs/14-docx需求追踪矩阵.md`
+  - `project/docs/15-研究闭环验收基线.md`
+  - `project/docs/16-研究口径Issue拆解与排期.md`
+
+### Phase H-1（研究口径稳健性补强）已完成（2026-02-22）
+- `research_case_suite` 匹配规则已收紧为严格一致：除 `missing_expected_checks` 外，新增 `unexpected_actual_checks` 作为失败信号，避免“额外失败项被忽略”。
+- `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。

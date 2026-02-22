@@ -174,7 +174,8 @@ def test_cli_inspect_model_outputs_json_and_csv(tmp_path: Path) -> None:
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     assert payload["summary"]["task_count"] == 2
     assert payload["status"] in {"pass", "warn", "fail"}
-    assert payload["check_version"] == "0.1"
+    assert payload["check_version"] == "0.2"
+    assert payload["compliance_profiles"]["profiles"]["engineering_v1"]["status"] == "pass"
     assert any(row["task_id"] == "low" for row in payload["task_to_cores"])
 
     header = out_csv.read_text(encoding="utf-8").splitlines()[0]

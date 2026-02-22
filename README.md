@@ -32,6 +32,9 @@ rtos-sim ui -c examples/at01_single_dag_single_core.yaml
 # 批量实验（参数矩阵）
 rtos-sim batch-run -b examples/batch_matrix.yaml
 
+# 注意：batch_matrix 属于批跑配置，不适用 validate 子命令
+# rtos-sim validate -c examples/batch_matrix.yaml 会提示改用 batch-run
+
 # 批量实验严格模式：任一子运行失败则返回非 0
 rtos-sim batch-run -b examples/batch_matrix.yaml --strict-fail-on-error
 
@@ -60,6 +63,23 @@ python scripts/perf_delta.py --current artifacts/perf/perf-nightly-1000.json \
 # 生成测试/覆盖率质量快照（用于文档与评审同步）
 python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json \
   --coverage-json artifacts/quality/coverage.json
+
+# 运行研究反例基准集（R-001）
+python scripts/research_case_suite.py --cases examples/research_counterexamples.json \
+  --out-json artifacts/research/research-case-summary.json \
+  --out-csv artifacts/research/research-case-summary.csv \
+  --audit-dir artifacts/research/case-audits
+# 判定口径：expected_failed_checks 与 actual_failed_checks 必须严格一致
+# 结果字段补充：missing_expected_checks / unexpected_actual_checks
+
+# 生成研究评审报告模板（R-003）
+python scripts/research_report.py --audit artifacts/research/audit.json \
+  --relations artifacts/research/model_relations.json \
+  --quality artifacts/research/quality-snapshot.json \
+  --out-markdown artifacts/research/research-report.md \
+  --out-csv artifacts/research/research-summary.csv \
+  --out-json artifacts/research/research-report.json
+# 失败检查聚合口径：同一 rule 聚合 issue_count / sample_count / sample_event_ids
 ```
 
 ## 测试
@@ -72,8 +92,10 @@ python -m pytest
 
 - **硬门禁**：PR 必须通过 `python -m pytest -q`（Linux/Windows）
 - **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务与昨日 delta 摘要
+- **研究审计（非阻断）**：PR/Push 执行研究反例基准集与研究报告产物生成（用于语义闭环趋势跟踪）
 - 性能报告位置：CI artifact `perf-baseline-pr`（`artifacts/perf/perf-baseline.json`）
 - nightly 产物：`perf-nightly-1000`（原始报告）+ `perf-nightly-delta`（昨日对比摘要）
+- 研究审计产物：`research-audit-report`（Markdown/JSON/CSV）+ `research-audit-summary`（反例基准集与审计明细）
 
 ## 模型语义审查产物（S5）
 
@@ -82,9 +104,11 @@ python -m pytest
   - 任务/子任务/分段到资源关系
   - 核/资源反向关联集合
 - 报告附带语义判定摘要：`status`（`pass/warn/fail`）+ `checks`（含规则级结果）
+- 报告附带合规画像：`compliance_profiles`（`engineering_v1/research_v1`）
 - 适用于“建模语义闭环”审查，不涉及性能优化目标。
 - 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`（Docx 条目到代码/测试/审计规则映射）
 - 研究闭环验收基线：`docs/15-研究闭环验收基线.md`（`compliance_profiles` 机读判定口径）
+- 研究执行 backlog：`docs/16-研究口径Issue拆解与排期.md`
 
 ## 调度参数（S3）
 
@@ -114,6 +138,7 @@ python -m pytest
 - 批量实验配置版本：`examples/batch_matrix.yaml` 中 `version: "0.1"`（仅用于 batch 文件结构）
 - 到达过程配置：新增 `tasks[*].arrival_process`（`fixed/uniform/poisson/one_shot/custom`），兼容旧字段 `arrival_model/min_inter_arrival/max_inter_arrival`
 - `arrival_process.type=custom` 通过 `params.generator` 选择已注册生成器（内置 `constant_interval/uniform_interval/poisson_rate/sequence`）
+- `arrival_process.type=custom` 且 `generator=sequence` 时，`params.repeat` 需为布尔值（支持 `true/false/1/0/yes/no/on/off`）
 - 配置迁移命令：`rtos-sim migrate-config --in <old> --out <new>`（会移除已废弃字段并可输出迁移报告）
 
 ## 样例
