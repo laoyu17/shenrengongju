@@ -93,6 +93,7 @@ python -m pytest
 - **硬门禁**：PR 必须通过 `python -m pytest -q`（Linux/Windows）
 - **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务与昨日 delta 摘要
 - **研究审计（非阻断）**：PR/Push 执行研究反例基准集与研究报告产物生成（用于语义闭环趋势跟踪）
+- **研究审计摘要增强**：Step Summary 会显式提示 `research_v1/engineering_v1` 状态；若 `research_v1 != pass` 会给出醒目告警（仍保持非阻断）
 - 性能报告位置：CI artifact `perf-baseline-pr`（`artifacts/perf/perf-baseline.json`）
 - nightly 产物：`perf-nightly-1000`（原始报告）+ `perf-nightly-delta`（昨日对比摘要）
 - 研究审计产物：`research-audit-report`（Markdown/JSON/CSV）+ `research-audit-summary`（反例基准集与审计明细）

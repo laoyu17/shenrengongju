@@ -2,7 +2,7 @@
 
 ## 0. 文档控制
 - 版本：v0.3
-- 日期：2026-02-22
+- 日期：2026-02-23
 - 适用范围：`project/` 当前主干实现
 - 输入基线：`docs/11-实施现状问题与Sprint规划.md`、`docs/14-docx需求追踪矩阵.md`、`docs/15-研究闭环验收基线.md`
 - 非目标：**性能优化**（按当前评审口径不纳入达标条件）
@@ -20,11 +20,12 @@
 4. CI 新增研究口径非阻断任务，稳定输出趋势报告。
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
-## 2. 当前基线快照（2026-02-22）
-- 全量测试：`225 passed`（本地执行）
-- 覆盖率：`87%`（`python -m pytest --cov=rtos_sim --cov-report=term -q`）
+## 2. 当前基线快照（2026-02-23）
+- 全量测试：`231 passed`（本地执行）
+- 覆盖率：`87.19%`（`python -m pytest --cov=rtos_sim --cov-report=term -q`）
 - 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`
 - 主要差距：证明资产“可判定”已具备，但“反例深度 + 报告模板化 + CI 稳定化”尚未形成闭环产线。
+- 门禁升级建议：维持 `research_audit` 非阻断；当连续 7 天 `research_v1=pass` 且 `unexpected_actual_checks=0` 后，再评估升级为阻断。
 
 ## 3. Issue Backlog（按优先级）
 
@@ -189,7 +190,7 @@
   - 风险与回滚说明
   - 对 `research_v1` 的影响说明（新增/收紧/无影响）
 
-## 8. 执行状态（2026-02-22）
+## 8. 执行状态（2026-02-23）
 
 | Issue | 状态 | 完成证据 |
 |---|---|---|
@@ -200,7 +201,8 @@
 | R-005 | ✅ 已完成 | `rtos_sim/analysis/model_relations.py`、`tests/test_model_relations.py`（研究向 checks + profiles） |
 | R-006 | ✅ 已完成 | `README.md`、`docs/11`、`docs/14`、`docs/15`、`docs/16` 同步 |
 
-## 9. 稳健性补强记录（2026-02-22）
+## 9. 稳健性补强记录（2026-02-23）
 
 - R-001 补强：`scripts/research_case_suite.py` 的匹配规则改为严格一致（新增 `unexpected_actual_checks`）；回归：`tests/test_research_case_suite.py`。
 - R-003 补强：`rtos_sim/analysis/research_report.py` 对同规则多 issue 做聚合统计，新增 `issue_count` 并修正 `sample_count/sample_event_ids` 聚合口径；回归：`tests/test_research_report.py`。
+- R-004 补强：`research_audit` CI Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与 `failed_rules` 摘要，确保非阻断策略下风险可见：`.github/workflows/ci.yml`。

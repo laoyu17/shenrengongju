@@ -56,6 +56,8 @@ from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader
 
 from .config_doc import ConfigDocument
+from .dag_layout import compute_auto_layout_positions
+from .table_validation import build_resource_table_errors, build_task_table_errors
 from .worker import SimulationWorker
 
 
@@ -1137,51 +1139,8 @@ class MainWindow(QMainWindow):
         subtask_ids: list[str],
         edges: list[tuple[str, str]],
     ) -> dict[str, QPointF]:
-        if not subtask_ids:
-            return {}
-
-        children: dict[str, set[str]] = {sub_id: set() for sub_id in subtask_ids}
-        indegree: dict[str, int] = {sub_id: 0 for sub_id in subtask_ids}
-        for src_id, dst_id in edges:
-            if src_id not in children or dst_id not in children:
-                continue
-            if dst_id in children[src_id]:
-                continue
-            children[src_id].add(dst_id)
-            indegree[dst_id] += 1
-
-        queue = sorted([sub_id for sub_id, degree in indegree.items() if degree == 0])
-        level: dict[str, int] = {sub_id: 0 for sub_id in subtask_ids}
-        visited: set[str] = set()
-        while queue:
-            current = queue.pop(0)
-            if current in visited:
-                continue
-            visited.add(current)
-            for nxt in sorted(children.get(current, set())):
-                level[nxt] = max(level[nxt], level[current] + 1)
-                indegree[nxt] -= 1
-                if indegree[nxt] <= 0:
-                    queue.append(nxt)
-
-        # Defensive fallback for non-DAG/isolated edge cases.
-        if len(visited) < len(subtask_ids):
-            for idx, sub_id in enumerate(sorted(subtask_ids)):
-                level[sub_id] = max(level.get(sub_id, 0), idx // 4)
-
-        level_groups: dict[int, list[str]] = {}
-        for sub_id in subtask_ids:
-            level_groups.setdefault(level.get(sub_id, 0), []).append(sub_id)
-        for values in level_groups.values():
-            values.sort()
-
-        x_gap = 170.0
-        y_gap = 115.0
-        positions: dict[str, QPointF] = {}
-        for col, layer in enumerate(sorted(level_groups)):
-            for row, sub_id in enumerate(level_groups[layer]):
-                positions[sub_id] = QPointF(80.0 + col * x_gap, 80.0 + row * y_gap)
-        return positions
+        raw_positions = compute_auto_layout_positions(subtask_ids, edges)
+        return {sub_id: QPointF(pos[0], pos[1]) for sub_id, pos in raw_positions.items()}
 
     def _render_dag_scene(
         self,
@@ -1635,33 +1594,28 @@ class MainWindow(QMainWindow):
     def _validate_task_table(self) -> None:
         table = self._task_table
         row_count = table.rowCount()
-        id_counts: dict[str, int] = {}
-        for row in range(row_count):
-            task_id = self._table_cell_text(table, row, 0)
-            if task_id:
-                id_counts[task_id] = id_counts.get(task_id, 0) + 1
+        rows = [
+            {
+                "id": self._table_cell_text(table, row, 0),
+                "name": self._table_cell_text(table, row, 1),
+                "task_type": self._table_cell_text(table, row, 2),
+                "arrival": self._table_cell_text(table, row, 3),
+                "deadline": self._table_cell_text(table, row, 4),
+            }
+            for row in range(row_count)
+        ]
+        errors = build_task_table_errors(rows=rows, valid_task_types=self._TASK_TYPE_OPTIONS)
 
         self._clear_table_error_bucket("task")
         table.blockSignals(True)
         try:
             for row in range(row_count):
-                task_id = self._table_cell_text(table, row, 0)
-                task_name = self._table_cell_text(table, row, 1)
-                task_type = self._table_cell_text(table, row, 2)
-                arrival_text = self._table_cell_text(table, row, 3)
-                deadline_text = self._table_cell_text(table, row, 4)
-
-                id_error: str | None = None
-                if not task_id:
-                    id_error = "task.id can not be empty"
-                elif id_counts.get(task_id, 0) > 1:
-                    id_error = "task.id must be unique"
                 self._set_table_cell_error(
                     table_key="task",
                     table=table,
                     row=row,
                     col=0,
-                    error=id_error,
+                    error=errors.get((row, 0)),
                 )
 
                 self._set_table_cell_error(
@@ -1669,7 +1623,7 @@ class MainWindow(QMainWindow):
                     table=table,
                     row=row,
                     col=1,
-                    error=None if task_name else "task.name can not be empty",
+                    error=errors.get((row, 1)),
                 )
 
                 self._set_table_cell_error(
@@ -1677,36 +1631,23 @@ class MainWindow(QMainWindow):
                     table=table,
                     row=row,
                     col=2,
-                    error=None if task_type in self._TASK_TYPE_OPTIONS else "task_type must be dynamic_rt/time_deterministic/non_rt",
+                    error=errors.get((row, 2)),
                 )
 
-                arrival_error: str | None = None
-                arrival = self._safe_optional_float(arrival_text)
-                if arrival is None:
-                    arrival_error = "arrival must be number"
-                elif arrival < 0:
-                    arrival_error = "arrival must be >= 0"
                 self._set_table_cell_error(
                     table_key="task",
                     table=table,
                     row=row,
                     col=3,
-                    error=arrival_error,
+                    error=errors.get((row, 3)),
                 )
 
-                deadline_error: str | None = None
-                if deadline_text:
-                    deadline = self._safe_optional_float(deadline_text)
-                    if deadline is None:
-                        deadline_error = "deadline must be number"
-                    elif deadline <= 0:
-                        deadline_error = "deadline must be > 0"
                 self._set_table_cell_error(
                     table_key="task",
                     table=table,
                     row=row,
                     col=4,
-                    error=deadline_error,
+                    error=errors.get((row, 4)),
                 )
         finally:
             table.blockSignals(False)
@@ -1714,32 +1655,27 @@ class MainWindow(QMainWindow):
     def _validate_resource_table(self) -> None:
         table = self._resource_table
         row_count = table.rowCount()
-        id_counts: dict[str, int] = {}
-        for row in range(row_count):
-            resource_id = self._table_cell_text(table, row, 0)
-            if resource_id:
-                id_counts[resource_id] = id_counts.get(resource_id, 0) + 1
+        rows = [
+            {
+                "id": self._table_cell_text(table, row, 0),
+                "name": self._table_cell_text(table, row, 1),
+                "bound_core_id": self._table_cell_text(table, row, 2),
+                "protocol": self._table_cell_text(table, row, 3),
+            }
+            for row in range(row_count)
+        ]
+        errors = build_resource_table_errors(rows=rows, valid_protocols=self._RESOURCE_PROTOCOL_OPTIONS)
 
         self._clear_table_error_bucket("resource")
         table.blockSignals(True)
         try:
             for row in range(row_count):
-                resource_id = self._table_cell_text(table, row, 0)
-                resource_name = self._table_cell_text(table, row, 1)
-                bound_core_id = self._table_cell_text(table, row, 2)
-                protocol = self._table_cell_text(table, row, 3)
-
-                id_error: str | None = None
-                if not resource_id:
-                    id_error = "resource.id can not be empty"
-                elif id_counts.get(resource_id, 0) > 1:
-                    id_error = "resource.id must be unique"
                 self._set_table_cell_error(
                     table_key="resource",
                     table=table,
                     row=row,
                     col=0,
-                    error=id_error,
+                    error=errors.get((row, 0)),
                 )
 
                 self._set_table_cell_error(
@@ -1747,21 +1683,21 @@ class MainWindow(QMainWindow):
                     table=table,
                     row=row,
                     col=1,
-                    error=None if resource_name else "resource.name can not be empty",
+                    error=errors.get((row, 1)),
                 )
                 self._set_table_cell_error(
                     table_key="resource",
                     table=table,
                     row=row,
                     col=2,
-                    error=None if bound_core_id else "bound_core_id can not be empty",
+                    error=errors.get((row, 2)),
                 )
                 self._set_table_cell_error(
                     table_key="resource",
                     table=table,
                     row=row,
                     col=3,
-                    error=None if protocol in self._RESOURCE_PROTOCOL_OPTIONS else "protocol must be mutex/pip/pcp",
+                    error=errors.get((row, 3)),
                 )
         finally:
             table.blockSignals(False)

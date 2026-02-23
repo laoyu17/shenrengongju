@@ -193,11 +193,28 @@ jobs:
           if report_path.exists():
               report = json.loads(report_path.read_text(encoding="utf-8"))
               statuses = report.get("statuses", {})
+              research_status = statuses.get("research_v1")
+              engineering_status = statuses.get("engineering_v1")
               summary_lines.append(f"- report.status: {report.get('status')}")
-              summary_lines.append(f"- research_v1: {statuses.get('research_v1')}")
-              summary_lines.append(f"- engineering_v1: {statuses.get('engineering_v1')}")
+              summary_lines.append(f"- research_v1: {research_status}")
+              summary_lines.append(f"- engineering_v1: {engineering_status}")
               failed = report.get("failed_check_details", [])
               summary_lines.append(f"- failed_checks: {len(failed)}")
+              failed_rules = [
+                  str(item.get("rule"))
+                  for item in failed
+                  if isinstance(item, dict) and item.get("rule")
+              ]
+              if failed_rules:
+                  summary_lines.append(f"- failed_rules: {', '.join(failed_rules[:8])}")
+              if research_status != "pass":
+                  summary_lines.append(
+                      "- ❌ research_v1 is not pass (non-blocking job). Please investigate before merge."
+                  )
+              elif engineering_status != "pass":
+                  summary_lines.append(
+                      "- ⚠️ engineering_v1 is not pass (non-blocking job). Please investigate before merge."
+                  )
           else:
               summary_lines.append("- report: missing")
 
