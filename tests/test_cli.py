@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from rtos_sim.cli.main import main
 import yaml
 
@@ -182,12 +183,18 @@ def test_cli_inspect_model_outputs_json_and_csv(tmp_path: Path) -> None:
     assert header.startswith("category,")
 
 
-def test_cli_inspect_model_strict_on_fail_returns_non_zero_for_warn() -> None:
+def test_cli_inspect_model_strict_on_fail_returns_non_zero_for_non_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _warn_report(_spec: object) -> dict[str, object]:
+        return {"status": "warn"}
+
+    monkeypatch.setattr("rtos_sim.cli.main.build_model_relations_report", _warn_report)
     code = main(
         [
             "inspect-model",
             "-c",
-            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            str(EXAMPLES / "at02_resource_mutex.yaml"),
             "--strict-on-fail",
         ]
     )

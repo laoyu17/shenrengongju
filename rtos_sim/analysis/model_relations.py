@@ -128,11 +128,44 @@ def build_model_relations_checks(report: dict[str, Any]) -> dict[str, Any]:
     checks: dict[str, dict[str, Any]] = {}
 
     unbound_count = int(summary.get("unbound_segment_count", 0) or 0)
+    resource_required_segments = {
+        str(item.get("segment_key"))
+        for item in segment_to_resources
+        if isinstance(item, dict) and isinstance(item.get("segment_key"), str)
+    }
+    risky_unbound_segments: list[dict[str, str]] = []
+    for item in segment_to_core:
+        if not isinstance(item, dict):
+            continue
+        if item.get("core_id") != UNBOUND_CORE_ID:
+            continue
+        segment_key = item.get("segment_key")
+        task_id = item.get("task_id")
+        if not isinstance(segment_key, str) or not isinstance(task_id, str):
+            continue
+        reason: str | None = None
+        if task_types.get(task_id) == "time_deterministic":
+            reason = "time_deterministic_task_requires_binding"
+        elif segment_key in resource_required_segments:
+            reason = "resource_required_segment_requires_binding"
+        if reason is not None:
+            risky_unbound_segments.append(
+                {
+                    "task_id": task_id,
+                    "subtask_id": str(item.get("subtask_id")),
+                    "segment_id": str(item.get("segment_id")),
+                    "segment_key": segment_key,
+                    "reason": reason,
+                }
+            )
     checks["segment_core_binding_coverage"] = {
-        "passed": unbound_count == 0,
+        "passed": not risky_unbound_segments,
         "severity": "warn",
-        "message": "all segments should bind to concrete cores for deterministic replay",
+        "message": "unbound segments are allowed for migration-oriented modeling unless deterministic/resource-constrained",
         "unbound_segment_count": unbound_count,
+        "risky_unbound_segment_count": len(risky_unbound_segments),
+        "advisory_unbound_segment_count": max(unbound_count - len(risky_unbound_segments), 0),
+        "samples": risky_unbound_segments[:20],
     }
 
     core_by_segment_key = {

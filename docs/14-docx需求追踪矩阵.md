@@ -56,6 +56,7 @@
 2. 再运行 `rtos-sim run ... --audit-out artifacts/audit.json`，获取规则判定与证明资产。
 3. 并行执行 `rtos-sim inspect-model ... --out-json ... --out-csv ...`，确认关系矩阵与 `status/checks`。
    - 脚本/CI 推荐：`rtos-sim inspect-model ... --strict-on-fail`（将 `status!=pass` 转为非 0）
+   - 当前基线（2026-02-23）：官方样例 `at01~at10` 均可在 `--strict-on-fail` 下通过；`segment_core_binding_coverage` 对迁移导向 `unbound` 仅记录 advisory 计数
 4. 运行 `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`，固化测试/覆盖率快照。
 5. 运行 `python scripts/research_case_suite.py --cases examples/research_counterexamples.json ...`，核对反例基准集匹配率。
    - 单案例需校验：`missing_expected_checks` 与 `unexpected_actual_checks` 均为空。

@@ -307,3 +307,8 @@
 - `inspect-model` 新增 `--strict-on-fail`：`status!=pass` 时可返回退出码 `2`：`project/rtos_sim/cli/main.py`
 - CI `research_audit` 升级为多样例矩阵（`at01/at02/at06/at10`）并产出 `matrix-summary.json`：`project/.github/workflows/ci.yml`
 - 回归：`project/tests/test_research_report.py`、`project/tests/test_model_relations.py`、`project/tests/test_cli.py`
+
+### Phase H-4（官方样例语义口径收敛）已完成（2026-02-23）
+- `segment_core_binding_coverage` 口径调整：对“迁移导向且无资源约束”的 `unbound` 仅记为 advisory，不再直接降级 `status`：`project/rtos_sim/analysis/model_relations.py`
+- 官方样例 `at01~at10` 现已满足 `inspect-model --strict-on-fail` 全通过（语义门禁与迁移样例并存）：`project/examples/`
+- 回归：`project/tests/test_model_relations.py`、`project/tests/test_cli.py`

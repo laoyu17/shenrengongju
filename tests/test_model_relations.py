@@ -10,7 +10,7 @@ from rtos_sim.io import ConfigLoader
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
-def test_model_relations_tracks_unbound_segments() -> None:
+def test_model_relations_tracks_advisory_unbound_segments() -> None:
     spec = ConfigLoader().load(str(EXAMPLES / "at01_single_dag_single_core.yaml"))
 
     report = build_model_relations_report(spec)
@@ -18,12 +18,14 @@ def test_model_relations_tracks_unbound_segments() -> None:
     assert report["summary"]["task_count"] == 1
     assert report["summary"]["segment_count"] == 2
     assert report["summary"]["unbound_segment_count"] == 2
-    assert report["status"] == "warn"
-    assert report["checks"]["segment_core_binding_coverage"]["passed"] is False
+    assert report["status"] == "pass"
+    coverage_check = report["checks"]["segment_core_binding_coverage"]
+    assert coverage_check["passed"] is True
+    assert coverage_check["advisory_unbound_segment_count"] == 2
+    assert coverage_check["risky_unbound_segment_count"] == 0
     profiles = report["compliance_profiles"]["profiles"]
-    assert profiles["engineering_v1"]["status"] == "warn"
-    assert profiles["research_v1"]["status"] == "warn"
-    assert profiles["engineering_v1"]["failed_warn_checks"] == ["segment_core_binding_coverage"]
+    assert profiles["engineering_v1"]["status"] == "pass"
+    assert profiles["research_v1"]["status"] == "pass"
     assert {"task_id": "t0", "core_id": UNBOUND_CORE_ID} in report["task_to_cores"]
     assert {
         "task_id": "t0",
@@ -101,6 +103,9 @@ def test_model_relations_detects_time_deterministic_unbound_segment() -> None:
     report = build_model_relations_report(spec)
 
     assert report["status"] == "fail"
+    coverage_check = report["checks"]["segment_core_binding_coverage"]
+    assert coverage_check["passed"] is False
+    assert coverage_check["risky_unbound_segment_count"] == 1
     check = report["checks"]["time_deterministic_segment_binding_strict"]
     assert check["passed"] is False
     assert check["samples"][0]["task_id"] == spec.tasks[0].id

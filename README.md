@@ -47,6 +47,7 @@ rtos-sim inspect-model -c examples/at02_resource_mutex.yaml \
   --out-json artifacts/model_relations.json --out-csv artifacts/model_relations.csv
 
 # inspect-model 严格模式：当关系报告 status != pass 时返回非 0
+# 备注：当前官方样例（at01~at10）均可在 strict 模式下通过
 rtos-sim inspect-model -c examples/at01_single_dag_single_core.yaml --strict-on-fail
 
 # 迁移旧配置并移除废弃参数（如 scheduler.params.event_id_validation）
@@ -109,6 +110,7 @@ python -m pytest
   - 任务/子任务/分段到资源关系
   - 核/资源反向关联集合
 - 报告附带语义判定摘要：`status`（`pass/warn/fail`）+ `checks`（含规则级结果）
+- `segment_core_binding_coverage` 对“迁移导向且无资源约束”的 `unbound` 仅做告警计数，不再直接降级 `status`
 - 报告附带合规画像：`compliance_profiles`（`engineering_v1/research_v1`）
 - 适用于“建模语义闭环”审查，不涉及性能优化目标。
 - 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`（Docx 条目到代码/测试/审计规则映射）
