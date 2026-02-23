@@ -149,6 +149,10 @@ jobs:
       - name: Build research review artifacts
         if: always()
         run: |
+          python scripts/quality_snapshot.py \
+            --output artifacts/research/quality-snapshot.json \
+            --coverage-json artifacts/research/coverage.json \
+            --allow-fail
           python -m rtos_sim.cli.main run \
             -c examples/at02_resource_mutex.yaml \
             --events-out artifacts/research/events.jsonl \
@@ -157,10 +161,6 @@ jobs:
           python -m rtos_sim.cli.main inspect-model \
             -c examples/at02_resource_mutex.yaml \
             --out-json artifacts/research/model_relations.json
-          python scripts/quality_snapshot.py \
-            --output artifacts/research/quality-snapshot.json \
-            --coverage-json artifacts/research/coverage.json \
-            --allow-fail
           python scripts/research_report.py \
             --audit artifacts/research/audit.json \
             --relations artifacts/research/model_relations.json \
@@ -168,6 +168,131 @@ jobs:
             --out-markdown artifacts/research/research-report.md \
             --out-csv artifacts/research/research-summary.csv \
             --out-json artifacts/research/research-report.json
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          configs = [
+              "examples/at01_single_dag_single_core.yaml",
+              "examples/at02_resource_mutex.yaml",
+              "examples/at06_time_deterministic.yaml",
+              "examples/at10_arrival_process.yaml",
+          ]
+          matrix_dir = Path("artifacts/research/matrix")
+          matrix_dir.mkdir(parents=True, exist_ok=True)
+          quality_path = Path("artifacts/research/quality-snapshot.json")
+
+          rows = []
+          for config in configs:
+              case_name = Path(config).stem
+              audit_path = matrix_dir / f"{case_name}.audit.json"
+              metrics_path = matrix_dir / f"{case_name}.metrics.json"
+              events_path = matrix_dir / f"{case_name}.events.jsonl"
+              relations_path = matrix_dir / f"{case_name}.model_relations.json"
+              report_md_path = matrix_dir / f"{case_name}.research-report.md"
+              report_csv_path = matrix_dir / f"{case_name}.research-summary.csv"
+              report_json_path = matrix_dir / f"{case_name}.research-report.json"
+
+              run_rc = subprocess.run(
+                  [
+                      "python",
+                      "-m",
+                      "rtos_sim.cli.main",
+                      "run",
+                      "-c",
+                      config,
+                      "--events-out",
+                      str(events_path),
+                      "--metrics-out",
+                      str(metrics_path),
+                      "--audit-out",
+                      str(audit_path),
+                  ],
+                  check=False,
+              ).returncode
+              inspect_rc = subprocess.run(
+                  [
+                      "python",
+                      "-m",
+                      "rtos_sim.cli.main",
+                      "inspect-model",
+                      "-c",
+                      config,
+                      "--out-json",
+                      str(relations_path),
+                  ],
+                  check=False,
+              ).returncode
+              report_rc = -1
+              if run_rc == 0 and inspect_rc == 0:
+                  report_rc = subprocess.run(
+                      [
+                          "python",
+                          "scripts/research_report.py",
+                          "--audit",
+                          str(audit_path),
+                          "--relations",
+                          str(relations_path),
+                          "--quality",
+                          str(quality_path),
+                          "--out-markdown",
+                          str(report_md_path),
+                          "--out-csv",
+                          str(report_csv_path),
+                          "--out-json",
+                          str(report_json_path),
+                      ],
+                      check=False,
+                  ).returncode
+
+              row = {
+                  "config": config,
+                  "case": case_name,
+                  "run_rc": run_rc,
+                  "inspect_rc": inspect_rc,
+                  "report_rc": report_rc,
+              }
+
+              if report_json_path.exists():
+                  payload = json.loads(report_json_path.read_text(encoding="utf-8"))
+                  statuses = payload.get("statuses", {})
+                  if not isinstance(statuses, dict):
+                      statuses = {}
+                  row.update(
+                      {
+                          "report_status": payload.get("status"),
+                          "research_v1": statuses.get("research_v1"),
+                          "engineering_v1": statuses.get("engineering_v1"),
+                          "model_relations": statuses.get("model_relations"),
+                          "audit": statuses.get("audit"),
+                          "quality": statuses.get("quality"),
+                          "failed_check_count": len(payload.get("failed_check_details", [])),
+                          "non_audit_fail_count": len(payload.get("non_audit_fail_details", [])),
+                      }
+                  )
+              rows.append(row)
+
+          passed = sum(1 for row in rows if row.get("report_status") == "pass")
+          status = "pass" if passed == len(rows) and all(
+              row.get("run_rc") == 0 and row.get("inspect_rc") == 0 and row.get("report_rc") == 0
+              for row in rows
+          ) else "fail"
+          summary = {
+              "status": status,
+              "total_cases": len(rows),
+              "passed_cases": passed,
+              "failed_cases": len(rows) - passed,
+              "cases": rows,
+          }
+          summary_path = matrix_dir / "matrix-summary.json"
+          summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(
+              "[INFO] research matrix summary "
+              f"status={summary['status']} passed={summary['passed_cases']}/{summary['total_cases']} "
+              f"path={summary_path}"
+          )
+          PY
 
       - name: Add research summary
         if: always()
@@ -180,6 +305,7 @@ jobs:
           summary_lines = ["## Research Audit (non-blocking)"]
           case_path = Path("artifacts/research/research-case-summary.json")
           report_path = Path("artifacts/research/research-report.json")
+          matrix_path = Path("artifacts/research/matrix/matrix-summary.json")
 
           if case_path.exists():
               case_summary = json.loads(case_path.read_text(encoding="utf-8"))
@@ -218,6 +344,26 @@ jobs:
           else:
               summary_lines.append("- report: missing")
 
+          if matrix_path.exists():
+              matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+              summary_lines.append(
+                  f"- matrix.status: {matrix.get('status')} "
+                  f"({matrix.get('passed_cases')}/{matrix.get('total_cases')} pass)"
+              )
+              failed_cases = [
+                  item.get("case")
+                  for item in matrix.get("cases", [])
+                  if isinstance(item, dict) and item.get("report_status") != "pass"
+              ]
+              if failed_cases:
+                  summary_lines.append(f"- matrix.failed_cases: {', '.join(str(item) for item in failed_cases[:8])}")
+              if matrix.get("status") != "pass":
+                  summary_lines.append(
+                      "- ⚠️ multi-case research matrix is not pass (non-blocking job)."
+                  )
+          else:
+              summary_lines.append("- matrix: missing")
+
           Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
           PY
 
@@ -243,6 +389,7 @@ jobs:
             artifacts/research/audit.json
             artifacts/research/model_relations.json
             artifacts/research/quality-snapshot.json
+            artifacts/research/matrix/
 
   perf_nightly:
     name: Perf Nightly Trend (1000, non-blocking)

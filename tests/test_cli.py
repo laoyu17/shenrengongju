@@ -182,6 +182,30 @@ def test_cli_inspect_model_outputs_json_and_csv(tmp_path: Path) -> None:
     assert header.startswith("category,")
 
 
+def test_cli_inspect_model_strict_on_fail_returns_non_zero_for_warn() -> None:
+    code = main(
+        [
+            "inspect-model",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--strict-on-fail",
+        ]
+    )
+    assert code == 2
+
+
+def test_cli_inspect_model_strict_on_fail_returns_zero_for_pass() -> None:
+    code = main(
+        [
+            "inspect-model",
+            "-c",
+            str(EXAMPLES / "at02_resource_mutex.yaml"),
+            "--strict-on-fail",
+        ]
+    )
+    assert code == 0
+
+
 def test_cli_validate_rejects_unknown_scheduler(tmp_path: Path) -> None:
     config = tmp_path / "unknown_scheduler.yaml"
     config.write_text(

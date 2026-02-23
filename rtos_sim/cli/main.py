@@ -313,9 +313,16 @@ def cmd_inspect_model(args: argparse.Namespace) -> int:
         return 1
 
     csv_path = args.out_csv if args.out_csv else "-"
+    report_status = str(report.get("status") or "unknown")
+    if args.strict_on_fail and report_status != "pass":
+        print(
+            "[ERROR] model relation report status is not pass in strict mode, "
+            f"status={report_status}, config={args.config}, json={out_json}, csv={csv_path}"
+        )
+        return 2
     print(
         "[OK] model relation report completed, "
-        f"config={args.config}, json={out_json}, csv={csv_path}"
+        f"config={args.config}, json={out_json}, csv={csv_path}, status={report_status}"
     )
     return 0
 
@@ -405,6 +412,11 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
     inspect_parser.add_argument("--out-json", default=None, help="relation report JSON path")
     inspect_parser.add_argument("--out-csv", default=None, help="relation report CSV path")
+    inspect_parser.add_argument(
+        "--strict-on-fail",
+        action="store_true",
+        help="return non-zero when model relation status is not pass",
+    )
     inspect_parser.set_defaults(func=cmd_inspect_model)
 
     migrate_parser = subparsers.add_parser(

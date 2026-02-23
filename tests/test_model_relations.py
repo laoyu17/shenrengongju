@@ -20,6 +20,10 @@ def test_model_relations_tracks_unbound_segments() -> None:
     assert report["summary"]["unbound_segment_count"] == 2
     assert report["status"] == "warn"
     assert report["checks"]["segment_core_binding_coverage"]["passed"] is False
+    profiles = report["compliance_profiles"]["profiles"]
+    assert profiles["engineering_v1"]["status"] == "warn"
+    assert profiles["research_v1"]["status"] == "warn"
+    assert profiles["engineering_v1"]["failed_warn_checks"] == ["segment_core_binding_coverage"]
     assert {"task_id": "t0", "core_id": UNBOUND_CORE_ID} in report["task_to_cores"]
     assert {
         "task_id": "t0",

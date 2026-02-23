@@ -1,8 +1,8 @@
 # Docx 需求追踪矩阵（需求 → 代码 → 测试 → 审计）
 
 ## 0. 文档控制
-- 版本：v0.3
-- 日期：2026-02-22
+- 版本：v0.4
+- 日期：2026-02-23
 - 基线：`250909-仿真工具-基础模型.docx`
 - 追踪范围：`project/` 当前主干实现
 
@@ -32,7 +32,7 @@
 - 证明资产导出：`protocol_proof_assets`（`rtos_sim/analysis/audit.py:726`）
 - 研究闭环画像：`compliance_profiles`（`engineering_v1/research_v1`，`rtos_sim/analysis/audit.py:727`）
 - 研究反例基准集：`examples/research_counterexamples.json` + `scripts/research_case_suite.py`（严格匹配：`missing_expected_checks` + `unexpected_actual_checks`）
-- 研究模板化报告：`scripts/research_report.py`（Markdown/CSV/JSON，失败项聚合 `issue_count/sample_count/sample_event_ids`）
+- 研究模板化报告：`scripts/research_report.py`（Markdown/CSV/JSON，失败项聚合 `issue_count/sample_count/sample_event_ids` + `non_audit_fail_details`）
 
 ## 3. 研究闭环 DoD（research_v1）
 
@@ -55,9 +55,11 @@
 1. 先运行 `rtos-sim validate -c <config>`，确认模型语义合法。
 2. 再运行 `rtos-sim run ... --audit-out artifacts/audit.json`，获取规则判定与证明资产。
 3. 并行执行 `rtos-sim inspect-model ... --out-json ... --out-csv ...`，确认关系矩阵与 `status/checks`。
+   - 脚本/CI 推荐：`rtos-sim inspect-model ... --strict-on-fail`（将 `status!=pass` 转为非 0）
 4. 运行 `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`，固化测试/覆盖率快照。
 5. 运行 `python scripts/research_case_suite.py --cases examples/research_counterexamples.json ...`，核对反例基准集匹配率。
    - 单案例需校验：`missing_expected_checks` 与 `unexpected_actual_checks` 均为空。
 6. 运行 `python scripts/research_report.py --audit ... --relations ... --quality ...`，生成评审模板化报告。
    - 失败项需核对：同一 rule 的 `issue_count/sample_count/sample_event_ids` 聚合是否完整。
+   - 失败原因需核对：`non_audit_fail_details`（如 `model_relations/quality` 导致的总体失败）。
 7. 评审时以本矩阵为索引，逐条核对 Docx 条目与证据链是否一致。

@@ -54,6 +54,8 @@ def _sorted_tuple_rows(
 def _build_profile_status(checks: dict[str, Any], required_checks: tuple[str, ...]) -> dict[str, Any]:
     passed: list[str] = []
     failed: list[str] = []
+    failed_warn: list[str] = []
+    failed_error: list[str] = []
     missing: list[str] = []
     for name in required_checks:
         check = checks.get(name)
@@ -64,13 +66,26 @@ def _build_profile_status(checks: dict[str, Any], required_checks: tuple[str, ..
             passed.append(name)
         else:
             failed.append(name)
+            severity = str(check.get("severity") or "error").lower()
+            if severity in {"warn", "warning"}:
+                failed_warn.append(name)
+            else:
+                failed_error.append(name)
 
     total = len(required_checks)
+    status = "pass"
+    if missing or failed_error:
+        status = "fail"
+    elif failed_warn:
+        status = "warn"
+
     return {
-        "status": "pass" if not failed and not missing else "fail",
+        "status": status,
         "required_checks": list(required_checks),
         "passed_checks": passed,
         "failed_checks": failed,
+        "failed_error_checks": failed_error,
+        "failed_warn_checks": failed_warn,
         "missing_checks": missing,
         "pass_rate": 1.0 if total == 0 else len(passed) / total,
     }

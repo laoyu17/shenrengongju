@@ -103,6 +103,69 @@ def _failed_check_details(audit_report: dict[str, Any], failed_checks: list[str]
     return details
 
 
+def _non_audit_fail_details(
+    *,
+    audit_report: dict[str, Any],
+    model_relations_report: dict[str, Any],
+    quality_snapshot: dict[str, Any],
+    audit_status: str,
+    model_status: str,
+    quality_status: str,
+    failed_check_details: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+
+    if model_status != "pass":
+        checks = _safe_dict(model_relations_report.get("checks"))
+        failed_rules = sorted(
+            str(name)
+            for name, result in checks.items()
+            if isinstance(result, dict) and result.get("passed") is False
+        )
+        profiles = _safe_dict(_safe_dict(model_relations_report.get("compliance_profiles")).get("profiles"))
+        failed_profiles = sorted(
+            str(name)
+            for name, profile in profiles.items()
+            if isinstance(profile, dict) and profile.get("status") != "pass"
+        )
+        details.append(
+            {
+                "source": "model_relations",
+                "severity": "error" if model_status == "fail" else "warning",
+                "status": model_status,
+                "message": "model relation status is not pass",
+                "failed_rules": failed_rules,
+                "failed_profiles": failed_profiles,
+            }
+        )
+
+    if quality_status != "pass":
+        pytest_summary = _safe_dict(quality_snapshot.get("pytest"))
+        details.append(
+            {
+                "source": "quality",
+                "severity": "error",
+                "status": quality_status,
+                "message": "quality snapshot status is not pass",
+                "pytest_failed": pytest_summary.get("failed"),
+                "pytest_errors": pytest_summary.get("errors"),
+                "command_exit_code": quality_snapshot.get("command_exit_code"),
+            }
+        )
+
+    if audit_status != "pass" and not failed_check_details:
+        details.append(
+            {
+                "source": "audit",
+                "severity": "error",
+                "status": audit_status,
+                "message": "audit status is not pass but no failed checks were mapped",
+            }
+        )
+
+    return details
+
+
 def build_research_report_payload(
     *,
     audit_report: dict[str, Any] | None,
@@ -142,6 +205,15 @@ def build_research_report_payload(
 
     failed_checks = sorted(set(research_profile["failed_checks"] + engineering_profile["failed_checks"]))
     failed_check_details = _failed_check_details(audit, failed_checks)
+    non_audit_fail_details = _non_audit_fail_details(
+        audit_report=audit,
+        model_relations_report=relations,
+        quality_snapshot=quality,
+        audit_status=audit_status,
+        model_status=model_status,
+        quality_status=quality_status,
+        failed_check_details=failed_check_details,
+    )
 
     quality_pytest = _safe_dict(quality.get("pytest"))
     quality_coverage = _safe_dict(quality.get("coverage"))
@@ -164,6 +236,7 @@ def build_research_report_payload(
             "research_v1": research_profile,
         },
         "failed_check_details": failed_check_details,
+        "non_audit_fail_details": non_audit_fail_details,
         "quality": {
             "pytest_passed": quality_pytest.get("passed"),
             "pytest_failed": quality_pytest.get("failed"),
@@ -204,6 +277,21 @@ def research_report_to_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
+    for item in report.get("non_audit_fail_details", []):
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "category": "non_audit_failure",
+                "name": item.get("source"),
+                "value": item.get("severity"),
+                "status": item.get("status"),
+                "message": item.get("message"),
+                "failed_rules": "|".join(item.get("failed_rules", [])),
+                "failed_profiles": "|".join(item.get("failed_profiles", [])),
+            }
+        )
+
     quality = _safe_dict(report.get("quality"))
     for name, value in sorted(quality.items()):
         rows.append({"category": "quality", "name": name, "value": value})
@@ -222,6 +310,11 @@ def render_research_report_markdown(report: dict[str, Any]) -> str:
     failed_checks = [
         item
         for item in report.get("failed_check_details", [])
+        if isinstance(item, dict)
+    ]
+    non_audit_failures = [
+        item
+        for item in report.get("non_audit_fail_details", [])
         if isinstance(item, dict)
     ]
 
@@ -255,6 +348,30 @@ def render_research_report_markdown(report: dict[str, Any]) -> str:
                 f"{item.get('rule')} ({item.get('severity')}): "
                 f"{item.get('message')} | issues={item.get('issue_count')} "
                 f"| samples={item.get('sample_count')} | event_ids={sample_text}"
+            )
+
+    lines.append("")
+    lines.append("## 非审计失败原因")
+    if not non_audit_failures:
+        lines.append("- 无")
+    else:
+        for item in non_audit_failures:
+            failed_rules = item.get("failed_rules", [])
+            failed_profiles = item.get("failed_profiles", [])
+            rules_text = (
+                ",".join(failed_rules)
+                if isinstance(failed_rules, list) and failed_rules
+                else "-"
+            )
+            profiles_text = (
+                ",".join(failed_profiles)
+                if isinstance(failed_profiles, list) and failed_profiles
+                else "-"
+            )
+            lines.append(
+                "- "
+                f"{item.get('source')} ({item.get('severity')}, status={item.get('status')}): "
+                f"{item.get('message')} | failed_rules={rules_text} | failed_profiles={profiles_text}"
             )
 
     lines.append("")

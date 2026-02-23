@@ -46,6 +46,9 @@ rtos-sim compare --left-metrics artifacts/base_metrics.json --right-metrics arti
 rtos-sim inspect-model -c examples/at02_resource_mutex.yaml \
   --out-json artifacts/model_relations.json --out-csv artifacts/model_relations.csv
 
+# inspect-model 严格模式：当关系报告 status != pass 时返回非 0
+rtos-sim inspect-model -c examples/at01_single_dag_single_core.yaml --strict-on-fail
+
 # 迁移旧配置并移除废弃参数（如 scheduler.params.event_id_validation）
 rtos-sim migrate-config --in examples/at01_single_dag_single_core.yaml --out artifacts/migrated.yaml \
   --report-out artifacts/migrate_report.json
@@ -94,6 +97,7 @@ python -m pytest
 - **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务与昨日 delta 摘要
 - **研究审计（非阻断）**：PR/Push 执行研究反例基准集与研究报告产物生成（用于语义闭环趋势跟踪）
 - **研究审计摘要增强**：Step Summary 会显式提示 `research_v1/engineering_v1` 状态；若 `research_v1 != pass` 会给出醒目告警（仍保持非阻断）
+- **研究审计多样例矩阵**：CI 会并行生成多样例 `research-report`（`at01/at02/at06/at10`）并输出 `matrix-summary.json`
 - 性能报告位置：CI artifact `perf-baseline-pr`（`artifacts/perf/perf-baseline.json`）
 - nightly 产物：`perf-nightly-1000`（原始报告）+ `perf-nightly-delta`（昨日对比摘要）
 - 研究审计产物：`research-audit-report`（Markdown/JSON/CSV）+ `research-audit-summary`（反例基准集与审计明细）

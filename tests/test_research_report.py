@@ -114,6 +114,41 @@ def test_build_research_report_payload_fail_and_markdown_render() -> None:
     assert any(row["category"] == "failed_check" for row in rows)
 
 
+def test_build_research_report_payload_includes_non_audit_fail_reasons() -> None:
+    relations = {
+        "status": "warn",
+        "checks": {
+            "segment_core_binding_coverage": {"passed": False},
+            "resource_bound_core_consistency": {"passed": True},
+        },
+        "compliance_profiles": {
+            "profiles": {
+                "engineering_v1": {"status": "warn"},
+                "research_v1": {"status": "warn"},
+            }
+        },
+    }
+
+    report = build_research_report_payload(
+        audit_report=_pass_audit(),
+        model_relations_report=relations,
+        quality_snapshot=_quality("pass"),
+    )
+
+    assert report["status"] == "fail"
+    assert report["failed_check_details"] == []
+    assert report["non_audit_fail_details"][0]["source"] == "model_relations"
+    assert report["non_audit_fail_details"][0]["status"] == "warn"
+    assert report["non_audit_fail_details"][0]["failed_rules"] == ["segment_core_binding_coverage"]
+
+    rows = research_report_to_rows(report)
+    assert any(row["category"] == "non_audit_failure" for row in rows)
+
+    md = render_research_report_markdown(report)
+    assert "非审计失败原因" in md
+    assert "segment_core_binding_coverage" in md
+
+
 def test_research_report_script_outputs_files_and_strict_mode(tmp_path: Path) -> None:
     audit_path = tmp_path / "audit.json"
     rel_path = tmp_path / "relations.json"

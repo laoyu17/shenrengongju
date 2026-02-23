@@ -1,7 +1,7 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.8
+- 版本：v0.9
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-02-23
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
@@ -47,6 +47,7 @@
 - 审计报告新增 `rule_version` 与 `evidence`，支持跨批次追溯：`project/rtos_sim/analysis/audit.py:7`
 - 审计报告新增 `protocol_proof_assets`，沉淀 PIP/PCP 证明辅助轨迹：`project/rtos_sim/analysis/audit.py:79`
 - 审计报告新增 `compliance_profiles`（`engineering_v1/research_v1`），支持研究闭环机读判定：`project/rtos_sim/analysis/audit.py:727`
+- `inspect-model` 新增 `--strict-on-fail`，可将 `status!=pass` 转为非 0 退出码（便于 CI/脚本门禁）：`project/rtos_sim/cli/main.py:294`
 - 事件与指标导出（JSONL/JSON）已打通：`project/rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`project/rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`project/rtos_sim/io/experiment_runner.py:24`
@@ -67,8 +68,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-02-23）：`python -m pytest --maxfail=1` 通过，`231 passed`
-- 当前覆盖率快照（2026-02-23）：总覆盖率 87.19%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 当前本地测试状态（2026-02-23）：`python -m pytest --maxfail=1` 通过，`234 passed`
+- 当前覆盖率快照（2026-02-23）：总覆盖率 87.24%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 - 新增质量快照脚本（用于文档事实对齐）：`project/scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
@@ -292,10 +293,17 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：`docs/11`、`docs/15`、`docs/16` 同步至 `231 passed / 87.19%`（基于 `python -m pytest --maxfail=1` 与覆盖率命令）。
+- 文档事实快照已统一更新：`docs/11`、`docs/15`、`docs/16` 同步至 `234 passed / 87.24%`（基于 `python -m pytest --maxfail=1` 与覆盖率命令）。
 - 历史首轮审查文档新增醒目提示，避免误读 `211 tests` 为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`project/.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
   - `project/rtos_sim/ui/dag_layout.py`
   - `project/rtos_sim/ui/table_validation.py`
   - `project/tests/test_ui_helpers.py`
+
+### Phase H-3（研究审计口径一致性收敛）已完成（2026-02-23）
+- 研究报告补充 `non_audit_fail_details`，解决“总体失败但失败检查为空”可解释性问题：`project/rtos_sim/analysis/research_report.py`
+- 模型关系 profile 状态语义升级为 `pass/warn/fail`，并区分 `failed_warn_checks/failed_error_checks`：`project/rtos_sim/analysis/model_relations.py`
+- `inspect-model` 新增 `--strict-on-fail`：`status!=pass` 时可返回退出码 `2`：`project/rtos_sim/cli/main.py`
+- CI `research_audit` 升级为多样例矩阵（`at01/at02/at06/at10`）并产出 `matrix-summary.json`：`project/.github/workflows/ci.yml`
+- 回归：`project/tests/test_research_report.py`、`project/tests/test_model_relations.py`、`project/tests/test_cli.py`
