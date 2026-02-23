@@ -269,7 +269,7 @@
   - `project/scripts/research_case_suite.py`
   - `project/tests/test_research_case_suite.py`
 - R-002：审计证明资产与规则说明增强：
-  - `rule_version` 升级至 `0.3`，新增 `check_catalog` 与失败事件定位字段：`project/rtos_sim/analysis/audit.py`
+  - `rule_version` 升级至 `0.4`，新增 `check_catalog` 与失败事件定位字段：`project/rtos_sim/analysis/audit.py`
   - 新增证明资产统计（链深、owner 覆盖率、ceiling 未闭环比率）：`project/rtos_sim/analysis/audit.py`
 - R-003：研究模板化报告生成能力已落地：
   - `project/rtos_sim/analysis/research_report.py`
@@ -312,3 +312,9 @@
 - `segment_core_binding_coverage` 口径调整：对“迁移导向且无资源约束”的 `unbound` 仅记为 advisory，不再直接降级 `status`：`project/rtos_sim/analysis/model_relations.py`
 - 官方样例 `at01~at10` 现已满足 `inspect-model --strict-on-fail` 全通过（语义门禁与迁移样例并存）：`project/examples/`
 - 回归：`project/tests/test_model_relations.py`、`project/tests/test_cli.py`
+
+### Phase H-5（M-09 证明级资产收敛）已完成（2026-02-23）
+- 审计新增 `time_deterministic_ready_consistency`，用于校验 `SegmentReady.time` 与 `deterministic_ready_time` 对齐、以及跨超周期窗口的相位稳定性：`project/rtos_sim/analysis/audit.py`
+- 审计新增 `time_deterministic_proof_assets`（`max_ready_lag/max_phase_jitter/issue_samples`），用于研究复现实验取证：`project/rtos_sim/analysis/audit.py`
+- `research_v1` 合规画像新增必过项 `time_deterministic_ready_consistency`，补齐 M-09 机读门禁：`project/rtos_sim/analysis/audit.py`
+- 回归：`project/tests/test_audit.py` 新增通过/失败双场景测试（稳定相位通过、相位抖动失败）。

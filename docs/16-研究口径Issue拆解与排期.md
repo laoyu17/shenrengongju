@@ -195,7 +195,7 @@
 | Issue | 状态 | 完成证据 |
 |---|---|---|
 | R-001 | ✅ 已完成 | `examples/research_counterexamples.json`、`scripts/research_case_suite.py`、`tests/test_research_case_suite.py` |
-| R-002 | ✅ 已完成 | `rtos_sim/analysis/audit.py`、`tests/test_audit.py`（`rule_version=0.3`、`check_catalog`、证明资产增强） |
+| R-002 | ✅ 已完成 | `rtos_sim/analysis/audit.py`、`tests/test_audit.py`（`rule_version=0.4`、`check_catalog@0.2`、证明资产增强） |
 | R-003 | ✅ 已完成 | `rtos_sim/analysis/research_report.py`、`scripts/research_report.py`、`tests/test_research_report.py` |
 | R-004 | ✅ 已完成 | `.github/workflows/ci.yml`（`research_audit` job + artifacts） |
 | R-005 | ✅ 已完成 | `rtos_sim/analysis/model_relations.py`、`tests/test_model_relations.py`（研究向 checks + profiles） |
@@ -210,3 +210,4 @@
 - R-004 补强（第二轮）：`research_audit` 新增多样例矩阵（`at01/at02/at06/at10`）与 `matrix-summary.json`，Step Summary 增加 matrix 状态与失败样例提示：`.github/workflows/ci.yml`。
 - R-005 补强：`model_relations` profile 状态升级为 `pass/warn/fail`，并输出 `failed_warn_checks/failed_error_checks`；回归：`tests/test_model_relations.py`。
 - R-006 补强：CLI 新增 `inspect-model --strict-on-fail`，支持关系语义严格门禁；回归：`tests/test_cli.py`，文档同步：`README.md`、`docs/11`、`docs/15`。
+- R-002 补强（第三轮）：新增 `time_deterministic_ready_consistency` 与 `time_deterministic_proof_assets`，补齐 M-09 超周期相位稳定性机读证据；回归：`tests/test_audit.py`。

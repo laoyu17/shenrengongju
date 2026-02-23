@@ -389,8 +389,8 @@ def test_audit_includes_model_relation_summary_when_provided() -> None:
 def test_audit_includes_rule_version_and_evidence() -> None:
     report = build_audit_report(events=[], scheduler_name="edf")
 
-    assert report["rule_version"] == "0.3"
-    assert report["check_catalog"]["catalog_version"] == "0.1"
+    assert report["rule_version"] == "0.4"
+    assert report["check_catalog"]["catalog_version"] == "0.2"
     assert "resource_release_balance" in report["check_catalog"]["checks"]
     assert report["evidence"]["scheduler_name"] == "edf"
     assert report["evidence"]["event_count"] == 0
@@ -484,7 +484,7 @@ def test_audit_includes_compliance_profiles() -> None:
     report = build_audit_report(events=[], scheduler_name="edf")
 
     profiles = report["compliance_profiles"]
-    assert profiles["profile_version"] == "0.1"
+    assert profiles["profile_version"] == "0.2"
     assert profiles["default_profile"] == "research_v1"
     assert profiles["profiles"]["engineering_v1"]["status"] == "pass"
     assert profiles["profiles"]["research_v1"]["status"] == "pass"
@@ -534,3 +534,95 @@ def test_audit_check_contains_sample_event_ids_for_failed_rule() -> None:
     assert failed["issue_count"] == 1
     assert failed["sample_event_ids"] == ["e1"]
     assert report["evidence"]["failed_check_event_refs"]["pip_priority_chain_consistency"] == ["e1"]
+
+
+def test_audit_time_deterministic_ready_consistency_passes_for_stable_phase() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "JobReleased",
+            "job_id": "td@0",
+            "payload": {"deterministic_hyper_period": 10.0},
+        },
+        {
+            "event_id": "e2",
+            "type": "SegmentReady",
+            "job_id": "td@0",
+            "time": 2.0,
+            "payload": {
+                "segment_key": "td@0:s0:seg0",
+                "deterministic_window_id": 0,
+                "deterministic_offset_index": 0,
+                "deterministic_ready_time": 2.0,
+            },
+        },
+        {
+            "event_id": "e3",
+            "type": "JobReleased",
+            "job_id": "td@1",
+            "payload": {"deterministic_hyper_period": 10.0},
+        },
+        {
+            "event_id": "e4",
+            "type": "SegmentReady",
+            "job_id": "td@1",
+            "time": 12.0,
+            "payload": {
+                "segment_key": "td@1:s0:seg0",
+                "deterministic_window_id": 1,
+                "deterministic_offset_index": 0,
+                "deterministic_ready_time": 12.0,
+            },
+        },
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+    assert report["checks"]["time_deterministic_ready_consistency"]["passed"] is True
+    assert report["time_deterministic_proof_assets"]["deterministic_segment_ready_count"] == 2
+    assert report["time_deterministic_proof_assets"]["deterministic_task_count"] == 1
+
+
+def test_audit_detects_time_deterministic_phase_jitter() -> None:
+    events = [
+        {
+            "event_id": "e1",
+            "type": "JobReleased",
+            "job_id": "td@0",
+            "payload": {"deterministic_hyper_period": 10.0},
+        },
+        {
+            "event_id": "e2",
+            "type": "SegmentReady",
+            "job_id": "td@0",
+            "time": 2.0,
+            "payload": {
+                "segment_key": "td@0:s0:seg0",
+                "deterministic_window_id": 0,
+                "deterministic_offset_index": 0,
+                "deterministic_ready_time": 2.0,
+            },
+        },
+        {
+            "event_id": "e3",
+            "type": "JobReleased",
+            "job_id": "td@1",
+            "payload": {"deterministic_hyper_period": 10.0},
+        },
+        {
+            "event_id": "e4",
+            "type": "SegmentReady",
+            "job_id": "td@1",
+            "time": 2.5,
+            "payload": {
+                "segment_key": "td@1:s0:seg0",
+                "deterministic_window_id": 1,
+                "deterministic_offset_index": 0,
+                "deterministic_ready_time": 2.5,
+            },
+        },
+    ]
+
+    report = build_audit_report(events, scheduler_name="edf")
+    assert report["status"] == "fail"
+    assert any(issue["rule"] == "time_deterministic_ready_consistency" for issue in report["issues"])
+    assert report["checks"]["time_deterministic_ready_consistency"]["passed"] is False

@@ -112,6 +112,8 @@ python -m pytest
 - 报告附带语义判定摘要：`status`（`pass/warn/fail`）+ `checks`（含规则级结果）
 - `segment_core_binding_coverage` 对“迁移导向且无资源约束”的 `unbound` 仅做告警计数，不再直接降级 `status`
 - 报告附带合规画像：`compliance_profiles`（`engineering_v1/research_v1`）
+- 审计新增时间确定性检查：`time_deterministic_ready_consistency`（ready-time 对齐 + 超周期相位稳定性）
+- 审计新增时间确定性证明资产：`time_deterministic_proof_assets`（`max_ready_lag` / `max_phase_jitter` / `issue_samples`）
 - 适用于“建模语义闭环”审查，不涉及性能优化目标。
 - 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`（Docx 条目到代码/测试/审计规则映射）
 - 研究闭环验收基线：`docs/15-研究闭环验收基线.md`（`compliance_profiles` 机读判定口径）

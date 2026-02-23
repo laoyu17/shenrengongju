@@ -18,7 +18,7 @@
 | M-06 | 任务/子任务/分段三级映射与回退 | `rtos_sim/model/spec.py:413` | `tests/test_model_validation.py:284`；`tests/test_model_validation.py:293`；`tests/test_model_validation.py:304` | `inspect-model` 映射输出（`segment_to_core`） | 已实现 |
 | M-07 | 任务/子任务/分段 与 核/资源关系集合 | `rtos_sim/analysis/model_relations.py:202`；`rtos_sim/analysis/model_relations.py:344` | `tests/test_model_relations.py:13`；`tests/test_cli.py:155` | `inspect-model` 报告 `status/checks/check_version/compliance_profiles` | 已实现（工程/研究画像） |
 | M-08 | 周期/偶发/零星 + 随机到达模型 | `rtos_sim/model/spec.py:193`；`rtos_sim/core/engine.py:676`；`rtos_sim/core/engine.py:716`；`rtos_sim/arrival/registry.py:20` | `tests/test_engine_scenarios.py:229`；`tests/test_engine_scenarios.py:437`；`tests/test_engine_scenarios.py:488`；`tests/test_engine_scenarios.py:537` | 到达过程校验：`tests/test_model_validation.py:252` | 已实现（可扩展） |
-| M-09 | 时间确定性（定时定点/超周期重复） | `rtos_sim/core/engine.py:654`；`rtos_sim/core/engine.py:465` | `tests/test_engine_scenarios.py:131`；`tests/test_engine_scenarios.py:1794` | 协议一致性审计：`rtos_sim/analysis/audit.py:362`；`rtos_sim/analysis/audit.py:534` | 部分实现（证明级资产仍需补） |
+| M-09 | 时间确定性（定时定点/超周期重复） | `rtos_sim/core/engine.py:654`；`rtos_sim/core/engine.py:465` | `tests/test_engine_scenarios.py:131`；`tests/test_engine_scenarios.py:1794`；`tests/test_audit.py:540` | 协议一致性审计 + 时间确定性一致性检查：`rtos_sim/analysis/audit.py`（`time_deterministic_ready_consistency` + `time_deterministic_proof_assets`） | 已实现（研究闭环口径） |
 | M-10 | 动态实时截止期约束与超期处理 | `rtos_sim/core/engine.py:1293`；`rtos_sim/core/engine.py:1320` | `tests/test_engine_scenarios.py:112` | 审计 `abort_cancel_release_visibility`：`rtos_sim/analysis/audit.py:324` | 已实现 |
 | M-11 | 非实时任务（best-effort） | `rtos_sim/model/spec.py:119`；`rtos_sim/core/engine.py:738` | `tests/test_engine_scenarios.py:317`；`tests/test_engine_scenarios.py:1794` | 指标报告 `jobs_completed/core_utilization` | 已实现 |
 | M-12 | 大规模任务集（>=1000）可持续运行 | `scripts/perf_baseline.py:123`；`.github/workflows/ci.yml:128` | `tests/test_perf_delta.py:62` | nightly `perf-nightly-1000` + `perf-delta-summary` | 已实现（非阻断口径） |
@@ -30,6 +30,7 @@
 - PCP 证明辅助：`pcp_priority_domain_alignment`、`pcp_ceiling_numeric_domain`、`pcp_ceiling_transition_consistency`（`rtos_sim/analysis/audit.py:430`, `rtos_sim/analysis/audit.py:443`, `rtos_sim/analysis/audit.py:602`）
 - 死锁证明辅助：`wait_for_deadlock`（`rtos_sim/analysis/audit.py:702`）
 - 证明资产导出：`protocol_proof_assets`（`rtos_sim/analysis/audit.py:726`）
+- 时间确定性证明资产：`time_deterministic_proof_assets`（ready-time 对齐 + 超周期相位稳定性）
 - 研究闭环画像：`compliance_profiles`（`engineering_v1/research_v1`，`rtos_sim/analysis/audit.py:727`）
 - 研究反例基准集：`examples/research_counterexamples.json` + `scripts/research_case_suite.py`（严格匹配：`missing_expected_checks` + `unexpected_actual_checks`）
 - 研究模板化报告：`scripts/research_report.py`（Markdown/CSV/JSON，失败项聚合 `issue_count/sample_count/sample_event_ids` + `non_audit_fail_details`）
@@ -48,6 +49,7 @@
   - `pcp_ceiling_transition_consistency`
   - `wait_for_deadlock`
   - `pip_owner_hold_consistency`
+  - `time_deterministic_ready_consistency`
 - 配套说明文档：`docs/15-研究闭环验收基线.md`
 
 ## 4. 使用建议（联审流程）
