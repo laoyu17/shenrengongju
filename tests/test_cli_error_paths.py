@@ -14,6 +14,39 @@ from rtos_sim.io import ConfigError
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
+def _minimal_payload() -> dict[str, object]:
+    return {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "task",
+                "task_type": "dynamic_rt",
+                "period": 10,
+                "deadline": 10,
+                "arrival": 0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 20, "seed": 1},
+    }
+
+
 def test_cli_validate_returns_error_when_config_missing(tmp_path: Path) -> None:
     code = main(["validate", "-c", str(tmp_path / "missing.yaml")])
     assert code == 1
@@ -33,6 +66,37 @@ def test_cli_validate_reports_batch_hint_for_batch_matrix(capsys: pytest.Capture
     assert code == 1
     output = capsys.readouterr().out
     assert "batch-run -b" in output
+
+
+def test_cli_validate_warns_on_unsafe_id_tokens_in_default_mode(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = _minimal_payload()
+    payload["tasks"][0]["id"] = "task:unsafe"  # type: ignore[index]
+    config = tmp_path / "unsafe-id.json"
+    config.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    code = main(["validate", "-c", str(config)])
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "[WARN] id-token-safety" in output
+    assert "tasks[0].id='task:unsafe'" in output
+
+
+def test_cli_validate_strict_id_tokens_fails_when_unsafe_token_present(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = _minimal_payload()
+    payload["tasks"][0]["id"] = "task@unsafe"  # type: ignore[index]
+    config = tmp_path / "unsafe-id-strict.json"
+    config.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    code = main(["validate", "-c", str(config), "--strict-id-tokens"])
+    assert code == 2
+    output = capsys.readouterr().out
+    assert "id token safety check failed in strict mode" in output
 
 
 def test_cli_run_returns_error_when_config_missing(tmp_path: Path) -> None:

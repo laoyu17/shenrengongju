@@ -2614,11 +2614,11 @@ class MainWindow(QMainWindow):
     def _task_from_job(job_id: str) -> str:
         if not job_id:
             return "unknown"
-        return job_id.split("@", 1)[0]
+        return job_id.rsplit("@", 1)[0]
 
     @staticmethod
     def _parse_segment_key(segment_key: str) -> tuple[str, str]:
-        parts = segment_key.split(":", 2)
+        parts = segment_key.rsplit(":", 2)
         if len(parts) != 3:
             return ("unknown", "unknown")
         return (parts[1], parts[2])

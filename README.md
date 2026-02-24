@@ -20,6 +20,9 @@ python -m pip install -e .[ui]
 # 校验配置
 rtos-sim validate -c examples/at01_single_dag_single_core.yaml
 
+# 严格模式：当 ID 含内部保留分隔符（如 ':' / task id 中 '@'）时返回非 0
+rtos-sim validate -c examples/at01_single_dag_single_core.yaml --strict-id-tokens
+
 # 运行仿真并导出事件/指标
 rtos-sim run -c examples/at01_single_dag_single_core.yaml \
   --events-out artifacts/events.jsonl \
@@ -96,6 +99,7 @@ python -m pytest
 
 - **硬门禁**：PR 必须通过 `python -m pytest -q`（Linux/Windows）
 - **软门禁**：PR 性能任务默认跑 100/300 并产出报告；nightly 追加 1000 非阻断趋势任务与昨日 delta 摘要
+- **交付产物**：PR/Push 自动构建 Python 发行包（wheel/sdist），artifact 名称 `python-dist`
 - **研究审计（非阻断）**：PR/Push 执行研究反例基准集与研究报告产物生成（用于语义闭环趋势跟踪）
 - **研究审计摘要增强**：Step Summary 会显式提示 `research_v1/engineering_v1` 状态；若 `research_v1 != pass` 会给出醒目告警（仍保持非阻断）
 - **研究审计多样例矩阵**：CI 会并行生成多样例 `research-report`（`at01/at02/at06/at10`）并输出 `matrix-summary.json`

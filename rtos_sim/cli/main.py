@@ -19,6 +19,49 @@ from rtos_sim.analysis import (
 )
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
+from rtos_sim.model import ModelSpec
+
+
+def _collect_id_token_warnings(spec: ModelSpec) -> list[str]:
+    """Report identifiers that may conflict with composite key delimiters."""
+
+    warnings: list[str] = []
+
+    for index, processor in enumerate(spec.platform.processor_types):
+        if ":" in processor.id:
+            warnings.append(
+                f"platform.processor_types[{index}].id='{processor.id}' contains ':'"
+            )
+
+    for index, core in enumerate(spec.platform.cores):
+        if ":" in core.id:
+            warnings.append(f"platform.cores[{index}].id='{core.id}' contains ':'")
+
+    for index, resource in enumerate(spec.resources):
+        if ":" in resource.id:
+            warnings.append(f"resources[{index}].id='{resource.id}' contains ':'")
+
+    for task_index, task in enumerate(spec.tasks):
+        if ":" in task.id:
+            warnings.append(f"tasks[{task_index}].id='{task.id}' contains ':'")
+        if "@" in task.id:
+            warnings.append(
+                f"tasks[{task_index}].id='{task.id}' contains '@' (job_id uses task_id@release_index)"
+            )
+        for subtask_index, subtask in enumerate(task.subtasks):
+            if ":" in subtask.id:
+                warnings.append(
+                    f"tasks[{task_index}].subtasks[{subtask_index}].id='{subtask.id}' contains ':'"
+                )
+            for segment_index, segment in enumerate(subtask.segments):
+                if ":" in segment.id:
+                    warnings.append(
+                        "tasks"
+                        f"[{task_index}].subtasks[{subtask_index}].segments[{segment_index}]"
+                        f".id='{segment.id}' contains ':'"
+                    )
+
+    return warnings
 
 
 def _write_jsonl(path: str, rows: list[dict[str, Any]]) -> None:
@@ -142,6 +185,13 @@ def cmd_validate(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001 - CLI should not leak traceback by default.
         print(f"[ERROR] {args.config}: unexpected validation error: {exc}")
         return 1
+    id_token_warnings = _collect_id_token_warnings(spec)
+    if id_token_warnings:
+        for warning in id_token_warnings:
+            print(f"[WARN] id-token-safety: {warning}")
+        if args.strict_id_tokens:
+            print("[ERROR] id token safety check failed in strict mode")
+            return 2
     print("[OK] config validation passed")
     return 0
 
@@ -364,6 +414,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_parser = subparsers.add_parser("validate", help="validate config file")
     validate_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
+    validate_parser.add_argument(
+        "--strict-id-tokens",
+        action="store_true",
+        help="fail when IDs include reserved delimiters used by internal composite keys",
+    )
     validate_parser.set_defaults(func=cmd_validate)
 
     run_parser = subparsers.add_parser("run", help="run simulation")

@@ -123,10 +123,15 @@ class PriorityScheduler(IScheduler, ABC):
                 continue
 
             if current_key is not None and chosen_key is not None:
+                current_job_id = (
+                    state.running_segment.job_id
+                    if state is not None and state.running_segment is not None
+                    else current_key.split(":", 1)[0]
+                )
                 decisions.append(
                     Decision(
                         action=DecisionAction.PREEMPT,
-                        job_id=current_key.split(":", 1)[0],
+                        job_id=current_job_id,
                         segment_id=current_key,
                         from_core=core_id,
                         to_core=None,

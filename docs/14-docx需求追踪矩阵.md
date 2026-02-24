@@ -2,9 +2,13 @@
 
 ## 0. 文档控制
 - 版本：v0.4
-- 日期：2026-02-23
+- 日期：2026-02-24
 - 基线：`250909-仿真工具-基础模型.docx`
 - 追踪范围：`project/` 当前主干实现
+- 实现快照：`git_sha=d1bcc8b06bbc6c262efd960b2e68bf744fb8b5f3`
+- 复核命令：
+  - `python -m pytest -q`
+  - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
 
 ## 1. 追踪矩阵（M-01 ~ M-12）
 
@@ -55,6 +59,7 @@
 ## 4. 使用建议（联审流程）
 
 1. 先运行 `rtos-sim validate -c <config>`，确认模型语义合法。
+   - 需要脚本门禁时，建议加 `--strict-id-tokens`（将内部保留分隔符告警升级为失败）。
 2. 再运行 `rtos-sim run ... --audit-out artifacts/audit.json`，获取规则判定与证明资产。
 3. 并行执行 `rtos-sim inspect-model ... --out-json ... --out-csv ...`，确认关系矩阵与 `status/checks`。
    - 脚本/CI 推荐：`rtos-sim inspect-model ... --strict-on-fail`（将 `status!=pass` 转为非 0）

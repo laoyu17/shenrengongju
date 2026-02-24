@@ -3,8 +3,12 @@
 ## 0. 文档控制
 - 版本：v0.9
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
-- 日期：2026-02-23
+- 日期：2026-02-24
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
+- 实现快照：`git_sha=d1bcc8b06bbc6c262efd960b2e68bf744fb8b5f3`
+- 复核命令：
+  - `python -m pytest -q`
+  - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
 
 ## 1. 已经实现的内容（As-Is）
 
@@ -41,6 +45,7 @@
 
 ### 1.5 CLI 与 PyQt6 UI
 - CLI 支持 `validate/run/ui/batch-run/compare/inspect-model/migrate-config` 命令：`project/rtos_sim/cli/main.py:95`
+- `validate` 新增 `--strict-id-tokens`（将内部保留分隔符告警升级为失败，便于脚本门禁）：`project/rtos_sim/cli/main.py:415`
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`project/rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`project/rtos_sim/cli/main.py:81`、`project/rtos_sim/analysis/audit.py:14`
 - `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`project/rtos_sim/cli/main.py:151`
@@ -68,8 +73,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-02-23）：`python -m pytest --maxfail=1` 通过，`236 passed`
-- 当前覆盖率快照（2026-02-23）：总覆盖率 87.10%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 当前本地测试状态（2026-02-24）：`python -m pytest --maxfail=1` 通过，`236 passed`
+- 当前覆盖率快照（2026-02-24）：总覆盖率 87.10%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 - 新增质量快照脚本（用于文档事实对齐）：`project/scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
@@ -125,8 +130,8 @@
    - 现状：已提供 `scripts/perf_baseline.py`（100/300/1000 tasks）与阈值门禁入口。
    - 证据：`project/scripts/perf_baseline.py:1`
 
-2. **CI/CD 已建立首版回归门禁，后续需补发布流水线**
-   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流；PR 路径保留 100/300，nightly 增加 1000 非阻断趋势任务并输出昨日 delta 摘要。
+2. **CI/CD 已建立回归门禁与构建产物，后续需补正式发布流水线**
+   - 现状：已增加 Linux/Windows 测试 + Linux 性能报告工作流 + Python 发行包构建产物（`python-dist`）；PR 路径保留 100/300，nightly 增加 1000 非阻断趋势任务并输出昨日 delta 摘要。
    - 证据：`project/.github/workflows/ci.yml:1`
    - 影响：基础回归自动化已具备，仍需补打包发布链路。
    - 补充：nightly 昨日 delta 已改为按固定 `task_count` 严格匹配，避免误读其他 case 为基线（无匹配时降级 `no_base`）。
