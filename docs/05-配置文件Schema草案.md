@@ -1,4 +1,4 @@
-# 配置文件 Schema 草案（JSON/YAML）
+# 配置文件 Schema（JSON/YAML，基线说明）
 
 ## 1. Schema 设计目标
 - 可读性强，支持版本演进
@@ -6,7 +6,7 @@
 - 当前实现版本：`0.2`，兼容 `0.1 -> 0.2` 自动迁移
 - 说明：本文件仅描述**运行配置（模型）Schema**；批量实验文件（如 `examples/batch_matrix.yaml`）使用独立 `version: "0.1"` 结构
 
-## 2. JSON Schema（草案，非完整）
+## 2. JSON Schema（基线，非完整）
 
 ```json
 {
@@ -199,7 +199,7 @@ arrival_process:
 - 旧字段 `arrival_model/min_inter_arrival/max_inter_arrival` 继续可用。
 - 当 `arrival_process` 与旧字段同时出现时，优先按 `arrival_process` 语义执行，旧字段作为 fixed/uniform 的回退输入。
 
-## 3. YAML 示例（草案）
+## 3. YAML 示例（基线）
 
 ```yaml
 version: "0.2"

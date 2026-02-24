@@ -5,7 +5,7 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-02-24
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=a3a97cca981f2fa0c0efc0a796a0fed24747ddc4`
+- 实现快照：`git_sha=337ef7f7bc217ec0c959fb6f718239688a07a7ae`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -73,8 +73,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`project/examples/at06_time_deterministic.yaml:1`、`project/examples/at09_table_based_etm.yaml:1`、`project/examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`project/tests/test_model_validation.py:41`、`project/tests/test_engine_scenarios.py:22`、`project/tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`project/tests/test_audit.py:1`、`project/tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-02-24）：`python -m pytest --maxfail=1` 通过，`238 passed`
-- 当前覆盖率快照（2026-02-24）：总覆盖率 87.07%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
+- 当前本地测试状态（2026-02-24）：`python -m pytest --maxfail=1` 通过，`249 passed`
+- 当前覆盖率快照（2026-02-24）：总覆盖率 88.00%（`python -m pytest --cov=rtos_sim --cov-report=term-missing -q`）
 - 新增质量快照脚本（用于文档事实对齐）：`project/scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
@@ -150,8 +150,8 @@
 - 详细设计（事件字段、协议/ETM/UI约束）：`project/docs/10-详细设计说明书.md:74`
 
 ### 3.3 配置与数据模型来源
-- Schema 草案与校验规则：`project/docs/05-配置文件Schema草案.md:1`
-- 术语与数据模型草案：`project/docs/03-术语与数据模型草案.md:1`
+- Schema 基线与校验规则：`project/docs/05-配置文件Schema草案.md:1`
+- 术语与数据模型基线：`project/docs/03-术语与数据模型草案.md:1`
 - 时序图与类图：`project/docs/06-时序图与类图.md:1`
 
 ### 3.4 代码实现入口（直接参考）
@@ -298,7 +298,7 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：`docs/11`、`docs/15`、`docs/16` 同步至 `238 passed / 87.07%`（基于 `python -m pytest --maxfail=1` 与覆盖率命令）。
+- 文档事实快照已统一更新（2026-02-23 当日历史值）：`docs/11`、`docs/15`、`docs/16` 同步至 `238 passed / 87.07%`（基于 `python -m pytest --maxfail=1` 与覆盖率命令）。
 - 历史首轮审查文档新增醒目提示，避免误读 `211 tests` 为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`project/.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：

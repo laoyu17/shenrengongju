@@ -6,7 +6,9 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
+import pytest
 
+from rtos_sim.core import SimEngine
 from rtos_sim.ui.worker import SimulationWorker
 
 
@@ -186,3 +188,59 @@ def test_worker_run_direct_invalid_config_emits_failed() -> None:
     worker.failed.connect(lambda message: failed.append(message))
     worker.run()
     assert failed
+
+
+def test_worker_execute_flushes_batches_by_elapsed_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _MonotonicClock:
+        def __init__(self) -> None:
+            self._value = 0.0
+
+        def __call__(self) -> float:
+            self._value += 0.2
+            return self._value
+
+    worker = SimulationWorker(_base_config_text(duration=3.0))
+    batches: list[list[dict]] = []
+    failed: list[str] = []
+    worker.events_batch.connect(lambda rows: batches.append(rows))
+    worker.failed.connect(lambda message: failed.append(message))
+
+    monkeypatch.setattr("rtos_sim.ui.worker.time.monotonic", _MonotonicClock())
+    worker._execute()
+
+    assert failed == []
+    assert batches
+    assert all(batch for batch in batches)
+
+
+def test_worker_on_event_stop_flag_triggers_engine_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = SimulationWorker(_base_config_text(duration=5.0))
+    stop_calls: list[float] = []
+    failed: list[str] = []
+
+    original_stop = SimEngine.stop
+
+    def _record_stop(self: SimEngine) -> None:
+        stop_calls.append(self.now)
+        original_stop(self)
+
+    def _request_stop(_rows: list[dict]) -> None:
+        worker._stop_requested = True
+
+    class _MonotonicClock:
+        def __init__(self) -> None:
+            self._value = 0.0
+
+        def __call__(self) -> float:
+            self._value += 0.2
+            return self._value
+
+    worker.events_batch.connect(_request_stop)
+    worker.failed.connect(lambda message: failed.append(message))
+
+    monkeypatch.setattr(SimEngine, "stop", _record_stop)
+    monkeypatch.setattr("rtos_sim.ui.worker.time.monotonic", _MonotonicClock())
+    worker._execute()
+
+    assert failed == []
+    assert stop_calls
