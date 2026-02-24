@@ -14,6 +14,12 @@ python -m pip install -e .[dev]
 python -m pip install -e .[ui]
 ```
 
+## 文档索引
+
+- 详细用户手册：`docs/19-用户使用说明书.md`
+- 最新综合审查报告：`docs/18-综合审查报告-2026-02-24.md`
+- 审查问题台账：`docs/20-审查问题台账.csv`
+
 ## CLI 用法
 
 ```bash

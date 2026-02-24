@@ -5,7 +5,7 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-02-24
 - 适用范围：`project/` 当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=337ef7f7bc217ec0c959fb6f718239688a07a7ae`
+- 实现快照：`git_sha=85750fde4a71ddc7ea610291920f8aa2e3007417`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`

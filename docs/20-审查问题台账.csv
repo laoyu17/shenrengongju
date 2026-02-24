@@ -1,11 +1,15 @@
 id,severity,confidence,module,description,evidence_path,evidence_line,impact,repro_steps,suggested_fix,status
-REV-001,P1,Verified,docs,"主文档实现快照 SHA 曾与质量快照不一致（历史问题）","docs/10-详细设计说明书.md",7,"审计追溯基线失真，评审易误判代码版本","对比 docs/10 docs/11 docs/14 docs/17 的 git_sha 与 quality_snapshot","统一文档基线来源为 quality_snapshot.git_sha，并在审查报告固定引用路径",resolved
-REV-002,P1,Verified,docs,"研究闭环文档测试数与覆盖率曾过期（历史问题）","docs/15-研究闭环验收基线.md",86,"质量状态传播错误，管理侧判断偏差","对比 docs/15 与 quality_snapshot 的 pytest/coverage 字段","将 docs/15 与质量快照联动，更新时同步 pytest.passed 与 line_rate",resolved
-REV-003,P2,Verified,docs,"缺少面向新用户/测试同学的完整手册（历史问题）","docs/19-用户使用说明书.md",1,"上手与回归成本高，命令误用概率上升","检查 docs 是否有可直接执行的全流程说明","补齐快速上手、返回码、排障矩阵、回归脚本",resolved
-REV-004,P2,Risk,ui,"UI 主文件体量过大（单文件多职责）","rtos_sim/ui/app.py",1,"功能迭代回归范围大、定位成本高","统计 app.py 行数并按功能区块审查职责边界","继续拆分为编辑器/渲染器/交互控制子模块，并保留回归测试",open
-REV-005,P2,Verified,ui,"UI app 层宽泛异常捕获导致可观测性不足（历史问题）","rtos_sim/ui/app.py",1,"异常定位困难，用户侧仅感知行为异常","搜索 app.py 中 except Exception 并验证异常路径","已收窄为具体异常并统一 UI 错误日志出口",resolved
-REV-006,P2,Verified,devops,"CI 仅构建产物而缺少发布链路（历史问题）",".github/workflows/release-draft.yml",1,"发布流程依赖人工，制品治理不闭环","检查 workflow 是否存在 tag 触发发布流程","新增 release-draft 工作流（tag 触发 + draft release）",resolved
-REV-007,P3,Verified,governance,"多份设计文档曾保留草案措辞，影响基线稳定认知（历史问题）","docs/08-综合架构设计.md",86,"评审口径可能随文档语义漂移","搜索 docs 中“草案”并核对是否仍为当前基线","已统一正文为基线/归档语义，保留历史文件名以兼容既有引用",resolved
-REV-008,P2,Risk,quality,"UI 相关覆盖率低于主干平均值，复杂交互回归风险仍在","rtos_sim/ui/app.py",1,"交互边界变更易引入回归","对比 coverage 文件的模块覆盖率与模块复杂度","补充 UI 异常路径与边界交互测试，设定 UI 子模块覆盖率阈值",open
-REV-009,P1,Verified,docs,"综合审查报告内部存在测试通过数不一致（240 vs 249）","docs/18-综合审查报告-2026-02-24.md",1,"降低审查报告可信度","对比报告中的测试数字与 quality_snapshot","统一报告数字来源并在文档控制章节固定复核命令",resolved
-REV-010,P3,Verified,docs,"batch-run 常用参数说明不完整（缺 output-dir/summary 输出说明，历史问题）","docs/19-用户使用说明书.md",145,"新用户批跑目录管理与结果定位效率低","核对 batch-run -h 与手册参数列表","补充 --output-dir/--summary-csv/--summary-json 说明与示例",resolved
+REV-001,P1,Verified,docs,主文档实现快照 SHA 曾与质量快照不一致（历史问题）,docs/10-详细设计说明书.md,7,审计追溯基线失真，评审易误判代码版本,对比 docs/10 docs/11 docs/14 docs/17 的 git_sha 与 quality_snapshot,统一文档基线来源为 quality_snapshot.git_sha，并在审查报告固定引用路径,resolved
+REV-002,P1,Verified,docs,研究闭环文档测试数与覆盖率曾过期（历史问题）,docs/15-研究闭环验收基线.md,86,质量状态传播错误，管理侧判断偏差,对比 docs/15 与 quality_snapshot 的 pytest/coverage 字段,将 docs/15 与质量快照联动，更新时同步 pytest.passed 与 line_rate,resolved
+REV-003,P2,Verified,docs,缺少面向新用户/测试同学的完整手册（历史问题）,docs/19-用户使用说明书.md,1,上手与回归成本高，命令误用概率上升,检查 docs 是否有可直接执行的全流程说明,补齐快速上手、返回码、排障矩阵、回归脚本,resolved
+REV-004,P2,Risk,ui,UI 主文件体量过大（单文件多职责）,rtos_sim/ui/app.py,1,功能迭代回归范围大、定位成本高,统计 app.py 行数并按功能区块审查职责边界,继续拆分为编辑器/渲染器/交互控制子模块，并保留回归测试,open
+REV-005,P2,Verified,ui,UI app 层宽泛异常捕获导致可观测性不足（历史问题）,rtos_sim/ui/app.py,1,异常定位困难，用户侧仅感知行为异常,搜索 app.py 中 except Exception 并验证异常路径,已收窄为具体异常并统一 UI 错误日志出口,resolved
+REV-006,P2,Verified,devops,CI 仅构建产物而缺少发布链路（历史问题）,.github/workflows/release-draft.yml,1,发布流程依赖人工，制品治理不闭环,检查 workflow 是否存在 tag 触发发布流程,新增 release-draft 工作流（tag 触发 + draft release）,resolved
+REV-007,P3,Verified,governance,多份设计文档曾保留草案措辞，影响基线稳定认知（历史问题）,docs/08-综合架构设计.md,86,评审口径可能随文档语义漂移,搜索 docs 中“草案”并核对是否仍为当前基线,已统一正文为基线/归档语义，保留历史文件名以兼容既有引用,resolved
+REV-008,P2,Risk,quality,UI 相关覆盖率低于主干平均值，复杂交互回归风险仍在,rtos_sim/ui/app.py,1,交互边界变更易引入回归,对比 coverage 文件的模块覆盖率与模块复杂度,补充 UI 异常路径与边界交互测试，设定 UI 子模块覆盖率阈值,open
+REV-009,P1,Verified,docs,综合审查报告内部存在测试通过数不一致（240 vs 249）,docs/18-综合审查报告-2026-02-24.md,1,降低审查报告可信度,对比报告中的测试数字与 quality_snapshot,统一报告数字来源并在文档控制章节固定复核命令,resolved
+REV-010,P3,Verified,docs,batch-run 常用参数说明不完整（缺 output-dir/summary 输出说明，历史问题）,docs/19-用户使用说明书.md,145,新用户批跑目录管理与结果定位效率低,核对 batch-run -h 与手册参数列表,补充 --output-dir/--summary-csv/--summary-json 说明与示例,resolved
+REV-011,P1,Verified,docs,当前工作区代码快照与多份主文档实现快照 SHA 不一致（历史问题，已收口）,docs/10-详细设计说明书.md,7,评审基线失真，完成度与问题追溯可能指向过期实现,对比 git rev-parse HEAD 与 docs/10 docs/11 docs/14 docs/18 docs/21 的 git_sha 字段,已同步 docs/10 docs/11 docs/14 docs/18 docs/21 到当前基线 SHA,resolved
+REV-012,P1,Verified,governance,关键交付曾处于未跟踪状态（release workflow / UI helper / UI logging tests，已纳管）,.github/workflows/release-draft.yml,1,干净克隆环境无法复现已完成结论，发布与回归能力存在交付断层,执行 git status --short，检查 .github/workflows/release-draft.yml、rtos_sim/ui/gantt_helpers.py、tests/test_ui_logging.py,已纳管 .github/workflows/release-draft.yml、rtos_sim/ui/gantt_helpers.py、tests/test_ui_logging.py 并随回归通过,resolved
+REV-013,P2,Risk,ui,FR-4 加速（回放时间推进速率）实现口径与需求文案曾存在轻微偏差（历史问题，已澄清）,docs/04-详细版SRS.md,68,仿真控制能力与 SRS 文案存在轻微偏差，教学演示与联调效率受限,对照 docs/04 FR-4 与 UI 控件 Pause Resume Step Reset 实现,已在 SRS 补充 step+delta 口径说明；若后续需要固定倍率控件再作为增强项排期,resolved
+REV-014,P2,Risk,architecture,核心与审计存在超长函数/高聚合文件（engine/audit/ui app），维护与变更评审成本高,rtos_sim/analysis/audit.py,1,需求迭代时回归冲击面大，缺陷定位与代码审查门槛升高,统计 rtos_sim/ui/app.py、rtos_sim/core/engine.py、rtos_sim/analysis/audit.py 的行数与函数长度,按职责拆分：调度执行流、审计规则组、UI 控件编排分模块下沉并补回归测试,open

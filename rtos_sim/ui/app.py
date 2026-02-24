@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 import zlib
@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsLineItem,
-    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
     QGroupBox,
@@ -57,66 +56,35 @@ from rtos_sim.io import ConfigError, ConfigLoader
 
 from .config_doc import ConfigDocument
 from .dag_layout import compute_auto_layout_positions
+from .gantt_helpers import (
+    SegmentBlockItem,
+    SegmentVisualMeta,
+    brush_style_name,
+    format_segment_details,
+    parse_segment_key,
+    pen_style_name,
+    safe_float,
+    safe_optional_float,
+    safe_optional_int,
+    task_from_job,
+)
 from .table_validation import build_resource_table_errors, build_task_table_errors
 from .worker import SimulationWorker
 
-
-@dataclass(slots=True)
-class SegmentVisualMeta:
-    task_id: str
-    job_id: str
-    subtask_id: str
-    segment_id: str
-    segment_key: str
-    core_id: str
-    start: float
-    end: float
-    duration: float
-    status: str
-    resources: list[str]
-    event_id_start: str
-    event_id_end: str
-    seq_start: int | None
-    seq_end: int | None
-    correlation_id: str
-    deadline: float | None
-    lateness_at_end: float | None
-    remaining_after_preempt: float | None
-    execution_time_est: float | None
-    context_overhead: float | None
-    migration_overhead: float | None
-    estimated_finish: float | None
+_LOGGER = logging.getLogger(__name__)
 
 
-class SegmentBlockItem(QGraphicsRectItem):
-    """Rect block in gantt with hover metadata."""
+def _log_ui_error(action: str, exc: Exception, **context: Any) -> None:
+    """Emit structured UI error logs for diagnostics."""
 
-    def __init__(
-        self,
-        *,
-        meta: SegmentVisualMeta,
-        y: float,
-        lane_height: float,
-        color: QColor,
-        brush_style: Qt.BrushStyle,
-        pen_style: Qt.PenStyle,
-    ) -> None:
-        super().__init__(meta.start, y - lane_height / 2.0, max(meta.duration, 1e-6), lane_height)
-        self.meta = meta
-
-        brush = QBrush(color)
-        brush.setStyle(brush_style)
-        self.setBrush(brush)
-        self.setPen(pg.mkPen(color="#f0f0f0", width=1.2, style=pen_style))
-        self.setAcceptHoverEvents(True)
-        self.setZValue(2)
-        self.setToolTip(self._build_brief_tooltip())
-
-    def _build_brief_tooltip(self) -> str:
-        return (
-            f"{self.meta.task_id}/{self.meta.subtask_id}/{self.meta.segment_id}"
-            f"\ncore={self.meta.core_id} [{self.meta.start:.3f}, {self.meta.end:.3f}]"
-        )
+    payload: dict[str, Any] = {
+        "event": "ui_error",
+        "action": action,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+    }
+    payload.update({key: value for key, value in context.items() if value is not None})
+    _LOGGER.error(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), exc_info=exc)
 
 
 class DagNodeItem(QGraphicsEllipseItem):
@@ -787,7 +755,8 @@ class MainWindow(QMainWindow):
     def _sync_text_to_form(self, *, show_message: bool) -> bool:
         try:
             payload = self._read_editor_payload()
-        except Exception as exc:  # noqa: BLE001
+        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+            _log_ui_error("sync_text_to_form", exc, show_message=show_message)
             if show_message:
                 QMessageBox.critical(self, "Sync failed", str(exc))
             self._form_hint.setText("Sync Text -> Form failed.")
@@ -818,13 +787,15 @@ class MainWindow(QMainWindow):
         else:
             try:
                 base_payload = self._read_editor_payload()
-            except Exception:
+            except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+                _log_ui_error("sync_form_to_text_base_payload", exc)
                 base_payload = {}
 
         try:
             payload = self._apply_form_to_payload(base_payload)
             text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-        except Exception as exc:  # noqa: BLE001
+        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+            _log_ui_error("sync_form_to_text", exc, show_message=show_message)
             if show_message:
                 QMessageBox.critical(self, "Sync failed", str(exc))
             self._form_hint.setText("Apply Form -> Text failed.")
@@ -882,11 +853,11 @@ class MainWindow(QMainWindow):
         try:
             self._form_processor_id.setText(str(processor.get("id", "CPU")))
             self._form_processor_name.setText(str(processor.get("name", "cpu")))
-            self._form_processor_core_count.setValue(max(1, int(self._safe_float(processor.get("core_count"), 1))))
-            self._form_processor_speed.setValue(self._safe_float(processor.get("speed_factor"), 1.0))
+            self._form_processor_core_count.setValue(max(1, int(safe_float(processor.get("core_count"), 1))))
+            self._form_processor_speed.setValue(safe_float(processor.get("speed_factor"), 1.0))
 
             self._form_core_id.setText(str(core.get("id", "c0")))
-            self._form_core_speed.setValue(self._safe_float(core.get("speed_factor"), 1.0))
+            self._form_core_speed.setValue(safe_float(core.get("speed_factor"), 1.0))
 
             self._refresh_resource_table(doc)
             self._refresh_task_table(doc)
@@ -901,8 +872,8 @@ class MainWindow(QMainWindow):
                 self._form_resource_acquire_policy,
                 str(params.get("resource_acquire_policy", "legacy_sequential")),
             )
-            self._form_sim_duration.setValue(self._safe_float(sim.get("duration"), 10.0))
-            self._form_sim_seed.setValue(int(self._safe_float(sim.get("seed"), 42)))
+            self._form_sim_duration.setValue(safe_float(sim.get("duration"), 10.0))
+            self._form_sim_seed.setValue(int(safe_float(sim.get("seed"), 42)))
         finally:
             self._suspend_form_events = False
 
@@ -913,7 +884,8 @@ class MainWindow(QMainWindow):
             return self._config_doc
         try:
             payload = self._read_editor_payload()
-        except Exception:
+        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+            _log_ui_error("ensure_config_doc_fallback", exc)
             payload = {}
         self._config_doc = ConfigDocument.from_payload(payload)
         return self._config_doc
@@ -1001,7 +973,7 @@ class MainWindow(QMainWindow):
         self._form_task_id.setText(str(task.get("id", "t0")))
         self._form_task_name.setText(str(task.get("name", "task")))
         self._set_combo_value(self._form_task_type, str(task.get("task_type", "dynamic_rt")))
-        self._form_task_arrival.setValue(self._safe_float(task.get("arrival"), 0.0))
+        self._form_task_arrival.setValue(safe_float(task.get("arrival"), 0.0))
         self._form_task_period.setText(self._stringify_optional_number(task.get("period")))
         self._form_task_deadline.setText(self._stringify_optional_number(task.get("deadline")))
         self._form_task_abort_on_miss.setChecked(bool(task.get("abort_on_miss", False)))
@@ -1031,7 +1003,7 @@ class MainWindow(QMainWindow):
 
         self._form_subtask_id.setText(str(subtask.get("id", "s0")))
         self._form_segment_id.setText(str(segment.get("id", "seg0")))
-        self._form_segment_wcet.setValue(self._safe_float(segment.get("wcet"), 1.0))
+        self._form_segment_wcet.setValue(safe_float(segment.get("wcet"), 1.0))
         mapping_hint = segment.get("mapping_hint")
         self._form_segment_mapping_hint.setText("" if mapping_hint is None else str(mapping_hint))
         required_resources = segment.get("required_resources")
@@ -1232,8 +1204,8 @@ class MainWindow(QMainWindow):
         if self._dag_drag_line is not None:
             try:
                 self._dag_scene.removeItem(self._dag_drag_line)
-            except RuntimeError:
-                pass
+            except RuntimeError as exc:
+                _log_ui_error("dag_drag_preview_remove", exc)
         self._dag_drag_line = None
         self._dag_drag_source_id = None
 
@@ -1717,14 +1689,14 @@ class MainWindow(QMainWindow):
     def _patch_task_row_from_table(self, doc: ConfigDocument, row: int) -> None:
         task_type = self._table_cell_text(self._task_table, row, 2) or "dynamic_rt"
         deadline_text = self._table_cell_text(self._task_table, row, 4)
-        deadline = self._safe_optional_float(deadline_text) if deadline_text else None
+        deadline = safe_optional_float(deadline_text) if deadline_text else None
         doc.patch_task(
             row,
             {
                 "id": self._table_cell_text(self._task_table, row, 0) or f"t{row}",
                 "name": self._table_cell_text(self._task_table, row, 1) or "task",
                 "task_type": task_type,
-                "arrival": float(self._safe_optional_float(self._table_cell_text(self._task_table, row, 3)) or 0.0),
+                "arrival": float(safe_optional_float(self._table_cell_text(self._task_table, row, 3)) or 0.0),
                 "deadline": deadline,
             },
         )
@@ -2073,7 +2045,8 @@ class MainWindow(QMainWindow):
             return
         try:
             self._compare_left_metrics = self._read_metrics_json(path)
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            _log_ui_error("compare_load_left", exc, path=path)
             QMessageBox.critical(self, "Compare load failed", str(exc))
             return
         self._compare_output.appendPlainText(f"[Compare] left metrics loaded: {path}")
@@ -2084,7 +2057,8 @@ class MainWindow(QMainWindow):
             return
         try:
             self._compare_right_metrics = self._read_metrics_json(path)
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            _log_ui_error("compare_load_right", exc, path=path)
             QMessageBox.critical(self, "Compare load failed", str(exc))
             return
         self._compare_output.appendPlainText(f"[Compare] right metrics loaded: {path}")
@@ -2186,7 +2160,8 @@ class MainWindow(QMainWindow):
             payload = self._read_editor_payload()
             spec = self._loader.load_data(payload)
             SimEngine().build(spec)
-        except Exception as exc:  # noqa: BLE001
+        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+            _log_ui_error("validate", exc)
             QMessageBox.critical(self, "Validation failed", str(exc))
             self._status_label.setText("Validation failed")
             return
@@ -2202,7 +2177,8 @@ class MainWindow(QMainWindow):
             payload = self._read_editor_payload()
             spec = self._loader.load_data(payload)
             SimEngine().build(spec)
-        except Exception as exc:  # noqa: BLE001
+        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+            _log_ui_error("run_precheck", exc)
             QMessageBox.critical(self, "Run failed", f"Invalid config: {exc}")
             self._status_label.setText("Run blocked by invalid config")
             return
@@ -2272,12 +2248,12 @@ class MainWindow(QMainWindow):
         if not isinstance(payload, dict):
             payload = {}
         segment_key = payload.get("segment_key")
-        event_time = self._safe_float(event.get("time"), 0.0)
+        event_time = safe_float(event.get("time"), 0.0)
         self._max_time = max(self._max_time, event_time)
 
         if event_type == "JobReleased":
             job_id = str(event.get("job_id") or "")
-            self._job_deadlines[job_id] = self._safe_optional_float(payload.get("absolute_deadline"))
+            self._job_deadlines[job_id] = safe_optional_float(payload.get("absolute_deadline"))
             return
 
         if event_type == "ResourceAcquire" and isinstance(segment_key, str):
@@ -2289,17 +2265,17 @@ class MainWindow(QMainWindow):
         if event_type == "SegmentStart" and isinstance(segment_key, str):
             core_id = str(event.get("core_id") or "unknown")
             job_id = str(event.get("job_id") or "")
-            subtask_id, parsed_segment_id = self._parse_segment_key(segment_key)
+            subtask_id, parsed_segment_id = parse_segment_key(segment_key)
             self._active_segments[segment_key] = {
                 "start": event_time,
                 "core_id": core_id,
                 "job_id": job_id,
-                "task_id": self._task_from_job(job_id),
+                "task_id": task_from_job(job_id),
                 "subtask_id": subtask_id,
                 "segment_id": str(event.get("segment_id") or parsed_segment_id),
                 "start_payload": payload,
                 "start_event_id": str(event.get("event_id") or ""),
-                "start_seq": self._safe_optional_int(event.get("seq")),
+                "start_seq": safe_optional_int(event.get("seq")),
                 "correlation_id": str(event.get("correlation_id") or ""),
                 "absolute_deadline": self._job_deadlines.get(job_id),
             }
@@ -2322,8 +2298,8 @@ class MainWindow(QMainWindow):
         if not start_data:
             return
 
-        start_time = self._safe_float(start_data.get("start"), 0.0)
-        end_time = self._safe_float(end_event.get("time"), start_time)
+        start_time = safe_float(start_data.get("start"), 0.0)
+        end_time = safe_float(end_event.get("time"), start_time)
         if end_time < start_time:
             return
         duration = max(0.0, end_time - start_time)
@@ -2332,9 +2308,9 @@ class MainWindow(QMainWindow):
         if not isinstance(start_payload, dict):
             start_payload = {}
 
-        deadline = self._safe_optional_float(start_data.get("absolute_deadline"))
+        deadline = safe_optional_float(start_data.get("absolute_deadline"))
         lateness = end_time - deadline if deadline is not None else None
-        estimated_finish = self._safe_optional_float(start_payload.get("estimated_finish"))
+        estimated_finish = safe_optional_float(start_payload.get("estimated_finish"))
         remaining_after_preempt = None
         if interrupted and estimated_finish is not None:
             remaining_after_preempt = max(0.0, estimated_finish - end_time)
@@ -2354,15 +2330,15 @@ class MainWindow(QMainWindow):
             resources=sorted(self._segment_resources.get(segment_key, set())),
             event_id_start=str(start_data.get("start_event_id") or ""),
             event_id_end=str(end_event.get("event_id") or ""),
-            seq_start=self._safe_optional_int(start_data.get("start_seq")),
-            seq_end=self._safe_optional_int(end_event.get("seq")),
+            seq_start=safe_optional_int(start_data.get("start_seq")),
+            seq_end=safe_optional_int(end_event.get("seq")),
             correlation_id=str(end_event.get("correlation_id") or start_data.get("correlation_id") or ""),
             deadline=deadline,
             lateness_at_end=lateness,
             remaining_after_preempt=remaining_after_preempt,
-            execution_time_est=self._safe_optional_float(start_payload.get("execution_time")),
-            context_overhead=self._safe_optional_float(start_payload.get("context_overhead")),
-            migration_overhead=self._safe_optional_float(start_payload.get("migration_overhead")),
+            execution_time_est=safe_optional_float(start_payload.get("execution_time")),
+            context_overhead=safe_optional_float(start_payload.get("context_overhead")),
+            migration_overhead=safe_optional_float(start_payload.get("migration_overhead")),
             estimated_finish=estimated_finish,
         )
 
@@ -2387,8 +2363,8 @@ class MainWindow(QMainWindow):
         pen_style = self._segment_pen_style(meta.segment_id, interrupted=(meta.status == "Preempted"))
 
         self._ensure_task_legend(meta.task_id, color)
-        self._subtask_legend_map[(meta.task_id, meta.subtask_id)] = self._brush_style_name(brush_style)
-        self._segment_legend_map[meta.segment_id] = self._pen_style_name(pen_style)
+        self._subtask_legend_map[(meta.task_id, meta.subtask_id)] = brush_style_name(brush_style)
+        self._segment_legend_map[meta.segment_id] = pen_style_name(pen_style)
         self._refresh_legend_details()
 
         block = SegmentBlockItem(
@@ -2547,104 +2523,7 @@ class MainWindow(QMainWindow):
         self._legend_detail.show()
 
     def _format_segment_details(self, meta: SegmentVisualMeta) -> str:
-        resources_text = ", ".join(meta.resources) if meta.resources else "-"
-        deadline_text = self._fmt_optional_float(meta.deadline)
-        lateness_text = self._fmt_optional_float(meta.lateness_at_end)
-        remaining_text = self._fmt_optional_float(meta.remaining_after_preempt)
-        return (
-            f"task_id: {meta.task_id}\n"
-            f"job_id: {meta.job_id}\n"
-            f"subtask_id: {meta.subtask_id}\n"
-            f"segment_id: {meta.segment_id}\n"
-            f"segment_key: {meta.segment_key}\n"
-            f"core_id: {meta.core_id}\n"
-            f"start_time: {meta.start:.3f}\n"
-            f"end_time: {meta.end:.3f}\n"
-            f"duration: {meta.duration:.3f}\n"
-            f"status: {meta.status}\n"
-            f"resources: {resources_text}\n"
-            f"event_id_start: {meta.event_id_start or '-'}\n"
-            f"event_id_end: {meta.event_id_end or '-'}\n"
-            f"seq_start: {self._fmt_optional_int(meta.seq_start)}\n"
-            f"seq_end: {self._fmt_optional_int(meta.seq_end)}\n"
-            f"correlation_id: {meta.correlation_id or '-'}\n"
-            f"deadline: {deadline_text}\n"
-            f"lateness_at_end: {lateness_text}\n"
-            f"remaining_after_preempt: {remaining_text}\n"
-            f"execution_time_est: {self._fmt_optional_float(meta.execution_time_est)}\n"
-            f"context_overhead: {self._fmt_optional_float(meta.context_overhead)}\n"
-            f"migration_overhead: {self._fmt_optional_float(meta.migration_overhead)}\n"
-            f"estimated_finish: {self._fmt_optional_float(meta.estimated_finish)}"
-        )
-
-    @staticmethod
-    def _fmt_optional_int(value: int | None) -> str:
-        return "-" if value is None else str(value)
-
-    @staticmethod
-    def _fmt_optional_float(value: float | None) -> str:
-        return "-" if value is None else f"{value:.3f}"
-
-    @staticmethod
-    def _safe_float(value: Any, default: float) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _safe_optional_float(value: Any) -> float | None:
-        try:
-            if value is None:
-                return None
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _safe_optional_int(value: Any) -> int | None:
-        try:
-            if value is None:
-                return None
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _task_from_job(job_id: str) -> str:
-        if not job_id:
-            return "unknown"
-        return job_id.rsplit("@", 1)[0]
-
-    @staticmethod
-    def _parse_segment_key(segment_key: str) -> tuple[str, str]:
-        parts = segment_key.rsplit(":", 2)
-        if len(parts) != 3:
-            return ("unknown", "unknown")
-        return (parts[1], parts[2])
-
-    @staticmethod
-    def _brush_style_name(style: Qt.BrushStyle) -> str:
-        names = {
-            Qt.BrushStyle.SolidPattern: "Solid",
-            Qt.BrushStyle.Dense4Pattern: "Dense4",
-            Qt.BrushStyle.Dense6Pattern: "Dense6",
-            Qt.BrushStyle.BDiagPattern: "BackwardDiag",
-            Qt.BrushStyle.DiagCrossPattern: "DiagCross",
-            Qt.BrushStyle.CrossPattern: "Cross",
-        }
-        return names.get(style, style.name)
-
-    @staticmethod
-    def _pen_style_name(style: Qt.PenStyle) -> str:
-        names = {
-            Qt.PenStyle.SolidLine: "Solid",
-            Qt.PenStyle.DashLine: "Dash",
-            Qt.PenStyle.DotLine: "Dot",
-            Qt.PenStyle.DashDotLine: "DashDot",
-            Qt.PenStyle.DashDotDotLine: "DashDotDot",
-        }
-        return names.get(style, style.name)
+        return format_segment_details(meta)
 
     def _on_finished(self, report: dict[str, Any], tail_events: list[dict[str, Any]]) -> None:
         if tail_events:
