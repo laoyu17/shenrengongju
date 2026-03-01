@@ -12,7 +12,7 @@ import zlib
 import pyqtgraph as pg
 import yaml
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QBrush, QColor, QCursor, QPen
+from PyQt6.QtGui import QBrush, QColor, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -1916,7 +1916,11 @@ class MainWindow(QMainWindow):
             f"Hover: {item.meta.task_id}/{item.meta.subtask_id}/{item.meta.segment_id} "
             f"core={item.meta.core_id} [{item.meta.start:.3f}, {item.meta.end:.3f}]"
         )
-        QToolTip.showText(QCursor.pos(), item.toolTip())
+        # Wayland requires tooltip popups to have a transient parent.
+        view_pos = self._plot.mapFromScene(scene_pos)
+        viewport = self._plot.viewport()
+        global_pos = viewport.mapToGlobal(view_pos)
+        QToolTip.showText(global_pos, item.toolTip(), viewport)
 
         if self._locked_segment_key is None:
             self._details.setPlainText(self._format_segment_details(item.meta))

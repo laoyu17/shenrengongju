@@ -110,6 +110,29 @@ def test_ui_hover_preview_and_click_lock() -> None:
         window.close()
 
 
+def test_ui_hover_tooltip_uses_plot_viewport_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = _render_example("at05_preempt.yaml")
+    captured: dict[str, object] = {}
+    try:
+        first = window._segment_items[0]
+        scene_pos = first.sceneBoundingRect().center()
+
+        monkeypatch.setattr(
+            "rtos_sim.ui.app.QToolTip.showText",
+            lambda _pos, text, parent=None, *_args: captured.update(
+                {"text": text, "parent": parent}
+            ),
+        )
+
+        window._on_plot_mouse_moved(scene_pos)
+        assert captured["parent"] == window._plot.viewport()
+        assert isinstance(captured["text"], str) and captured["text"]
+    finally:
+        window.close()
+
+
 def test_ui_structured_form_apply_to_text() -> None:
     window = MainWindow(config_path="examples/at05_preempt.yaml")
     try:
