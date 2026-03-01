@@ -29,6 +29,31 @@ from rtos_sim.overheads import IOverheadModel, create_overhead_model
 from rtos_sim.protocols import IResourceProtocol, ResourceRuntimeSpec, create_protocol
 from rtos_sim.schedulers import IScheduler, ScheduleContext, create_scheduler
 
+from .engine_abort import abort_job as abort_job_impl, protocols_for_segment as protocols_for_segment_impl
+from .engine_dispatch import (
+    apply_dispatch as apply_dispatch_impl,
+    on_resource_release_result as on_resource_release_result_impl,
+    rollback_dispatch_resources as rollback_dispatch_resources_impl,
+)
+from .engine_release import (
+    mark_segment_ready as mark_segment_ready_impl,
+    next_release_time as next_release_time_impl,
+    process_releases as process_releases_impl,
+    queue_segment_ready as queue_segment_ready_impl,
+    resolve_arrival_generator as resolve_arrival_generator_impl,
+    resolve_arrival_interval as resolve_arrival_interval_impl,
+    resolve_deterministic_ready_info as resolve_deterministic_ready_info_impl,
+)
+from .engine_runtime import (
+    advance_once as advance_once_impl,
+    build_snapshot as build_snapshot_impl,
+    check_deadline_miss as check_deadline_miss_impl,
+    finalize_running_segments as finalize_running_segments_impl,
+    process_segment_ready_heap as process_segment_ready_heap_impl,
+    schedule as schedule_impl,
+    schedule_until_stable as schedule_until_stable_impl,
+    truncate_running_segments as truncate_running_segments_impl,
+)
 from .interfaces import ISimEngine
 
 
@@ -487,169 +512,16 @@ class SimEngine(ISimEngine):
         return task.arrival
 
     def _advance_once(self, horizon: float) -> bool:
-        assert self._scheduler and self._etm and self._overheads
-
-        now = self._env.now
-        self._process_releases(now)
-        self._process_segment_ready_heap(now)
-        self._check_deadline_miss(now)
-        now = self._schedule_until_stable(now)
-
-        next_times: list[float] = []
-        if self._release_heap:
-            next_times.append(self._release_heap[0][0])
-        if self._segment_ready_heap:
-            next_times.append(self._segment_ready_heap[0][0])
-        for core in self._cores.values():
-            if core.finish_time is not None:
-                next_times.append(core.finish_time)
-        for job_runtime in self._jobs.values():
-            state = job_runtime.state
-            if state.completed or state.missed_deadline or state.absolute_deadline is None:
-                continue
-            if state.absolute_deadline > now + 1e-12:
-                next_times.append(state.absolute_deadline + self.DEADLINE_EPSILON)
-        if not next_times:
-            return False
-
-        next_time = min(next_times)
-        if next_time <= now + 1e-12:
-            next_time = now + 1e-9
-        next_time = min(next_time, horizon)
-
-        timeout = self._env.timeout(next_time - now)
-        self._env.run(until=timeout)
-
-        now = self._env.now
-        self._process_segment_ready_heap(now)
-        self._check_deadline_miss(now)
-        self._complete_finished_segments(now)
-        return True
+        return advance_once_impl(self, horizon)
 
     def _process_segment_ready_heap(self, now: float) -> None:
-        while self._segment_ready_heap and self._segment_ready_heap[0][0] <= now + 1e-12:
-            ready_time, segment_key = heapq.heappop(self._segment_ready_heap)
-            pending = self._pending_segment_ready_times.get(segment_key)
-            if pending is None:
-                continue
-            if abs(pending - ready_time) > 1e-12:
-                continue
-            self._pending_segment_ready_times.pop(segment_key, None)
-            self._mark_segment_ready(segment_key, max(now, ready_time))
+        process_segment_ready_heap_impl(self, now)
 
     def _schedule_until_stable(self, now: float) -> float:
-        schedule_now = now
-        for _ in range(self.SCHEDULE_RETRY_LIMIT):
-            schedule_now, changed = self._schedule(schedule_now)
-            if schedule_now > now + 1e-12:
-                break
-            if not changed:
-                break
-            if not self._ready:
-                break
-        else:
-            if self._ready and not any(core.running_segment_key for core in self._cores.values()):
-                self._event_bus.publish(
-                    event_type=EventType.ERROR,
-                    time=schedule_now,
-                    correlation_id="engine",
-                    payload={
-                        "reason": "schedule_retry_limit",
-                        "limit": self.SCHEDULE_RETRY_LIMIT,
-                        "ready_count": len(self._ready),
-                    },
-                )
-        return schedule_now
+        return schedule_until_stable_impl(self, now)
 
     def _process_releases(self, now: float) -> None:
-        assert self._spec and self._scheduler
-
-        while self._release_heap and self._release_heap[0][0] <= now + 1e-12:
-            release_time, release_idx, task_id = heapq.heappop(self._release_heap)
-            task = next(t for t in self._spec.tasks if t.id == task_id)
-            job_id = f"{task.id}@{release_idx}"
-            absolute_deadline = release_time + task.deadline if task.deadline is not None else None
-            base_priority = self._task_priority_value(absolute_deadline, task.period)
-            subtask_completion = {sub.id: False for sub in task.subtasks}
-            job_state = JobState(
-                task_id=task.id,
-                job_id=job_id,
-                release_time=release_time,
-                absolute_deadline=absolute_deadline,
-                subtask_completion=subtask_completion,
-            )
-
-            subtasks: dict[str, SubtaskRuntime] = {}
-            for sub in task.subtasks:
-                segment_keys: list[str] = []
-                for seg in sorted(sub.segments, key=lambda s: s.index):
-                    segment_key = f"{job_id}:{sub.id}:{seg.id}"
-                    deterministic_ready_time, deterministic_window_id, deterministic_offset_index = (
-                        self._resolve_deterministic_ready_info(
-                            task=task,
-                            release_idx=release_idx,
-                            release_time=release_time,
-                            release_offsets=seg.release_offsets,
-                        )
-                    )
-                    self._segments[segment_key] = RuntimeSegmentState(
-                        task_id=task.id,
-                        job_id=job_id,
-                        subtask_id=sub.id,
-                        segment_id=seg.id,
-                        wcet=seg.wcet,
-                        remaining_time=seg.wcet,
-                        required_resources=list(seg.required_resources),
-                        mapping_hint=seg.mapping_hint,
-                        preemptible=seg.preemptible,
-                        absolute_deadline=absolute_deadline,
-                        task_period=task.period,
-                        release_time=release_time,
-                        predecessor_subtasks=list(sub.predecessors),
-                        successor_subtasks=list(sub.successors),
-                        segment_index=seg.index,
-                        base_priority=base_priority,
-                        effective_priority=base_priority,
-                        deterministic_ready_time=deterministic_ready_time,
-                        deterministic_window_id=deterministic_window_id,
-                        deterministic_offset_index=deterministic_offset_index,
-                    )
-                    self._segment_to_subtask[segment_key] = (job_id, sub.id)
-                    self._held_resources[segment_key] = set()
-                    segment_keys.append(segment_key)
-
-                subtasks[sub.id] = SubtaskRuntime(
-                    subtask_id=sub.id,
-                    predecessors=list(sub.predecessors),
-                    successors=list(sub.successors),
-                    segment_keys=segment_keys,
-                )
-
-            self._jobs[job_id] = JobRuntime(state=job_state, task=task, subtasks=subtasks)
-            self._register_active_job_priority(job_id, base_priority)
-
-            self._event_bus.publish(
-                event_type=EventType.JOB_RELEASED,
-                time=now,
-                correlation_id=job_id,
-                job_id=job_id,
-                payload={
-                    "task_id": task.id,
-                    "release_index": release_idx,
-                    "absolute_deadline": absolute_deadline,
-                    "deterministic_hyper_period": self._deterministic_hyper_period,
-                },
-            )
-            self._scheduler.on_release(job_id)
-
-            for subtask in subtasks.values():
-                if not subtask.predecessors:
-                    self._queue_segment_ready(subtask.segment_keys[0], now)
-
-            next_idx = release_idx + 1
-            next_release = self._next_release_time(task, next_idx, release_time)
-            if next_release is not None and self._spec and next_release <= self._spec.sim.duration + 1e-12:
-                heapq.heappush(self._release_heap, (next_release, next_idx, task.id))
+        process_releases_impl(self, now)
 
     def _resolve_deterministic_ready_info(
         self,
@@ -659,267 +531,35 @@ class SimEngine(ISimEngine):
         release_time: float,
         release_offsets: list[float] | None,
     ) -> tuple[float | None, int | None, int | None]:
-        if task.task_type.value != "time_deterministic":
-            return None, None, None
-        offsets = release_offsets or [0.0]
-        offset_index = release_idx % len(offsets)
-        ready_time = release_time + offsets[offset_index]
-        base_release = self._release_base_time(task)
-        window_id = release_idx
-        hyper_period = self._deterministic_hyper_period
-        if hyper_period is not None and hyper_period > 1e-12:
-            elapsed = max(0.0, release_time - base_release)
-            window_id = int((elapsed + 1e-12) // hyper_period)
-        return ready_time, window_id, offset_index
+        return resolve_deterministic_ready_info_impl(
+            self,
+            task=task,
+            release_idx=release_idx,
+            release_time=release_time,
+            release_offsets=release_offsets,
+        )
 
     def _next_release_time(self, task: TaskGraphSpec, release_idx: int, current_release: float) -> float | None:
-        arrival_process = task.arrival_process
-        if arrival_process is not None:
-            if arrival_process.max_releases is not None and release_idx >= arrival_process.max_releases:
-                return None
-
-            process_type = arrival_process.type.value
-            params = arrival_process.params
-            if process_type == "one_shot":
-                return None
-
-            if process_type == "fixed":
-                interval = self._resolve_arrival_interval(
-                    params.get("interval"),
-                    fallback=task.min_inter_arrival if task.min_inter_arrival is not None else task.period,
-                )
-                if interval is None:
-                    raise ValueError("arrival_process type=fixed requires interval")
-                return current_release + interval
-
-            if process_type == "uniform":
-                lower = self._resolve_arrival_interval(
-                    params.get("min_interval"),
-                    fallback=task.min_inter_arrival if task.min_inter_arrival is not None else task.period,
-                )
-                upper = self._resolve_arrival_interval(
-                    params.get("max_interval"),
-                    fallback=task.max_inter_arrival,
-                )
-                if lower is None or upper is None:
-                    raise ValueError("arrival_process type=uniform requires min_interval and max_interval")
-                if upper < lower - 1e-12:
-                    raise ValueError("arrival_process uniform max_interval must be >= min_interval")
-                return current_release + self._arrival_rng.uniform(lower, upper)
-
-            if process_type == "poisson":
-                rate = self._resolve_arrival_interval(params.get("rate"))
-                if rate is None:
-                    raise ValueError("arrival_process type=poisson requires rate")
-                return current_release + self._arrival_rng.expovariate(rate)
-
-            if process_type == "custom":
-                generator_name = params.get("generator")
-                if not isinstance(generator_name, str) or not generator_name.strip():
-                    raise ValueError("arrival_process type=custom requires params.generator")
-                generator = self._resolve_arrival_generator(generator_name)
-                interval = generator.next_interval(
-                    task=task,
-                    now=self._env.now,
-                    current_release=current_release,
-                    release_index=release_idx,
-                    params=dict(params),
-                    rng=self._arrival_rng,
-                )
-                if not isinstance(interval, (int, float)):
-                    raise ValueError("custom arrival generator must return numeric interval")
-                resolved_interval = float(interval)
-                if resolved_interval <= 0:
-                    raise ValueError("custom arrival generator interval must be > 0")
-                return current_release + resolved_interval
-
-            raise ValueError(f"unsupported arrival_process type: {process_type}")
-
-        if task.task_type.value == "time_deterministic":
-            if task.period is None:
-                return None
-            phase_offset = task.phase_offset or 0.0
-            return task.arrival + phase_offset + task.period * release_idx
-        if task.task_type.value == "dynamic_rt":
-            interval = task.min_inter_arrival if task.min_inter_arrival is not None else task.period
-            if interval is None:
-                return None
-            arrival_model = (
-                task.arrival_model.value
-                if task.arrival_model is not None
-                else ("uniform_interval" if task.max_inter_arrival is not None else "fixed_interval")
-            )
-            if arrival_model == "uniform_interval":
-                upper_bound = task.max_inter_arrival if task.max_inter_arrival is not None else interval
-                interval = self._arrival_rng.uniform(interval, upper_bound)
-            elif arrival_model != "fixed_interval":
-                raise ValueError(f"unsupported dynamic arrival model: {arrival_model}")
-            if interval <= 0:
-                raise ValueError("computed dynamic release interval must be > 0")
-            return current_release + interval
-        return None
+        return next_release_time_impl(self, task, release_idx, current_release)
 
     @staticmethod
     def _resolve_arrival_interval(raw: Any, *, fallback: float | None = None) -> float | None:
-        value = raw if raw is not None else fallback
-        if value is None:
-            return None
-        resolved = float(value)
-        if resolved <= 0:
-            raise ValueError("computed dynamic release interval must be > 0")
-        return resolved
+        return resolve_arrival_interval_impl(raw, fallback=fallback)
 
     def _resolve_arrival_generator(self, name: str) -> IArrivalGenerator:
-        key = name.strip().lower()
-        if key not in self._arrival_generators:
-            self._arrival_generators[key] = create_arrival_generator(key)
-        return self._arrival_generators[key]
+        return resolve_arrival_generator_impl(self, name)
 
     def _queue_segment_ready(self, segment_key: str, now: float) -> None:
-        segment = self._segments[segment_key]
-        if segment.finished or segment.job_id in self._aborted_jobs:
-            return
-        ready_time = segment.deterministic_ready_time
-        if ready_time is None or ready_time <= now + 1e-12:
-            self._mark_segment_ready(segment_key, now if ready_time is None else max(now, ready_time))
-            return
-        pending = self._pending_segment_ready_times.get(segment_key)
-        if pending is not None and pending <= ready_time + 1e-12:
-            return
-        self._pending_segment_ready_times[segment_key] = ready_time
-        heapq.heappush(self._segment_ready_heap, (ready_time, segment_key))
+        queue_segment_ready_impl(self, segment_key, now)
 
     def _mark_segment_ready(self, segment_key: str, now: float) -> None:
-        segment = self._segments[segment_key]
-        if segment.finished or segment.job_id in self._aborted_jobs:
-            return
-        segment.blocked = False
-        segment.waiting_resource = None
-        self._pending_segment_ready_times.pop(segment_key, None)
-        self._ready.add(segment_key)
-        self._scheduler.on_segment_ready(segment_key)
-        payload: dict[str, Any] = {"segment_key": segment.key, "subtask_id": segment.subtask_id}
-        if segment.deterministic_window_id is not None:
-            payload["deterministic_window_id"] = segment.deterministic_window_id
-        if segment.deterministic_offset_index is not None:
-            payload["deterministic_offset_index"] = segment.deterministic_offset_index
-        if segment.deterministic_ready_time is not None:
-            payload["deterministic_ready_time"] = segment.deterministic_ready_time
-        self._event_bus.publish(
-            event_type=EventType.SEGMENT_READY,
-            time=now,
-            correlation_id=segment.job_id,
-            job_id=segment.job_id,
-            segment_id=segment.segment_id,
-            payload=payload,
-        )
+        mark_segment_ready_impl(self, segment_key, now)
 
     def _build_snapshot(self, now: float) -> ScheduleSnapshot:
-        ready_segments: list[ReadySegment] = []
-        for segment_key in self._ready:
-            segment = self._segments[segment_key]
-            if segment.finished or segment.job_id in self._aborted_jobs:
-                continue
-            ready_segments.append(
-                ReadySegment(
-                    job_id=segment.job_id,
-                    task_id=segment.task_id,
-                    subtask_id=segment.subtask_id,
-                    segment_id=segment.segment_id,
-                    remaining_time=segment.remaining_time,
-                    absolute_deadline=segment.absolute_deadline,
-                    task_period=segment.task_period,
-                    mapping_hint=segment.mapping_hint,
-                    required_resources=list(segment.required_resources),
-                    preemptible=segment.preemptible,
-                    release_time=segment.release_time,
-                    priority_value=segment.effective_priority,
-                )
-            )
-
-        core_states: list[CoreState] = []
-        for core in self._cores.values():
-            running_segment_key = core.running_segment_key
-            running_segment = None
-            if running_segment_key:
-                segment = self._segments[running_segment_key]
-                if segment.job_id not in self._aborted_jobs and not segment.finished:
-                    running_segment = ReadySegment(
-                        job_id=segment.job_id,
-                        task_id=segment.task_id,
-                        subtask_id=segment.subtask_id,
-                        segment_id=segment.segment_id,
-                        remaining_time=segment.remaining_time,
-                        absolute_deadline=segment.absolute_deadline,
-                        task_period=segment.task_period,
-                        mapping_hint=segment.mapping_hint,
-                        required_resources=list(segment.required_resources),
-                        preemptible=segment.preemptible,
-                        release_time=segment.release_time,
-                        priority_value=segment.effective_priority,
-                    )
-                else:
-                    running_segment_key = None
-            core_states.append(
-                CoreState(
-                    core_id=core.core_id,
-                    core_speed=core.speed,
-                    running_segment_key=running_segment_key,
-                    running_since=core.running_since if running_segment_key else None,
-                    running_segment=running_segment,
-                )
-            )
-        return ScheduleSnapshot(now=now, ready_segments=ready_segments, core_states=core_states)
+        return build_snapshot_impl(self, now)
 
     def _schedule(self, now: float) -> tuple[float, bool]:
-        assert self._scheduler and self._overheads
-
-        self._ready = {
-            segment_key
-            for segment_key in self._ready
-            if segment_key in self._segments
-            and not self._segments[segment_key].finished
-            and self._segments[segment_key].job_id not in self._aborted_jobs
-        }
-        if not self._ready and not any(core.running_segment_key for core in self._cores.values()):
-            return now, False
-
-        decisions = self._scheduler.schedule(now, self._build_snapshot(now))
-        schedule_cost = self._overheads.on_schedule(self._scheduler.__class__.__name__)
-        if schedule_cost > 0:
-            timeout = self._env.timeout(schedule_cost)
-            self._env.run(until=timeout)
-            now = self._env.now
-
-        changed = False
-        for decision in decisions:
-            if decision.action == DecisionAction.PREEMPT and decision.from_core:
-                if self._apply_preempt(decision.from_core, now):
-                    changed = True
-
-        for decision in decisions:
-            if decision.action == DecisionAction.MIGRATE and decision.from_core and decision.to_core:
-                source_core = self._cores.get(decision.from_core)
-                if (
-                    source_core is None
-                    or source_core.running_segment_key is None
-                    or (decision.segment_id and source_core.running_segment_key != decision.segment_id)
-                ):
-                    continue
-                if self._apply_preempt(
-                    decision.from_core,
-                    now,
-                    reason="migrate",
-                    clear_running_on=False,
-                ):
-                    changed = True
-
-        for decision in decisions:
-            if decision.action == DecisionAction.DISPATCH and decision.to_core and decision.job_id:
-                outcome = self._apply_dispatch(decision.job_id, decision.segment_id, decision.to_core, now)
-                if outcome != "noop":
-                    changed = True
-        return now, changed
+        return schedule_impl(self, now)
 
     def _apply_preempt(
         self,
@@ -964,189 +604,7 @@ class SimEngine(ISimEngine):
         return True
 
     def _apply_dispatch(self, job_id: str, decision_segment_id: str | None, core_id: str, now: float) -> str:
-        assert self._etm and self._overheads
-
-        if job_id in self._aborted_jobs:
-            return "noop"
-        core = self._cores[core_id]
-        if core.running_segment_key is not None:
-            return "noop"
-
-        candidates = [
-            key
-            for key in self._ready
-            if key.startswith(f"{job_id}:")
-            and (
-                decision_segment_id is None
-                or decision_segment_id in (key, self._segments[key].segment_id)
-            )
-        ]
-        if not candidates:
-            return "noop"
-
-        segment_key = sorted(candidates)[0]
-        segment = self._segments[segment_key]
-        if segment.finished or segment.job_id in self._aborted_jobs:
-            self._ready.discard(segment_key)
-            return "dropped"
-        if segment.mapping_hint is not None and segment.mapping_hint != core_id:
-            self._event_bus.publish(
-                event_type=EventType.ERROR,
-                time=now,
-                correlation_id=segment.job_id,
-                job_id=segment.job_id,
-                segment_id=segment.segment_id,
-                core_id=core_id,
-                payload={
-                    "reason": "mapping_hint_violation",
-                    "segment_key": segment_key,
-                    "expected_core": segment.mapping_hint,
-                    "requested_core": core_id,
-                },
-            )
-            self._abort_job(segment.job_id, now, preempt_reason="abort_on_error")
-            return "error"
-
-        acquired_resources_this_dispatch: list[str] = []
-        for resource_id in segment.required_resources:
-            if resource_id in self._held_resources[segment_key]:
-                continue
-            protocol = self._protocol_for_resource(resource_id)
-            request_priority = segment.effective_priority
-            result = protocol.request(segment_key, resource_id, core_id, request_priority)
-            if result.priority_updates:
-                self._apply_priority_updates(result.priority_updates)
-            if not result.granted:
-                rollback_released: list[str] = []
-                if (
-                    self._resource_acquire_policy == "atomic_rollback"
-                    and acquired_resources_this_dispatch
-                    and result.reason != "bound_core_violation"
-                ):
-                    rollback_released = self._rollback_dispatch_resources(
-                        segment=segment,
-                        segment_key=segment_key,
-                        resource_ids=acquired_resources_this_dispatch,
-                        now=now,
-                        core_id=core_id,
-                    )
-                segment.blocked = True
-                segment.waiting_resource = resource_id
-                self._ready.discard(segment_key)
-                self._event_bus.publish(
-                    event_type=EventType.SEGMENT_BLOCKED,
-                    time=now,
-                    correlation_id=segment.job_id,
-                    job_id=segment.job_id,
-                    segment_id=segment.segment_id,
-                    core_id=core_id,
-                    resource_id=resource_id,
-                    payload={
-                        "reason": result.reason,
-                        "segment_key": segment_key,
-                        "request_priority": request_priority,
-                        "resource_acquire_policy": self._resource_acquire_policy,
-                        "rollback_applied": bool(rollback_released),
-                        "rollback_released_resources": sorted(rollback_released),
-                        **result.metadata,
-                    },
-                )
-                if result.reason == "bound_core_violation":
-                    self._event_bus.publish(
-                        event_type=EventType.ERROR,
-                        time=now,
-                        correlation_id=segment.job_id,
-                        job_id=segment.job_id,
-                        segment_id=segment.segment_id,
-                        core_id=core_id,
-                        resource_id=resource_id,
-                        payload={
-                            "reason": "bound_core_violation",
-                            "segment_key": segment_key,
-                            "requested_core": core_id,
-                            "resource_id": resource_id,
-                            **result.metadata,
-                        },
-                    )
-                    self._abort_job(segment.job_id, now, preempt_reason="abort_on_error")
-                    return "error"
-                return "blocked"
-            self._held_resources[segment_key].add(resource_id)
-            acquired_resources_this_dispatch.append(resource_id)
-            self._event_bus.publish(
-                event_type=EventType.RESOURCE_ACQUIRE,
-                time=now,
-                correlation_id=segment.job_id,
-                job_id=segment.job_id,
-                segment_id=segment.segment_id,
-                core_id=core_id,
-                resource_id=resource_id,
-                payload={
-                    "segment_key": segment_key,
-                    "request_priority": request_priority,
-                    **result.metadata,
-                },
-            )
-
-        migration_cost = 0.0
-        previous_core = segment.running_on
-        if previous_core and previous_core != core_id:
-            migration_cost = self._overheads.on_migration(segment.job_id, previous_core, core_id)
-            self._event_bus.publish(
-                event_type=EventType.MIGRATE,
-                time=now,
-                correlation_id=segment.job_id,
-                job_id=segment.job_id,
-                segment_id=segment.segment_id,
-                core_id=core_id,
-                payload={
-                    "from_core": previous_core,
-                    "to_core": core_id,
-                    "reason": "segment_redispatch",
-                    "segment_key": segment_key,
-                },
-            )
-
-        context_cost = self._overheads.on_context_switch(segment.job_id, core_id)
-        execution_time = self._etm.estimate(
-            segment.remaining_time,
-            core.speed,
-            now,
-            task_id=segment.task_id,
-            subtask_id=segment.subtask_id,
-            segment_id=segment.segment_id,
-            core_id=core_id,
-        )
-        total_runtime = migration_cost + context_cost + execution_time
-
-        segment.running_on = core_id
-        if segment.started_at is None:
-            segment.started_at = now
-        segment.blocked = False
-
-        self._ready.discard(segment_key)
-        core.running_segment_key = segment_key
-        core.running_since = now
-        core.finish_time = now + total_runtime
-
-        self._event_bus.publish(
-            event_type=EventType.SEGMENT_START,
-            time=now,
-            correlation_id=segment.job_id,
-            job_id=segment.job_id,
-            segment_id=segment.segment_id,
-            core_id=core_id,
-            payload={
-                "segment_key": segment_key,
-                "estimated_finish": core.finish_time,
-                "execution_time": execution_time,
-                "context_overhead": context_cost,
-                "migration_overhead": migration_cost,
-                "deterministic_window_id": segment.deterministic_window_id,
-                "deterministic_offset_index": segment.deterministic_offset_index,
-            },
-        )
-        return "started"
+        return apply_dispatch_impl(self, job_id, decision_segment_id, core_id, now)
 
     def _complete_finished_segments(self, now: float) -> None:
         finished_cores = [
@@ -1217,26 +675,14 @@ class SimEngine(ISimEngine):
         now: float,
         core_id: str,
     ) -> list[str]:
-        released: list[str] = []
-        for resource_id in reversed(resource_ids):
-            if resource_id not in self._held_resources.get(segment_key, set()):
-                continue
-            protocol = self._protocol_for_resource(resource_id)
-            release_result = protocol.release(segment_key, resource_id)
-            if release_result.priority_updates:
-                self._apply_priority_updates(release_result.priority_updates)
-            self._on_resource_release_result(
-                segment=segment,
-                segment_key=segment_key,
-                resource_id=resource_id,
-                release_result=release_result,
-                now=now,
-                core_id=core_id,
-                reason_override="acquire_rollback",
-            )
-            self._held_resources[segment_key].discard(resource_id)
-            released.append(resource_id)
-        return released
+        return rollback_dispatch_resources_impl(
+            self,
+            segment=segment,
+            segment_key=segment_key,
+            resource_ids=resource_ids,
+            now=now,
+            core_id=core_id,
+        )
 
     def _on_resource_release_result(
         self,
@@ -1249,38 +695,16 @@ class SimEngine(ISimEngine):
         core_id: str,
         reason_override: str | None = None,
     ) -> None:
-        payload = {"segment_key": segment_key, **release_result.metadata}
-        if reason_override:
-            payload["reason"] = reason_override
-        self._event_bus.publish(
-            event_type=EventType.RESOURCE_RELEASE,
-            time=now,
-            correlation_id=segment.job_id,
-            job_id=segment.job_id,
-            segment_id=segment.segment_id,
-            core_id=core_id,
+        on_resource_release_result_impl(
+            self,
+            segment=segment,
+            segment_key=segment_key,
             resource_id=resource_id,
-            payload=payload,
+            release_result=release_result,
+            now=now,
+            core_id=core_id,
+            reason_override=reason_override,
         )
-        for woken_segment_key in release_result.woken:
-            woken_segment = self._segments.get(woken_segment_key)
-            if woken_segment is None or woken_segment.finished:
-                continue
-            if woken_segment.job_id in self._aborted_jobs:
-                continue
-            woken_segment.blocked = False
-            woken_segment.waiting_resource = None
-            self._ready.add(woken_segment_key)
-            self._event_bus.publish(
-                event_type=EventType.SEGMENT_UNBLOCKED,
-                time=now,
-                correlation_id=woken_segment.job_id,
-                job_id=woken_segment.job_id,
-                segment_id=woken_segment.segment_id,
-                core_id=core_id,
-                resource_id=resource_id,
-                payload={"segment_key": woken_segment_key},
-            )
 
     def _on_segment_finish(self, segment_key: str, now: float) -> None:
         segment = self._segments[segment_key]
@@ -1317,176 +741,16 @@ class SimEngine(ISimEngine):
             )
 
     def _check_deadline_miss(self, now: float) -> None:
-        for job_runtime in self._jobs.values():
-            state = job_runtime.state
-            if state.completed or state.missed_deadline or state.absolute_deadline is None:
-                continue
-            if now <= state.absolute_deadline + 1e-12:
-                continue
-
-            state.missed_deadline = True
-            self._event_bus.publish(
-                event_type=EventType.DEADLINE_MISS,
-                time=now,
-                correlation_id=state.job_id,
-                job_id=state.job_id,
-                payload={
-                    "absolute_deadline": state.absolute_deadline,
-                    "abort_on_miss": job_runtime.task.abort_on_miss,
-                },
-            )
-
-            if job_runtime.task.abort_on_miss:
-                self._abort_job(state.job_id, now)
+        check_deadline_miss_impl(self, now)
 
     def _abort_job(self, job_id: str, now: float, *, preempt_reason: str = "abort_on_miss") -> None:
-        if job_id in self._aborted_jobs:
-            return
-        self._aborted_jobs.add(job_id)
-
-        segment_keys = [
-            segment_key
-            for segment_key in self._segments
-            if segment_key.startswith(f"{job_id}:")
-        ]
-        segment_protocols: dict[str, list[IResourceProtocol]] = {}
-        segment_release_cores: dict[str, str | None] = {}
-        segment_released_resources: dict[str, list[str]] = {}
-        for segment_key in segment_keys:
-            segment = self._segments.get(segment_key)
-            if segment is None:
-                continue
-            segment_protocols[segment_key] = self._protocols_for_segment(segment)
-            segment_release_cores[segment_key] = segment.running_on
-            segment_released_resources[segment_key] = sorted(self._held_resources.get(segment_key, set()))
-
-        for core in self._cores.values():
-            if core.running_segment_key and core.running_segment_key.startswith(f"{job_id}:"):
-                self._apply_preempt(
-                    core.core_id,
-                    now,
-                    force=True,
-                    requeue=False,
-                    reason=preempt_reason,
-                    clear_running_on=True,
-                )
-
-        for segment_key in segment_keys:
-            segment = self._segments.get(segment_key)
-            if segment is None:
-                continue
-            segment.blocked = False
-            segment.waiting_resource = None
-            segment.running_on = None
-            self._ready.discard(segment_key)
-            self._pending_segment_ready_times.pop(segment_key, None)
-
-        for segment_key in segment_keys:
-            for protocol in segment_protocols.get(segment_key, []):
-                cancel_result = protocol.cancel_segment(segment_key)
-                if cancel_result.priority_updates:
-                    self._apply_priority_updates(cancel_result.priority_updates)
-                for woken_segment_key in cancel_result.woken:
-                    woken_segment = self._segments.get(woken_segment_key)
-                    if woken_segment is None or woken_segment.finished:
-                        continue
-                    if woken_segment.job_id in self._aborted_jobs:
-                        continue
-                    blocked_resource = woken_segment.waiting_resource
-                    woken_segment.blocked = False
-                    woken_segment.waiting_resource = None
-                    self._ready.add(woken_segment_key)
-                    self._event_bus.publish(
-                        event_type=EventType.SEGMENT_UNBLOCKED,
-                        time=now,
-                        correlation_id=woken_segment.job_id,
-                        job_id=woken_segment.job_id,
-                        segment_id=woken_segment.segment_id,
-                        resource_id=blocked_resource,
-                        payload={
-                            "segment_key": woken_segment_key,
-                            "reason": "cancel_segment",
-                            **cancel_result.metadata,
-                        },
-                    )
-            segment = self._segments.get(segment_key)
-            for resource_id in segment_released_resources.get(segment_key, []):
-                self._event_bus.publish(
-                    event_type=EventType.RESOURCE_RELEASE,
-                    time=now,
-                    correlation_id=segment.job_id if segment is not None else job_id,
-                    job_id=segment.job_id if segment is not None else job_id,
-                    segment_id=segment.segment_id if segment is not None else None,
-                    core_id=self._resource_bound_cores.get(
-                        resource_id,
-                        segment_release_cores.get(segment_key),
-                    ),
-                    resource_id=resource_id,
-                    payload={
-                        "segment_key": segment_key,
-                        "reason": "cancel_segment",
-                    },
-                )
-
-        for segment_key in segment_keys:
-            segment = self._segments.get(segment_key)
-            if segment is not None:
-                segment.finished = True
-            self._held_resources[segment_key] = set()
-        self._unregister_active_job_priority(job_id)
+        abort_job_impl(self, job_id, now, preempt_reason=preempt_reason)
 
     def _protocols_for_segment(self, segment: RuntimeSegmentState) -> list[IResourceProtocol]:
-        unique: dict[int, IResourceProtocol] = {}
-        for resource_id in segment.required_resources:
-            protocol = self._resource_protocols.get(resource_id)
-            if protocol is None and self._protocol is not None:
-                protocol = self._protocol
-            if protocol is not None:
-                unique[id(protocol)] = protocol
-        return list(unique.values())
+        return protocols_for_segment_impl(self, segment)
 
     def _finalize_running_segments(self, *, truncate_running: bool = False) -> None:
-        now = self._env.now
-        if truncate_running:
-            self._truncate_running_segments(now)
-        self._check_deadline_miss(now)
+        finalize_running_segments_impl(self, truncate_running=truncate_running)
 
     def _truncate_running_segments(self, now: float) -> None:
-        assert self._etm
-        for core in self._cores.values():
-            segment_key = core.running_segment_key
-            if segment_key is None:
-                continue
-            segment = self._segments.get(segment_key)
-            if segment is None or segment.finished:
-                core.running_segment_key = None
-                core.running_since = None
-                core.finish_time = None
-                continue
-
-            if core.running_since is not None:
-                elapsed = max(0.0, now - core.running_since)
-                executed = elapsed * core.speed
-                segment.remaining_time = max(0.0, segment.remaining_time - executed)
-                self._etm.on_exec(segment_key, core.core_id, elapsed)
-
-            segment.finished = True
-            segment.running_on = None
-            self._event_bus.publish(
-                event_type=EventType.SEGMENT_END,
-                time=now,
-                correlation_id=segment.job_id,
-                job_id=segment.job_id,
-                segment_id=segment.segment_id,
-                core_id=core.core_id,
-                payload={
-                    "segment_key": segment_key,
-                    "ended_by": "horizon",
-                    "truncated": True,
-                },
-            )
-            self._release_segment_resources(segment, segment_key, now, core.core_id)
-
-            core.running_segment_key = None
-            core.running_since = None
-            core.finish_time = None
+        truncate_running_segments_impl(self, now)

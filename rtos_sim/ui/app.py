@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import logging
 from pathlib import Path
@@ -50,10 +49,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from rtos_sim.analysis import build_compare_report, compare_report_to_rows
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader
 
+from .controllers import CompareController, DagController, FormController, RunController, TimelineController
 from .config_doc import ConfigDocument
 from .dag_layout import compute_auto_layout_positions
 from .gantt_helpers import (
@@ -394,6 +393,11 @@ class MainWindow(QMainWindow):
         self._compare_group: QGroupBox | None = None
         self._telemetry_scroll: QScrollArea | None = None
         self._right_splitter: QSplitter | None = None
+        self._compare_controller = CompareController(self, _log_ui_error)
+        self._form_controller = FormController(self, _log_ui_error)
+        self._dag_controller = DagController(self)
+        self._run_controller = RunController(self, _log_ui_error)
+        self._timeline_controller = TimelineController(self)
 
         self._build_layout()
         self._connect_signals()
@@ -740,77 +744,19 @@ class MainWindow(QMainWindow):
         self._form_hint.setText("Form changed. Use 'Apply Form -> Text' before run/save.")
 
     def _on_sync_text_to_form(self) -> None:
-        if self._sync_text_to_form(show_message=True):
-            self._status_label.setText("Form synced from text")
+        self._form_controller.on_sync_text_to_form()
 
     def _on_sync_form_to_text(self) -> None:
-        if self._sync_form_to_text(show_message=True):
-            self._status_label.setText("Text updated from form")
+        self._form_controller.on_sync_form_to_text()
 
     def _sync_form_to_text_if_dirty(self) -> bool:
-        if not self._form_dirty:
-            return True
-        return self._sync_form_to_text(show_message=False)
+        return self._form_controller.sync_form_to_text_if_dirty()
 
     def _sync_text_to_form(self, *, show_message: bool) -> bool:
-        try:
-            payload = self._read_editor_payload()
-        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
-            _log_ui_error("sync_text_to_form", exc, show_message=show_message)
-            if show_message:
-                QMessageBox.critical(self, "Sync failed", str(exc))
-            self._form_hint.setText("Sync Text -> Form failed.")
-            return False
-
-        self._populate_form_from_payload(payload)
-        self._form_dirty = False
-        self._form_hint.setText("Form synced from text.")
-        return True
+        return self._form_controller.sync_text_to_form(show_message=show_message)
 
     def _sync_form_to_text(self, *, show_message: bool) -> bool:
-        self._validate_task_table()
-        self._validate_resource_table()
-        if self._has_table_validation_errors():
-            message = self._first_table_validation_error()
-            if show_message:
-                QMessageBox.warning(
-                    self,
-                    "Sync blocked",
-                    "Table validation failed. Fix highlighted cells first.\n"
-                    + message,
-                )
-            self._form_hint.setText("Apply blocked: table validation failed.")
-            return False
-
-        if self._config_doc is not None:
-            base_payload = self._config_doc.to_payload()
-        else:
-            try:
-                base_payload = self._read_editor_payload()
-            except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
-                _log_ui_error("sync_form_to_text_base_payload", exc)
-                base_payload = {}
-
-        try:
-            payload = self._apply_form_to_payload(base_payload)
-            text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
-            _log_ui_error("sync_form_to_text", exc, show_message=show_message)
-            if show_message:
-                QMessageBox.critical(self, "Sync failed", str(exc))
-            self._form_hint.setText("Apply Form -> Text failed.")
-            return False
-
-        self._suspend_text_events = True
-        try:
-            self._editor.setPlainText(text)
-        finally:
-            self._suspend_text_events = False
-        self._config_doc = ConfigDocument.from_payload(payload)
-        self._populate_form_from_doc()
-        self._form_dirty = False
-        self._form_hint.setText("Form applied to text.")
-        return True
+        return self._form_controller.sync_form_to_text(show_message=show_message)
 
     def _read_editor_payload(self) -> dict[str, Any]:
         text = self._editor.toPlainText()
@@ -1233,51 +1179,17 @@ class MainWindow(QMainWindow):
         return QPointF(center.x(), center.y())
 
     def _on_dag_node_clicked(self, subtask_id: str) -> None:
-        if not subtask_id:
-            return
-        self._selected_subtask_id = subtask_id
-
-        self._dag_subtasks_list.blockSignals(True)
-        try:
-            for idx in range(self._dag_subtasks_list.count()):
-                item = self._dag_subtasks_list.item(idx)
-                if item is not None and item.text().strip() == subtask_id:
-                    self._dag_subtasks_list.setCurrentRow(idx)
-                    break
-        finally:
-            self._dag_subtasks_list.blockSignals(False)
-
-        doc = self._ensure_config_doc()
-        self._suspend_form_events = True
-        try:
-            self._refresh_selected_task_fields(doc)
-        finally:
-            self._suspend_form_events = False
-        self._refresh_dag_node_selection_visuals()
+        self._dag_controller.on_dag_node_clicked(subtask_id)
 
     def _refresh_dag_node_selection_visuals(self) -> None:
         for sub_id, node_item in self._dag_node_items.items():
             node_item.setBrush(QBrush(QColor("#2d7ff9" if sub_id == self._selected_subtask_id else "#47617a")))
 
     def _on_dag_node_moved(self, subtask_id: str, center: QPointF) -> None:
-        if not subtask_id:
-            return
-        self._dag_node_centers[subtask_id] = QPointF(center.x(), center.y())
-        self._update_dag_edges_for_node(subtask_id)
-        self._dag_view.setSceneRect(self._dag_scene.itemsBoundingRect().adjusted(-30, -30, 30, 30))
-
-        doc = self._ensure_config_doc()
-        layout_key = self._current_task_layout_key(doc)
-        if layout_key:
-            task_positions = self._dag_manual_positions_by_task.setdefault(layout_key, {})
-            task_positions[subtask_id] = QPointF(center.x(), center.y())
+        self._dag_controller.on_dag_node_moved(subtask_id, center)
 
     def _on_dag_node_drag_finished(self, subtask_id: str) -> None:
-        if not subtask_id:
-            return
-        self._update_dag_edges_for_node(subtask_id)
-        if self._dag_persist_layout.isChecked():
-            self._persist_current_dag_layout_to_doc()
+        self._dag_controller.on_dag_node_drag_finished(subtask_id)
 
     def _update_dag_edges_for_node(self, subtask_id: str) -> None:
         center = self._dag_node_centers.get(subtask_id)
@@ -1304,90 +1216,17 @@ class MainWindow(QMainWindow):
         self._form_hint.setText("DAG layout changed. Apply Form -> Text to persist ui_layout.")
 
     def _on_dag_auto_layout(self) -> None:
-        doc = self._ensure_config_doc()
-        if self._selected_task_index < 0 or not doc.list_tasks():
-            return
-        subtasks = doc.list_subtasks(self._selected_task_index)
-        subtask_ids = [str(subtask.get("id") or "") for subtask in subtasks if str(subtask.get("id") or "")]
-        edges = doc.list_edges(self._selected_task_index)
-        layout_key = self._current_task_layout_key(doc)
-        auto_positions = self._compute_auto_layout_positions(subtask_ids, edges)
-        if layout_key:
-            self._dag_manual_positions_by_task[layout_key] = {
-                sub_id: QPointF(pos.x(), pos.y()) for sub_id, pos in auto_positions.items()
-            }
-        self._render_dag_scene(subtask_ids, edges, positions=auto_positions)
-        self._refresh_dag_node_selection_visuals()
-        self._form_hint.setText("DAG auto-layout applied.")
-        if self._dag_persist_layout.isChecked():
-            self._persist_current_dag_layout_to_doc()
+        self._dag_controller.on_dag_auto_layout()
 
     def _on_dag_persist_layout_toggled(self, checked: bool) -> None:
-        if checked:
-            self._persist_current_dag_layout_to_doc()
-        else:
-            self._form_hint.setText("DAG layout persistence disabled.")
+        self._dag_controller.on_dag_persist_layout_toggled(checked)
 
     def _try_add_dag_edge(self, src_id: str, dst_id: str, *, show_feedback: bool) -> bool:
-        doc = self._ensure_config_doc()
-        if self._selected_task_index < 0:
-            self._form_hint.setText("DAG edge rejected: no selected task.")
-            return False
-
-        src = src_id.strip()
-        dst = dst_id.strip()
-        if not src or not dst:
-            self._form_hint.setText("DAG edge rejected: src/dst can not be empty.")
-            return False
-        if src == dst:
-            self._form_hint.setText("DAG edge rejected: self-loop is not allowed.")
-            return False
-
-        subtask_ids = {
-            str(subtask.get("id") or "")
-            for subtask in doc.list_subtasks(self._selected_task_index)
-            if str(subtask.get("id") or "")
-        }
-        if src not in subtask_ids or dst not in subtask_ids:
-            self._form_hint.setText("DAG edge rejected: src/dst node does not exist.")
-            return False
-
-        if (src, dst) in set(doc.list_edges(self._selected_task_index)):
-            self._form_hint.setText(f"DAG edge ignored: {src}->{dst} already exists.")
-            return False
-
-        if self._would_create_cycle(doc, self._selected_task_index, src, dst):
-            self._form_hint.setText(f"DAG edge rejected: {src}->{dst} creates a cycle.")
-            return False
-
-        doc.add_edge(self._selected_task_index, src, dst)
-        self._populate_form_from_doc()
-        self._refresh_dag_node_selection_visuals()
-        self._mark_form_dirty()
-        if show_feedback:
-            self._form_hint.setText(f"DAG edge added: {src}->{dst}")
-        return True
+        return self._dag_controller.try_add_dag_edge(src_id, dst_id, show_feedback=show_feedback)
 
     @staticmethod
     def _would_create_cycle(doc: ConfigDocument, task_index: int, src_id: str, dst_id: str) -> bool:
-        adjacency: dict[str, set[str]] = {}
-        for src, dst in doc.list_edges(task_index):
-            adjacency.setdefault(src, set()).add(dst)
-        adjacency.setdefault(src_id, set()).add(dst_id)
-
-        stack = [dst_id]
-        visited: set[str] = set()
-        while stack:
-            node = stack.pop()
-            if node == src_id:
-                return True
-            if node in visited:
-                continue
-            visited.add(node)
-            for nxt in adjacency.get(node, set()):
-                if nxt not in visited:
-                    stack.append(nxt)
-        return False
+        return DagController.would_create_cycle(doc, task_index, src_id, dst_id)
 
     def _apply_form_to_payload(self, base_payload: dict[str, Any]) -> dict[str, Any]:
         doc = ConfigDocument.from_payload(base_payload)
@@ -1824,80 +1663,19 @@ class MainWindow(QMainWindow):
         self._mark_form_dirty()
 
     def _on_dag_subtask_selected(self) -> None:
-        if self._suspend_form_events:
-            return
-        item = self._dag_subtasks_list.currentItem()
-        if item is None:
-            return
-        selected = item.text().strip()
-        if selected:
-            self._on_dag_node_clicked(selected)
+        self._dag_controller.on_dag_subtask_selected()
 
     def _on_dag_add_subtask(self) -> None:
-        doc = self._ensure_config_doc()
-        if self._selected_task_index < 0:
-            self._selected_task_index = doc.add_task()
-        new_index = doc.add_subtask(self._selected_task_index, self._dag_new_subtask_id.text().strip() or None)
-        new_subtask = doc.get_subtask(self._selected_task_index, new_index)
-        self._selected_subtask_id = str(new_subtask.get("id") or "s0")
-        self._dag_new_subtask_id.clear()
-        self._populate_form_from_doc()
-        self._refresh_dag_node_selection_visuals()
-        if self._dag_persist_layout.isChecked():
-            self._persist_current_dag_layout_to_doc()
-        self._mark_form_dirty()
+        self._dag_controller.on_dag_add_subtask()
 
     def _on_dag_remove_subtask(self) -> None:
-        doc = self._ensure_config_doc()
-        if self._selected_task_index < 0:
-            return
-        subtasks = doc.list_subtasks(self._selected_task_index)
-        if not subtasks:
-            return
-
-        target_index = 0
-        item = self._dag_subtasks_list.currentItem()
-        selected_id = item.text().strip() if item is not None else self._selected_subtask_id
-        for idx, subtask in enumerate(subtasks):
-            if str(subtask.get("id") or "") == selected_id:
-                target_index = idx
-                break
-        doc.remove_subtask(self._selected_task_index, target_index)
-
-        remaining = doc.list_subtasks(self._selected_task_index)
-        self._selected_subtask_id = str(remaining[0].get("id") or "s0") if remaining else "s0"
-        self._populate_form_from_doc()
-        self._refresh_dag_node_selection_visuals()
-        if self._dag_persist_layout.isChecked():
-            self._persist_current_dag_layout_to_doc()
-        self._mark_form_dirty()
+        self._dag_controller.on_dag_remove_subtask()
 
     def _on_dag_add_edge(self) -> None:
-        src_id = self._dag_edge_src.text().strip()
-        dst_id = self._dag_edge_dst.text().strip()
-        if not src_id:
-            src_id = self._selected_subtask_id
-        self._try_add_dag_edge(src_id, dst_id, show_feedback=True)
-        self._dag_edge_src.clear()
-        self._dag_edge_dst.clear()
+        self._dag_controller.on_dag_add_edge()
 
     def _on_dag_remove_edge(self) -> None:
-        doc = self._ensure_config_doc()
-        if self._selected_task_index < 0:
-            return
-        item = self._dag_edges_list.currentItem()
-        if item is None:
-            return
-        data = item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(data, tuple) or len(data) != 2:
-            return
-        src_id, dst_id = data
-        doc.remove_edge(self._selected_task_index, str(src_id), str(dst_id))
-        self._populate_form_from_doc()
-        self._refresh_dag_node_selection_visuals()
-        if self._dag_persist_layout.isChecked():
-            self._persist_current_dag_layout_to_doc()
-        self._mark_form_dirty()
+        self._dag_controller.on_dag_remove_edge()
 
     @staticmethod
     def _parse_optional_float(raw: str, field_name: str) -> float | None:
@@ -1994,164 +1772,40 @@ class MainWindow(QMainWindow):
         return path or None
 
     def _on_compare_toggle(self, checked: bool) -> None:
-        if self._compare_group is None:
-            return
-        self._compare_group.setVisible(checked)
-        self._compare_toggle_button.setText("Hide FR-13 Compare" if checked else "Show FR-13 Compare")
-        self._rebalance_right_splitter(compare_open=checked)
-        if checked:
-            self._ensure_compare_visible()
+        self._compare_controller.on_compare_toggle(checked)
 
     def _rebalance_right_splitter(self, *, compare_open: bool) -> None:
-        if self._right_splitter is None:
-            return
-        sizes = self._right_splitter.sizes()
-        total = sum(s for s in sizes if s > 0)
-        if total <= 0:
-            total = max(self._right_splitter.height(), 1)
-        lower_ratio = (
-            self._RIGHT_SPLITTER_LOWER_RATIO_EXPANDED
-            if compare_open
-            else self._RIGHT_SPLITTER_LOWER_RATIO_COLLAPSED
-        )
-        lower_min = (
-            self._RIGHT_SPLITTER_LOWER_MIN_EXPANDED
-            if compare_open
-            else self._RIGHT_SPLITTER_LOWER_MIN_COLLAPSED
-        )
-        lower_target = max(lower_min, int(total * lower_ratio))
-        if lower_target >= total - 60:
-            lower_target = max(60, total - 60)
-        upper_target = max(60, total - lower_target)
-        self._right_splitter.setSizes([upper_target, lower_target])
+        self._compare_controller.rebalance_right_splitter(compare_open=compare_open)
 
     def _ensure_compare_visible(self) -> None:
-        if self._telemetry_scroll is None or self._compare_group is None:
-            return
-        if not self._compare_group.isVisible():
-            return
-        self._telemetry_scroll.ensureWidgetVisible(self._compare_group, 0, 24)
-
-    @staticmethod
-    def _read_metrics_json(path: str) -> dict[str, Any]:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("metrics json root must be object")
-        return payload
+        self._compare_controller.ensure_compare_visible()
 
     def _on_compare_load_left(self) -> None:
-        path = self._pick_metrics_file()
-        if not path:
-            return
-        try:
-            self._compare_left_metrics = self._read_metrics_json(path)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            _log_ui_error("compare_load_left", exc, path=path)
-            QMessageBox.critical(self, "Compare load failed", str(exc))
-            return
-        self._compare_output.appendPlainText(f"[Compare] left metrics loaded: {path}")
+        self._compare_controller.on_compare_load_left()
 
     def _on_compare_load_right(self) -> None:
-        path = self._pick_metrics_file()
-        if not path:
-            return
-        try:
-            self._compare_right_metrics = self._read_metrics_json(path)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            _log_ui_error("compare_load_right", exc, path=path)
-            QMessageBox.critical(self, "Compare load failed", str(exc))
-            return
-        self._compare_output.appendPlainText(f"[Compare] right metrics loaded: {path}")
+        self._compare_controller.on_compare_load_right()
 
     def _on_compare_use_latest_left(self) -> None:
-        if not self._latest_metrics_report:
-            QMessageBox.information(self, "Compare", "No latest run metrics available.")
-            return
-        self._compare_left_metrics = dict(self._latest_metrics_report)
-        self._compare_output.appendPlainText("[Compare] left metrics set from latest run")
+        self._compare_controller.on_compare_use_latest_left()
 
     def _on_compare_use_latest_right(self) -> None:
-        if not self._latest_metrics_report:
-            QMessageBox.information(self, "Compare", "No latest run metrics available.")
-            return
-        self._compare_right_metrics = dict(self._latest_metrics_report)
-        self._compare_output.appendPlainText("[Compare] right metrics set from latest run")
+        self._compare_controller.on_compare_use_latest_right()
 
     def _on_compare_build(self) -> None:
-        if self._compare_left_metrics is None or self._compare_right_metrics is None:
-            QMessageBox.information(self, "Compare", "Please load/set both left and right metrics first.")
-            return
-        report = build_compare_report(
-            self._compare_left_metrics,
-            self._compare_right_metrics,
-            left_label=self._compare_left_label.text().strip() or "left",
-            right_label=self._compare_right_label.text().strip() or "right",
-        )
-        self._latest_compare_report = report
-        self._compare_output.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
+        self._compare_controller.on_compare_build()
 
     def _on_compare_export_json(self) -> None:
-        if self._latest_compare_report is None:
-            QMessageBox.information(self, "Compare", "Build compare report first.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save compare report json",
-            str(Path.cwd() / "compare_report.json"),
-            "JSON Files (*.json)",
-        )
-        if not path:
-            return
-        try:
-            Path(path).write_text(
-                json.dumps(self._latest_compare_report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
-            return
-        self._status_label.setText(f"Compare JSON exported: {path}")
+        self._compare_controller.on_compare_export_json()
 
     def _on_compare_export_csv(self) -> None:
-        if self._latest_compare_report is None:
-            QMessageBox.information(self, "Compare", "Build compare report first.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save compare report csv",
-            str(Path.cwd() / "compare_report.csv"),
-            "CSV Files (*.csv)",
-        )
-        if not path:
-            return
-        rows = compare_report_to_rows(self._latest_compare_report)
-        fieldnames: list[str] = []
-        for row in rows:
-            for key in row:
-                if key not in fieldnames:
-                    fieldnames.append(key)
-        try:
-            with Path(path).open("w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(rows)
-        except OSError as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
-            return
-        self._status_label.setText(f"Compare CSV exported: {path}")
+        self._compare_controller.on_compare_export_csv()
 
     def _set_worker_controls(self, *, running: bool, paused: bool) -> None:
-        self._run_button.setEnabled(not running)
-        self._stop_button.setEnabled(running)
-        self._pause_button.setEnabled(running and not paused)
-        self._resume_button.setEnabled(running and paused)
-        self._step_button.setEnabled(running)
+        self._run_controller.set_worker_controls(running=running, paused=paused)
 
     def _step_delta_value(self) -> float | None:
-        value = float(self._step_delta_spin.value())
-        if value <= 1e-12:
-            return None
-        return value
+        return self._run_controller.step_delta_value()
 
     def _on_validate(self) -> None:
         if not self._sync_form_to_text_if_dirty():
@@ -2169,238 +1823,37 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Validation", "Config validation passed.")
 
     def _on_run(self) -> None:
-        if self._worker and self._worker.isRunning():
-            return
-        if not self._sync_form_to_text_if_dirty():
-            return
-        try:
-            payload = self._read_editor_payload()
-            spec = self._loader.load_data(payload)
-            SimEngine().build(spec)
-        except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
-            _log_ui_error("run_precheck", exc)
-            QMessageBox.critical(self, "Run failed", f"Invalid config: {exc}")
-            self._status_label.setText("Run blocked by invalid config")
-            return
-
-        self._reset_viz()
-        self._metrics.clear()
-
-        config_text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-        self._worker = SimulationWorker(config_text, step_delta=self._step_delta_value())
-        self._worker.events_batch.connect(self._on_event_batch)
-        self._worker.finished_report.connect(self._on_finished)
-        self._worker.failed.connect(self._on_failed)
-        self._worker.start()
-
-        self._set_worker_controls(running=True, paused=False)
-        self._status_label.setText("Running")
+        self._run_controller.on_run()
 
     def _on_stop(self) -> None:
-        if self._worker:
-            self._worker.stop()
-        self._status_label.setText("Stopping...")
+        self._run_controller.on_stop()
 
     def _on_pause(self) -> None:
-        if not self._worker or not self._worker.isRunning():
-            return
-        self._worker.pause()
-        self._set_worker_controls(running=True, paused=True)
-        self._status_label.setText("Paused")
+        self._run_controller.on_pause()
 
     def _on_resume(self) -> None:
-        if not self._worker or not self._worker.isRunning():
-            return
-        self._worker.resume()
-        self._set_worker_controls(running=True, paused=False)
-        self._status_label.setText("Running")
+        self._run_controller.on_resume()
 
     def _on_step(self) -> None:
-        if not self._worker or not self._worker.isRunning():
-            return
-        self._worker.pause()
-        self._worker.request_step(self._step_delta_value())
-        self._set_worker_controls(running=True, paused=True)
-        self._status_label.setText("Paused (step)")
+        self._run_controller.on_step()
 
     def _on_reset(self) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.stop()
-            self._worker.wait(1000)
-        self._worker = None
-        self._reset_viz()
-        self._metrics.clear()
-        self._set_worker_controls(running=False, paused=False)
-        self._status_label.setText("Reset")
+        self._run_controller.on_reset()
 
     def _on_event_batch(self, events: list[dict[str, Any]]) -> None:
-        for event in events:
-            event_id = event.get("event_id")
-            if event_id and event_id in self._seen_event_ids:
-                continue
-            if event_id:
-                self._seen_event_ids.add(event_id)
-            self._consume_event(event)
+        self._timeline_controller.on_event_batch(events)
 
     def _consume_event(self, event: dict[str, Any]) -> None:
-        event_type = str(event.get("type", ""))
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            payload = {}
-        segment_key = payload.get("segment_key")
-        event_time = safe_float(event.get("time"), 0.0)
-        self._max_time = max(self._max_time, event_time)
-
-        if event_type == "JobReleased":
-            job_id = str(event.get("job_id") or "")
-            self._job_deadlines[job_id] = safe_optional_float(payload.get("absolute_deadline"))
-            return
-
-        if event_type == "ResourceAcquire" and isinstance(segment_key, str):
-            resource_id = event.get("resource_id")
-            if resource_id:
-                self._segment_resources.setdefault(segment_key, set()).add(str(resource_id))
-            return
-
-        if event_type == "SegmentStart" and isinstance(segment_key, str):
-            core_id = str(event.get("core_id") or "unknown")
-            job_id = str(event.get("job_id") or "")
-            subtask_id, parsed_segment_id = parse_segment_key(segment_key)
-            self._active_segments[segment_key] = {
-                "start": event_time,
-                "core_id": core_id,
-                "job_id": job_id,
-                "task_id": task_from_job(job_id),
-                "subtask_id": subtask_id,
-                "segment_id": str(event.get("segment_id") or parsed_segment_id),
-                "start_payload": payload,
-                "start_event_id": str(event.get("event_id") or ""),
-                "start_seq": safe_optional_int(event.get("seq")),
-                "correlation_id": str(event.get("correlation_id") or ""),
-                "absolute_deadline": self._job_deadlines.get(job_id),
-            }
-            return
-
-        if event_type == "SegmentEnd" and isinstance(segment_key, str):
-            self._close_segment(segment_key=segment_key, end_event=event, interrupted=False)
-            return
-
-        if event_type == "Preempt" and isinstance(segment_key, str):
-            self._close_segment(segment_key=segment_key, end_event=event, interrupted=True)
-            return
-
-        if event_type == "DeadlineMiss":
-            job_id = event.get("job_id", "")
-            self._metrics.append(f"[DeadlineMiss] {job_id} at t={event_time:.3f}")
+        self._timeline_controller.consume_event(event)
 
     def _close_segment(self, segment_key: str, end_event: dict[str, Any], interrupted: bool) -> None:
-        start_data = self._active_segments.pop(segment_key, None)
-        if not start_data:
-            return
-
-        start_time = safe_float(start_data.get("start"), 0.0)
-        end_time = safe_float(end_event.get("time"), start_time)
-        if end_time < start_time:
-            return
-        duration = max(0.0, end_time - start_time)
-
-        start_payload = start_data.get("start_payload", {})
-        if not isinstance(start_payload, dict):
-            start_payload = {}
-
-        deadline = safe_optional_float(start_data.get("absolute_deadline"))
-        lateness = end_time - deadline if deadline is not None else None
-        estimated_finish = safe_optional_float(start_payload.get("estimated_finish"))
-        remaining_after_preempt = None
-        if interrupted and estimated_finish is not None:
-            remaining_after_preempt = max(0.0, estimated_finish - end_time)
-
-        status = "Preempted" if interrupted else "Completed"
-        meta = SegmentVisualMeta(
-            task_id=str(start_data.get("task_id") or "unknown"),
-            job_id=str(start_data.get("job_id") or ""),
-            subtask_id=str(start_data.get("subtask_id") or "unknown"),
-            segment_id=str(start_data.get("segment_id") or "unknown"),
-            segment_key=segment_key,
-            core_id=str(start_data.get("core_id") or "unknown"),
-            start=start_time,
-            end=end_time,
-            duration=duration,
-            status=status,
-            resources=sorted(self._segment_resources.get(segment_key, set())),
-            event_id_start=str(start_data.get("start_event_id") or ""),
-            event_id_end=str(end_event.get("event_id") or ""),
-            seq_start=safe_optional_int(start_data.get("start_seq")),
-            seq_end=safe_optional_int(end_event.get("seq")),
-            correlation_id=str(end_event.get("correlation_id") or start_data.get("correlation_id") or ""),
-            deadline=deadline,
-            lateness_at_end=lateness,
-            remaining_after_preempt=remaining_after_preempt,
-            execution_time_est=safe_optional_float(start_payload.get("execution_time")),
-            context_overhead=safe_optional_float(start_payload.get("context_overhead")),
-            migration_overhead=safe_optional_float(start_payload.get("migration_overhead")),
-            estimated_finish=estimated_finish,
-        )
-
-        self._draw_gantt_segment(meta)
-
-        self._metrics.append(
-            f"[Segment] {meta.segment_key} task={meta.task_id} core={meta.core_id} "
-            f"[{meta.start:.3f}, {meta.end:.3f}]"
-            + (" (preempted)" if interrupted else "")
-        )
-
-        if interrupted:
-            self._draw_preempt_marker(meta.end, meta.core_id)
-            self._metrics.append(f"[Preempt] {meta.segment_key} at t={meta.end:.3f}")
-
-        self._segment_resources.pop(segment_key, None)
+        self._timeline_controller.close_segment(segment_key, end_event, interrupted)
 
     def _draw_gantt_segment(self, meta: SegmentVisualMeta) -> None:
-        y = self._core_lane(meta.core_id)
-        color = self._task_color(meta.task_id)
-        brush_style = self._subtask_brush_style(meta.task_id, meta.subtask_id)
-        pen_style = self._segment_pen_style(meta.segment_id, interrupted=(meta.status == "Preempted"))
-
-        self._ensure_task_legend(meta.task_id, color)
-        self._subtask_legend_map[(meta.task_id, meta.subtask_id)] = brush_style_name(brush_style)
-        self._segment_legend_map[meta.segment_id] = pen_style_name(pen_style)
-        self._refresh_legend_details()
-
-        block = SegmentBlockItem(
-            meta=meta,
-            y=y,
-            lane_height=self._lane_height,
-            color=color,
-            brush_style=brush_style,
-            pen_style=pen_style,
-        )
-        self._plot.addItem(block)
-        self._segment_items.append(block)
-
-        if meta.duration >= self._segment_label_min_duration:
-            label = pg.TextItem(text=meta.segment_id, anchor=(0.5, 0.5), color="#f4f4f4")
-            label.setZValue(3)
-            label.setPos(meta.start + meta.duration / 2.0, y)
-            self._plot.addItem(label)
-            self._segment_labels.append(label)
-
-        self._plot.setXRange(0, max(1.0, self._max_time * 1.05), padding=0)
+        self._timeline_controller.draw_gantt_segment(meta)
 
     def _draw_preempt_marker(self, event_time: float, core_id: str) -> None:
-        if core_id not in self._core_to_y:
-            return
-        y = self._core_to_y[core_id]
-        marker = pg.ScatterPlotItem(
-            x=[event_time],
-            y=[y],
-            symbol="x",
-            size=12,
-            pen=pg.mkPen(color="#ffd54f", width=2),
-            brush=pg.mkBrush("#ffd54f"),
-        )
-        marker.setZValue(4)
-        self._plot.addItem(marker)
+        self._timeline_controller.draw_preempt_marker(event_time, core_id)
 
     def _core_lane(self, core_id: str) -> int:
         if core_id not in self._core_to_y:
@@ -2526,21 +1979,10 @@ class MainWindow(QMainWindow):
         return format_segment_details(meta)
 
     def _on_finished(self, report: dict[str, Any], tail_events: list[dict[str, Any]]) -> None:
-        if tail_events:
-            self._on_event_batch(tail_events)
-        self._latest_metrics_report = dict(report)
-        self._metrics.append("\n=== Metrics ===")
-        self._metrics.append(json.dumps(report, ensure_ascii=False, indent=2))
-        self._status_label.setText("Completed")
-        self._set_worker_controls(running=False, paused=False)
-        self._worker = None
+        self._run_controller.on_finished(report, tail_events)
 
     def _on_failed(self, error_message: str) -> None:
-        self._metrics.append(f"[Error] {error_message}")
-        QMessageBox.critical(self, "Simulation failed", error_message)
-        self._status_label.setText("Failed")
-        self._set_worker_controls(running=False, paused=False)
-        self._worker = None
+        self._run_controller.on_failed(error_message)
 
     def _reset_viz(self) -> None:
         self._plot.clear()

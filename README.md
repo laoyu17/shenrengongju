@@ -17,6 +17,7 @@ python -m pip install -e .[ui]
 ## 文档索引
 
 - 详细用户手册：`docs/19-用户使用说明书.md`
+- 研究闭环验收基线：`docs/15-研究闭环验收基线.md`
 - 最新综合审查报告：`docs/18-综合审查报告-2026-02-24.md`
 - 审查问题台账：`docs/20-审查问题台账.csv`
 
@@ -76,6 +77,10 @@ python scripts/perf_delta.py --current artifacts/perf/perf-nightly-1000.json \
 # 生成测试/覆盖率质量快照（用于文档与评审同步）
 python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json \
   --coverage-json artifacts/quality/coverage.json
+
+# 校验文档基线字段与质量快照一致（用于文档治理门禁）
+python scripts/check_doc_baseline_consistency.py --snapshot artifacts/quality/quality-snapshot.json \
+  --docs-root docs
 
 # 运行研究反例基准集（R-001）
 python scripts/research_case_suite.py --cases examples/research_counterexamples.json \
