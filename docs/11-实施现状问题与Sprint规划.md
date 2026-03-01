@@ -1,9 +1,9 @@
 # RTOS 异构多核仿真工具：实施现状、问题清单与 Sprint 规划
 
 ## 0. 文档控制
-- 版本：v0.9
+- 版本：v1.0
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
-- 日期：2026-02-27
+- 日期：2026-03-01
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
 - 实现快照：`git_sha=10667c07f8eb5de076ed7c6bb7665576cd0e8840`
 - 复核命令：
@@ -88,6 +88,13 @@
 - 回归：新增 UI 交互与表单同步测试（含表格 CRUD、DAG 侧栏编辑、未知字段保留）：`tests/test_ui_gantt.py:39`
 - 回归：新增 DAG 拖拽连线循环检测、节点自由移动、自动布局、可选布局持久化与表格校验阻断测试：`tests/test_ui_gantt.py:344`
 - 当前本地测试状态：`python -m pytest -q` 通过（以最近一次本地/CI日志为准）
+
+### 1.8 已修复：Wayland 环境 Tooltip popup 警告风暴与 UI 崩溃
+- 现象：在 Wayland 桌面下运行 `rtos-sim ui -c ...`，日志反复出现 `qt.qpa.wayland: Failed to create popup`，并在高频悬停场景可能触发 `Segmentation fault`。
+- 根因：悬停提示使用 `QToolTip.showText` 时未提供 transient parent，Wayland 无法稳定创建 tooltip popup。
+- 修复：改为使用 plot `viewport` 作为 tooltip parent，并按 scene 坐标映射到 viewport 全局坐标：`rtos_sim/ui/app.py:1919`
+- 回归：新增 `test_ui_hover_tooltip_uses_plot_viewport_parent`，确保 tooltip 调用绑定 `window._plot.viewport()`：`tests/test_ui_gantt.py:113`
+- 兼容建议：若历史环境仍出现 Wayland 图形栈兼容问题，可临时使用 `QT_QPA_PLATFORM=xcb` 启动 UI。
 
 ---
 

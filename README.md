@@ -39,6 +39,9 @@ rtos-sim run -c examples/at01_single_dag_single_core.yaml \
 # 启动 UI（可选）
 rtos-sim ui -c examples/at01_single_dag_single_core.yaml
 
+# Wayland 环境兼容回退（仅在旧图形栈异常时使用）
+QT_QPA_PLATFORM=xcb rtos-sim ui -c examples/at01_single_dag_single_core.yaml
+
 # 批量实验（参数矩阵）
 rtos-sim batch-run -b examples/batch_matrix.yaml
 
