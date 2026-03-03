@@ -1,0 +1,45 @@
+@startuml
+!theme plain
+left to right direction
+
+title RTOS Sim Deployment (CLI Artifacts + UI Threading)
+
+actor "CLI User" as CLIUser
+actor "UI User" as UIUser
+
+node "Host Machine" {
+  node "CLI Process" as CLIProc {
+    component "cmd_run" as CmdRun
+    component "SimEngine" as CliEngine
+  }
+
+  node "UI Process" as UIProc {
+    component "MainWindow\n(Qt Main Thread)" as MainWindow
+    component "RunController" as RunController
+
+    node "SimulationWorker\n(QThread)" as WorkerThread {
+      component "SimulationWorker._execute" as WorkerExec
+      component "SimEngine" as UiEngine
+    }
+  }
+
+  folder "artifacts/" as Artifacts {
+    file "events.jsonl" as EventsFile
+    file "metrics.json" as MetricsFile
+    file "audit.json" as AuditFile
+  }
+}
+
+CLIUser --> CmdRun
+CmdRun --> CliEngine
+CmdRun --> EventsFile : write_jsonl(events)
+CmdRun --> MetricsFile : write_json(metrics)
+CmdRun --> AuditFile : write_json(audit)
+
+UIUser --> MainWindow
+MainWindow --> RunController
+RunController --> WorkerExec
+WorkerExec --> UiEngine
+WorkerExec --> MainWindow : events_batch\nfinished_report\nfailed
+
+@enduml

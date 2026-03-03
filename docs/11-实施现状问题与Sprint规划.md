@@ -5,7 +5,7 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-03-01
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=10667c07f8eb5de076ed7c6bb7665576cd0e8840`
+- 实现快照：`git_sha=c8da755615a05d9e8a94e08dc5dea5076f948c81`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -24,7 +24,7 @@
 - 已实现 deadline miss 与 `abort_on_miss` 行为分支：`rtos_sim/core/engine.py:623`
 - 已修复 deadline 边界触发与 abort 中止隔离语义（避免中止后再次调度）：`rtos_sim/core/engine.py:320`
 - 已统一 EDF+PCP 优先级域（运行时绝对 deadline 域），并修复 ceiling 初值/刷新域误差导致的误阻塞：`rtos_sim/core/engine.py:247`、`rtos_sim/protocols/pcp.py:35`
-- 已补齐 abort/cancel 异常路径的 `ResourceRelease` 事件：`rtos_sim/core/engine.py:1119`
+- 已补齐 abort/cancel 异常路径的 `ResourceRelease` 事件：`rtos_sim/core/engine_abort.py`（`abort_job` 路径）
 - 已统一异构速率口径：`effective_core_speed = core.speed_factor * processor_type.speed_factor`：`rtos_sim/core/engine.py:157`
 
 ### 1.3 配置模型与语义校验
@@ -73,8 +73,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`examples/at06_time_deterministic.yaml:1`、`examples/at09_table_based_etm.yaml:1`、`examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`tests/test_model_validation.py:41`、`tests/test_engine_scenarios.py:22`、`tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`tests/test_audit.py:1`、`tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-03-01）：`python -m pytest --maxfail=1` 通过，`306 passed`
-- 当前覆盖率快照（2026-03-01）：总覆盖率 90.94%（`coverage.line_rate=90.93706724111402`，来源：`artifacts/quality/quality-snapshot.json`）
+- 当前本地测试状态（2026-03-01）：`python -m pytest --maxfail=1` 通过，`307 passed`
+- 当前覆盖率快照（2026-03-01）：总覆盖率 90.94%（`coverage.line_rate=90.94124884650877`，来源：`artifacts/quality/quality-snapshot.json`）
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
@@ -270,7 +270,7 @@
 ### Phase G（语义闭环深化）已完成（2026-02-22）
 - 到达过程新增 `custom` 类型与生成器注册机制；`params.generator` 可选择注册生成器：`rtos_sim/model/spec.py:30`、`rtos_sim/arrival/registry.py:1`、`rtos_sim/core/engine.py:712`
 - 审计报告新增 `rule_version` 与 `evidence` 字段，提升审计追溯性：`rtos_sim/analysis/audit.py:7`
-- 审计报告新增 `protocol_proof_assets` 与 `pip_owner_hold_consistency`，增强协议可证明性证据：`rtos_sim/analysis/audit.py:79`、`rtos_sim/analysis/audit.py:653`
+- 审计报告新增 `protocol_proof_assets` 与 `pip_owner_hold_consistency`，增强协议可证明性证据：`rtos_sim/analysis/audit.py`（`build_audit_report` 聚合链路）、`rtos_sim/analysis/audit_checks/protocol_checks.py`
 - 模型关系报告新增 `status/checks` 自动判定摘要：`rtos_sim/analysis/model_relations.py:42`
 - 新增 docx 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`
 - 回归：新增 custom 到达过程、审计证据字段、关系自动判定测试：`tests/test_engine_scenarios.py:360`、`tests/test_audit.py:388`、`tests/test_model_relations.py:56`
@@ -305,8 +305,8 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新（2026-02-23 当日历史值）：`docs/11`、`docs/15`、`docs/16` 同步至 `238 passed / 87.07%`（基于 `python -m pytest --maxfail=1` 与覆盖率命令）。
-- 历史首轮审查文档新增醒目提示，避免误读 `211 tests` 为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
+- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `307 passed / 90.94%`）。
+- 历史首轮审查文档新增醒目提示，避免误读历史测试统计为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
   - `rtos_sim/ui/dag_layout.py`
@@ -330,3 +330,13 @@
 - 审计新增 `time_deterministic_proof_assets`（`max_ready_lag/max_phase_jitter/issue_samples`），用于研究复现实验取证：`rtos_sim/analysis/audit.py`
 - `research_v1` 合规画像新增必过项 `time_deterministic_ready_consistency`，补齐 M-09 机读门禁：`rtos_sim/analysis/audit.py`
 - 回归：`tests/test_audit.py` 新增通过/失败双场景测试（稳定相位通过、相位抖动失败）。
+
+### Phase I（论文图件生产与混合模式）已完成（2026-03-03）
+- 缺口重定义：当前缺口不在产品功能，而在“可投稿级图件生产流水线”与文档落地规范。
+- 边界约束：不改 `rtos_sim/core|model|cli|ui` 能力，仅新增离线科研图件脚本与提示词资产。
+- 新增离线图件流水线（主文图 8 张 + 附录图 6 张，统一导出 PDF/PNG）：`scripts/paper_assets/build_dataset.py`、`scripts/paper_assets/plot_main_figures.py`、`scripts/paper_assets/plot_appendix_figures.py`、`scripts/paper_assets/style.py`
+- 新增图件/数据可追溯清单导出（含哈希）：`scripts/paper_assets/export_manifest.py`
+- 新增 Nano Banana Pro 概念图 Prompt 包（Graphical Abstract，含负向提示与版式约束）：`scripts/paper_assets/prompt_nano_banana.md`
+- 混合模式执行口径：
+  - 核心科研图（结果图/消融图/流程证据图）由本地脚本直接生成；
+  - 封面感/概念图由外部绘图模型生成，并通过 Prompt 包做风格增强与约束。

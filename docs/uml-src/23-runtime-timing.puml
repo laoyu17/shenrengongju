@@ -1,0 +1,31 @@
+@startuml
+!theme plain
+
+title RTOS Sim Runtime Timing Skeleton (Key Events)
+
+robust "holder@0" as Holder
+robust "waiter@0" as Waiter
+
+@0
+Holder is "JobReleased"
+Waiter is "JobReleased"
+
+@1
+Holder is "ResourceAcquire(r0)"
+Holder is "SegmentStart(seg0)"
+
+@100
+Waiter is "SegmentBlocked(resource_busy)"
+
+@450
+Holder is "DeadlineMiss(abort_on_miss=true)"
+Holder is "ResourceRelease(cancel_segment)"
+Waiter is "SegmentUnblocked"
+
+@451
+Waiter is "SegmentStart(seg0)"
+
+@700
+Waiter is "SegmentEnd(seg0)"
+
+@enduml

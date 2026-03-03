@@ -1,0 +1,64 @@
+@startuml
+!theme plain
+left to right direction
+skinparam packageStyle rectangle
+
+title RTOS Sim Core Package Dependencies
+
+package "rtos_sim.cli" as cli {
+  [main.py] as cli_main
+}
+
+package "rtos_sim.core" as core {
+  [engine.py] as core_engine
+  [engine_runtime.py] as core_runtime
+  [engine_dispatch.py] as core_dispatch
+  [engine_release.py] as core_release
+}
+
+package "rtos_sim.events" as events {
+  [bus.py] as events_bus
+  [types.py] as events_types
+}
+
+package "rtos_sim.metrics" as metrics {
+  [core.py] as metrics_core
+}
+
+package "rtos_sim.schedulers" as schedulers {
+  [base.py] as sch_base
+  [registry.py] as sch_registry
+}
+
+package "rtos_sim.protocols" as protocols {
+  [base.py] as pro_base
+  [registry.py] as pro_registry
+}
+
+package "rtos_sim.etm" as etm {
+  [base.py] as etm_base
+  [registry.py] as etm_registry
+}
+
+package "rtos_sim.overheads" as overheads {
+  [base.py] as oh_base
+  [registry.py] as oh_registry
+}
+
+cli_main --> core_engine
+core_engine --> events_bus
+core_engine --> metrics_core
+core_engine --> sch_base
+core_engine --> sch_registry
+core_engine --> pro_base
+core_engine --> pro_registry
+core_engine --> etm_base
+core_engine --> etm_registry
+core_engine --> oh_base
+core_engine --> oh_registry
+
+core_dispatch --> events_types
+core_runtime --> events_types
+core_release --> events_types
+
+@enduml

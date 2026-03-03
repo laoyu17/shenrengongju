@@ -1,0 +1,73 @@
+@startuml
+!theme plain
+autonumber
+
+title RTOS Sim Runtime Sequence (L2)
+
+actor "CLI cmd_run" as CLI
+participant "ConfigLoader" as Loader
+participant "SimEngine" as Engine
+participant "engine_runtime\nadvance_once()" as Runtime
+participant "engine_release\nprocess_releases()" as Release
+participant "IScheduler" as Scheduler
+participant "IResourceProtocol" as Protocol
+participant "EventBus" as Bus
+participant "CoreMetrics" as Metrics
+participant "Audit\nbuild_audit_report()" as Audit
+
+CLI -> Loader : load(config)
+Loader --> CLI : ModelSpec
+CLI -> Engine : build(spec)
+CLI -> Engine : run(until)
+
+loop while engine.now < horizon
+  Engine -> Runtime : _advance_once(horizon)
+  Runtime -> Release : process_releases(now)
+  Release -> Bus : JobReleased / SegmentReady
+  Release -> Scheduler : on_release() / on_segment_ready()
+
+  Runtime -> Scheduler : schedule(now, snapshot)
+  Scheduler --> Runtime : Decision[]
+
+  Runtime -> Engine : _apply_dispatch(job, segment, core)
+  Engine -> Protocol : request(segment, resource, core, priority)
+
+  alt granted
+    Protocol --> Engine : granted=True
+    Engine -> Bus : ResourceAcquire
+    Engine -> Bus : SegmentStart
+  else blocked(reason=resource_busy/system_ceiling_block)
+    Protocol --> Engine : granted=False
+    alt policy=atomic_rollback and partial hold exists
+      Engine -> Protocol : release(acquired resources)
+      Engine -> Bus : ResourceRelease(reason=acquire_rollback)
+    end
+    Engine -> Bus : SegmentBlocked
+  end
+
+  Runtime -> Engine : _complete_finished_segments(now)
+  Engine -> Bus : SegmentEnd
+  Engine -> Protocol : release(resource)
+  Protocol --> Engine : woken segment(s)
+  Engine -> Bus : ResourceRelease + SegmentUnblocked
+  Engine -> Bus : JobComplete (all segments done)
+
+  Runtime -> Runtime : _check_deadline_miss(now)
+  alt now > absolute_deadline
+    Runtime -> Bus : DeadlineMiss
+    alt abort_on_miss == true
+      Runtime -> Engine : _abort_job(job_id)
+      Engine -> Bus : Preempt(reason=abort_on_miss)
+      Engine -> Bus : ResourceRelease(reason=cancel_segment)
+    end
+  end
+
+  Bus --> Metrics : consume(event)
+end
+
+CLI -> Engine : events / metric_report()
+CLI -> Audit : build_audit_report(events, scheduler, relations)
+Audit --> CLI : audit report
+CLI -> CLI : write events.jsonl / metrics.json / audit.json
+
+@enduml

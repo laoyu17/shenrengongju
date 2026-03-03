@@ -1,0 +1,42 @@
+@startuml
+!theme plain
+left to right direction
+
+title RTOS Sim Use Cases (CLI + UI + Research Audit)
+
+actor "CLI User" as CLIUser
+actor "UI User" as UIUser
+actor "Research Audit User" as ResearchUser
+
+rectangle "RTOS Sim System" {
+  usecase "Validate Config\n(validate)" as UCValidate
+  usecase "Run Simulation + Export\n(run + events/metrics/audit)" as UCRun
+  usecase "Batch Experiments\n(batch-run)" as UCBatch
+  usecase "Compare Metrics\n(compare)" as UCCompare
+  usecase "Inspect Model Relations\n(inspect-model)" as UCInspect
+  usecase "Migrate Legacy Config\n(migrate-config)" as UCMigrate
+
+  usecase "UI Launch/Run" as UIRun
+  usecase "UI Pause/Resume/Step" as UIPause
+
+  usecase "Research Counterexample Audit\n(research_case_suite.py)" as UCAuditSuite
+  usecase "Research Report Generation\n(research_report.py)" as UCResearchReport
+}
+
+CLIUser --> UCValidate
+CLIUser --> UCRun
+CLIUser --> UCBatch
+CLIUser --> UCCompare
+CLIUser --> UCInspect
+CLIUser --> UCMigrate
+
+UIUser --> UIRun
+UIUser --> UIPause
+
+ResearchUser --> UCAuditSuite
+ResearchUser --> UCResearchReport
+
+UCRun --> UCResearchReport : provides audit artifacts
+UCInspect --> UCResearchReport : provides relations artifacts
+
+@enduml

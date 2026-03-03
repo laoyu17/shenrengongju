@@ -1,0 +1,38 @@
+@startuml
+!theme plain
+
+title RTOS Sim CLI Run Activity (step loop + advance_once + audit)
+
+start
+:ConfigLoader.load(config);
+:SimEngine.build(spec);
+:resolve horizon / stop_at;
+
+if (args.step?) then (yes)
+  repeat
+    :engine.step(delta or once);
+  repeat while (engine.now < stop_at and progressed?) is (yes)
+  :engine.run(until=stop_at);
+else (no)
+  :engine.run(until=stop_at);
+endif
+
+repeat
+  :_advance_once(horizon);
+repeat while (engine.now < horizon and progressed?) is (yes)
+
+:collect events + metrics;
+if (args.audit_out?) then (yes)
+  :build_audit_report(...);
+  :write audit.json;
+  if (audit.status == pass?) then (yes)
+    :return code 0;
+  else (no)
+    :return code 2;
+  endif
+else (no)
+  :return code 0;
+endif
+
+stop
+@enduml

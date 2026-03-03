@@ -1,0 +1,94 @@
+@startuml
+!theme plain
+skinparam classAttributeIconSize 0
+
+title RTOS Sim Core Runtime Contracts & Factories (L2)
+
+interface ISimEngine {
+  +build(spec)
+  +run(until)
+  +step(delta)
+  +pause()
+  +resume()
+  +stop()
+  +reset()
+}
+
+class SimEngine
+SimEngine ..|> ISimEngine
+
+interface IScheduler {
+  +schedule(now, snapshot)
+}
+
+abstract class PriorityScheduler
+class EDFScheduler
+class RMScheduler
+
+PriorityScheduler ..|> IScheduler
+EDFScheduler --|> PriorityScheduler
+RMScheduler --|> PriorityScheduler
+
+interface IResourceProtocol {
+  +configure(resources)
+  +request(segment, resource, core, priority)
+  +release(segment, resource)
+}
+
+class MutexResourceProtocol
+class PIPResourceProtocol
+class PCPResourceProtocol
+
+MutexResourceProtocol ..|> IResourceProtocol
+PIPResourceProtocol ..|> IResourceProtocol
+PCPResourceProtocol ..|> IResourceProtocol
+
+interface IExecutionTimeModel {
+  +estimate(...)
+  +on_exec(...)
+}
+
+class ConstantExecutionTimeModel
+class TableBasedExecutionTimeModel
+
+ConstantExecutionTimeModel ..|> IExecutionTimeModel
+TableBasedExecutionTimeModel ..|> IExecutionTimeModel
+
+interface IOverheadModel {
+  +on_context_switch(...)
+  +on_migration(...)
+  +on_schedule(...)
+}
+
+class SimpleOverheadModel
+SimpleOverheadModel ..|> IOverheadModel
+
+class SchedulerRegistry <<factory>> {
+  +create_scheduler(name, params)
+}
+class ProtocolRegistry <<factory>> {
+  +create_protocol(name)
+}
+class ETMRegistry <<factory>> {
+  +create_etm(name, params)
+}
+class OverheadRegistry <<factory>> {
+  +create_overhead_model(name, params)
+}
+
+SchedulerRegistry ..> IScheduler
+ProtocolRegistry ..> IResourceProtocol
+ETMRegistry ..> IExecutionTimeModel
+OverheadRegistry ..> IOverheadModel
+
+SimEngine --> IScheduler
+SimEngine --> IResourceProtocol
+SimEngine --> IExecutionTimeModel
+SimEngine --> IOverheadModel
+
+SimEngine ..> SchedulerRegistry : build()
+SimEngine ..> ProtocolRegistry : build()
+SimEngine ..> ETMRegistry : build()
+SimEngine ..> OverheadRegistry : build()
+
+@enduml

@@ -16,9 +16,10 @@ python -m pip install -e .[ui]
 
 ## 文档索引
 
-- 详细用户手册：`docs/19-用户使用说明书.md`
+- 文档总览与治理规则：`docs/README.md`
+- 主线文档入口：`docs/README.md`（Active 清单）
+- 历史归档入口：`docs/archive/2026-02/`
 - 研究闭环验收基线：`docs/15-研究闭环验收基线.md`
-- 最新综合审查报告：`docs/18-综合审查报告-2026-02-24.md`
 - 审查问题台账：`docs/20-审查问题台账.csv`
 
 ## CLI 用法
@@ -101,6 +102,25 @@ python scripts/research_report.py --audit artifacts/research/audit.json \
   --out-csv artifacts/research/research-summary.csv \
   --out-json artifacts/research/research-report.json
 # 失败检查聚合口径：同一 rule 聚合 issue_count / sample_count / sample_event_ids
+```
+
+## 论文图件离线流水线（不影响产品能力）
+
+```bash
+# 生成论文数据集（建议投稿前使用 --regenerate 做全量重跑）
+python scripts/paper_assets/build_dataset.py --regenerate
+
+# 生成主文图（PDF + PNG）
+python scripts/paper_assets/plot_main_figures.py
+
+# 生成附录图（PDF + PNG）
+python scripts/paper_assets/plot_appendix_figures.py
+
+# 导出图件与数据清单（含哈希）
+python scripts/paper_assets/export_manifest.py
+
+# Nano Banana Pro 概念图 prompt（Graphical Abstract）
+cat scripts/paper_assets/prompt_nano_banana.md
 ```
 
 ## 测试

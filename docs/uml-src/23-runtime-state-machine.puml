@@ -1,0 +1,28 @@
+@startuml
+!theme plain
+hide empty description
+
+title RTOS Sim Runtime State Machine (Segment + Job)
+
+state "Segment Lifecycle" as SegmentLifecycle {
+  [*] --> SegmentReady
+  SegmentReady --> SegmentRunning : dispatch granted
+  SegmentRunning --> SegmentBlocked : request denied\n(resource_busy / system_ceiling_block)
+  SegmentBlocked --> SegmentUnblocked : release/cancel wakes waiter
+  SegmentUnblocked --> SegmentReady : requeue ready set
+  SegmentRunning --> SegmentFinished : complete/truncate
+  SegmentFinished --> [*]
+}
+
+state "Job Lifecycle" as JobLifecycle {
+  [*] --> JobReleased
+  JobReleased --> JobActive : first segment ready
+  JobActive --> JobCompleted : all subtasks completed
+  JobActive --> DeadlineMiss : now > absolute_deadline
+  DeadlineMiss --> Aborted : abort_on_miss=true
+  DeadlineMiss --> JobActive : abort_on_miss=false
+  JobCompleted --> [*]
+  Aborted --> [*]
+}
+
+@enduml
