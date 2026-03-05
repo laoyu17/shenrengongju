@@ -80,7 +80,9 @@
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
-  - 新增复用模式：`--reuse-existing-artifacts --pytest-output-file <path>`；当复用摘要解析为失败且未开启 `--allow-fail` 时，脚本返回非 0：`scripts/quality_snapshot.py:85`
+  - 新增复用模式：`--reuse-existing-artifacts --pytest-output-file <path>`；当复用摘要解析为失败且未开启 `--allow-fail` 时，脚本返回非 0：`scripts/quality_snapshot.py:102`
+  - 兼容性修复（2026-03-05）：脚本改为按文件直载 `rtos_sim/analysis/quality_snapshot.py`，避免经过 `rtos_sim.analysis.__init__` 引发额外依赖导入；CI 最小环境可直接执行：`scripts/quality_snapshot.py:15`
+  - 回归测试：新增 `python -S scripts/quality_snapshot.py --help` 场景，验证无 site-packages 时入口可用：`tests/test_quality_snapshot_script.py:100`
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。

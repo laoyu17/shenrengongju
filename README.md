@@ -81,6 +81,8 @@ python scripts/perf_delta.py --current artifacts/perf/perf-nightly-1000.json \
 # 生成测试/覆盖率质量快照（用于文档与评审同步）
 python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json \
   --coverage-json artifacts/quality/coverage.json
+# 兼容说明：脚本可在未安装项目依赖的环境直接运行（如 docs 基线门禁作业）
+# 复用已有产物：追加 --reuse-existing-artifacts --pytest-output-file <pytest-output.txt>
 
 # 校验文档基线字段与质量快照一致（用于文档治理门禁）
 python scripts/check_doc_baseline_consistency.py --snapshot artifacts/quality/quality-snapshot.json \

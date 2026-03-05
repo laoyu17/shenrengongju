@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import argparse
+from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
 import subprocess
 from typing import Any
 
-from rtos_sim.analysis.quality_snapshot import build_quality_snapshot
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_build_quality_snapshot():
+    module_path = PROJECT_ROOT / "rtos_sim" / "analysis" / "quality_snapshot.py"
+    spec = spec_from_file_location("quality_snapshot_module", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"unable to load quality snapshot module: {module_path}")
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    build_fn = getattr(module, "build_quality_snapshot", None)
+    if not callable(build_fn):
+        raise ImportError("quality snapshot module missing callable build_quality_snapshot")
+    return build_fn
+
+
+build_quality_snapshot = _load_build_quality_snapshot()
 
 
 def _run_command(cmd: list[str]) -> subprocess.CompletedProcess[str]:

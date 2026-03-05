@@ -3,6 +3,8 @@ from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -93,3 +95,16 @@ def test_main_reuse_mode_returns_non_zero_when_summary_has_failures(tmp_path: Pa
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["status"] == "fail"
     assert payload["command_exit_code"] == 0
+
+
+def test_cli_entrypoint_works_without_site_packages() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-S", str(MODULE_PATH), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Generate pytest+coverage quality snapshot JSON" in result.stdout
