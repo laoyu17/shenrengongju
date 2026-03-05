@@ -22,6 +22,10 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
 def _resolve_git_sha() -> str | None:
     result = _run_command(["git", "rev-parse", "HEAD"])
     if result.returncode != 0:
@@ -52,6 +56,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="always exit 0 even when pytest command fails",
     )
+    parser.add_argument(
+        "--pytest-output-file",
+        default="",
+        help="existing pytest output text path (used with --reuse-existing-artifacts)",
+    )
+    parser.add_argument(
+        "--reuse-existing-artifacts",
+        action="store_true",
+        help="build snapshot from existing pytest output and coverage JSON without running pytest",
+    )
     return parser
 
 
@@ -64,51 +78,76 @@ def main(argv: list[str] | None = None) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     coverage_path.parent.mkdir(parents=True, exist_ok=True)
 
-    pytest_summary_command = [
-        args.python_bin,
-        "-m",
-        "pytest",
-        "--maxfail=1",
-    ]
-    summary_result = _run_command(pytest_summary_command)
+    summary_exit_code = 0
+    coverage_exit_code = 0
+    pytest_output: str
+    command: str
+    if args.reuse_existing_artifacts:
+        pytest_output_raw = str(args.pytest_output_file).strip()
+        if not pytest_output_raw:
+            raise ValueError("--pytest-output-file is required when --reuse-existing-artifacts is set")
+        pytest_output_path = Path(pytest_output_raw)
+        if not pytest_output_path.exists():
+            raise FileNotFoundError(f"pytest output file not found: {pytest_output_path}")
+        if not coverage_path.exists():
+            raise FileNotFoundError(f"coverage report not found: {coverage_path}")
 
-    coverage_command = [
-        args.python_bin,
-        "-m",
-        "pytest",
-        "--cov=rtos_sim",
-        f"--cov-report=json:{coverage_path}",
-        "-q",
-    ]
-    coverage_result = _run_command(coverage_command)
-
-    coverage_payload: dict[str, Any]
-    if coverage_path.exists():
+        pytest_output = _read_text(pytest_output_path).strip()
         coverage_payload = _read_json(coverage_path)
+        command = (
+            "reuse_existing_artifacts "
+            f"pytest_output={pytest_output_path} coverage_json={coverage_path}"
+        )
     else:
-        coverage_payload = {
-            "totals": {
-                "num_statements": 0,
-                "covered_lines": 0,
-                "missing_lines": 0,
-                "percent_covered": 0.0,
-                "percent_covered_display": "0",
-            }
-        }
+        pytest_summary_command = [
+            args.python_bin,
+            "-m",
+            "pytest",
+            "--maxfail=1",
+        ]
+        summary_result = _run_command(pytest_summary_command)
+        summary_exit_code = summary_result.returncode
 
-    snapshot = build_quality_snapshot(
-        pytest_output=f"{summary_result.stdout}\n{summary_result.stderr}".strip(),
-        coverage_payload=coverage_payload,
-        command=" && ".join(
+        coverage_command = [
+            args.python_bin,
+            "-m",
+            "pytest",
+            "--cov=rtos_sim",
+            f"--cov-report=json:{coverage_path}",
+            "-q",
+        ]
+        coverage_result = _run_command(coverage_command)
+        coverage_exit_code = coverage_result.returncode
+
+        pytest_output = f"{summary_result.stdout}\n{summary_result.stderr}".strip()
+        coverage_payload: dict[str, Any]
+        if coverage_path.exists():
+            coverage_payload = _read_json(coverage_path)
+        else:
+            coverage_payload = {
+                "totals": {
+                    "num_statements": 0,
+                    "covered_lines": 0,
+                    "missing_lines": 0,
+                    "percent_covered": 0.0,
+                    "percent_covered_display": "0",
+                }
+            }
+        command = " && ".join(
             [
                 " ".join(pytest_summary_command),
                 " ".join(coverage_command),
             ]
-        ),
+        )
+
+    snapshot = build_quality_snapshot(
+        pytest_output=pytest_output,
+        coverage_payload=coverage_payload,
+        command=command,
         git_sha=_resolve_git_sha(),
-        command_exit_code=max(summary_result.returncode, coverage_result.returncode),
+        command_exit_code=max(summary_exit_code, coverage_exit_code),
     )
-    if not coverage_path.exists():
+    if not args.reuse_existing_artifacts and not coverage_path.exists():
         snapshot["status"] = "fail"
         snapshot["warning"] = f"coverage report not found: {coverage_path}"
 
@@ -117,10 +156,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.allow_fail:
         return 0
-    if summary_result.returncode != 0:
-        return summary_result.returncode
-    if coverage_result.returncode != 0:
-        return coverage_result.returncode
+    if summary_exit_code != 0:
+        return summary_exit_code
+    if coverage_exit_code != 0:
+        return coverage_exit_code
+    if snapshot.get("status") != "pass":
+        return 1
     return 0
 
 

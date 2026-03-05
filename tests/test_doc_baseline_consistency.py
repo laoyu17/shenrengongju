@@ -44,6 +44,14 @@ def _write_docs(docs_root: Path, snapshot: dict) -> None:
         f"实现快照：git_sha={sha}\n质量快照：pytest={passed} passed，coverage={coverage_percent}\n来源：{quality_path}\n",
         encoding="utf-8",
     )
+    (docs_root / "16-研究口径Issue拆解与排期.md").write_text(
+        (
+            f"当前基线：{passed} passed\n"
+            f"当前覆盖率：{coverage_percent}\n"
+            f"事实源：{quality_path}\n"
+        ),
+        encoding="utf-8",
+    )
     (docs_root / "18-综合审查报告-2026-02-24.md").write_text(
         (
             f"审查基线：git_sha={sha}\n"
@@ -79,6 +87,34 @@ def _write_docs(docs_root: Path, snapshot: dict) -> None:
             f"质量快照：pytest={passed} passed，coverage={coverage_percent}\n"
             f"line_rate={line_rate}\n"
             f"事实源：{quality_path}\n"
+        ),
+        encoding="utf-8",
+    )
+    (docs_root / "26-测试报告.md").write_text(
+        (
+            f"来源：{quality_path}\n"
+            f"代码快照：git_sha={sha}\n"
+            f"结果：{passed} passed，覆盖率 {coverage_percent}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    review_root = docs_root.parent / "review"
+    review_root.mkdir(parents=True, exist_ok=True)
+    (review_root / "02-审查总报告.md").write_text(
+        (
+            f"质量事实源：{quality_path}\n"
+            f"基线：git_sha={sha}\n"
+            f"口径：pytest={passed} passed，coverage={coverage_percent}\n"
+        ),
+        encoding="utf-8",
+    )
+    (review_root / "06-收口执行记录.md").write_text(
+        (
+            f"质量事实源：{quality_path}\n"
+            f"基线：git_sha={sha}\n"
+            f"口径：pytest={passed} passed，coverage={coverage_percent}\n"
+            f"结论：{passed} 用例全绿\n"
         ),
         encoding="utf-8",
     )
@@ -154,6 +190,118 @@ def test_run_consistency_check_detects_missing_required_token(tmp_path: Path) ->
         enforce_head_match=False,
     )
     assert any("missing required token" in item for item in errors)
+
+
+def test_run_consistency_check_detects_docs26_value_conflict(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    report_doc = docs_root / "26-测试报告.md"
+    report_doc.write_text(
+        report_doc.read_text(encoding="utf-8").replace(
+            f"{snapshot['pytest']['passed']} passed",
+            "357 passed",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        enforce_head_match=False,
+    )
+    assert any("26-测试报告.md" in item for item in errors)
+
+
+def test_run_consistency_check_detects_review_metric_conflict(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    review_doc = docs_root.parent / "review" / "06-收口执行记录.md"
+    review_doc.write_text(
+        review_doc.read_text(encoding="utf-8").replace(
+            f"{snapshot['pytest']['passed']} 用例全绿",
+            "352 用例全绿",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        enforce_head_match=False,
+    )
+    assert any("06-收口执行记录.md" in item and "case-count mismatch" in item for item in errors)
+
+
+def test_run_consistency_check_ignores_historical_passed_line(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    baseline_doc = docs_root / "21-全量基线一致性校验记录-2026-02-24.md"
+    baseline_doc.write_text(
+        baseline_doc.read_text(encoding="utf-8") + "\n历史记录：95 passed（仅用于回顾）\n",
+        encoding="utf-8",
+    )
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        enforce_head_match=False,
+    )
+    assert errors == []
+
+
+def test_run_consistency_check_supports_dated_doc_pattern(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    (docs_root / "18-综合审查报告-2026-02-24.md").rename(docs_root / "18-综合审查报告-2026-03-05.md")
+    (docs_root / "21-全量基线一致性校验记录-2026-02-24.md").rename(
+        docs_root / "21-全量基线一致性校验记录-2026-03-05.md"
+    )
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        enforce_head_match=False,
+    )
+    assert errors == []
+
+
+def test_run_consistency_check_reports_ambiguous_dated_doc_pattern(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    source = docs_root / "18-综合审查报告-2026-02-24.md"
+    (docs_root / "18-综合审查报告-2026-03-05.md").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        enforce_head_match=False,
+    )
+    assert any("18-综合审查报告-*.md" in item and "expected exactly 1 match" in item for item in errors)
 
 
 def test_run_consistency_check_detects_snapshot_head_mismatch(tmp_path: Path) -> None:

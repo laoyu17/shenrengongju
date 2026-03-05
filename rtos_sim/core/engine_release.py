@@ -20,7 +20,9 @@ def process_releases(engine: SimEngine, now: float) -> None:
 
     while engine._release_heap and engine._release_heap[0][0] <= now + 1e-12:
         release_time, release_idx, task_id = heapq.heappop(engine._release_heap)
-        task = next(t for t in engine._spec.tasks if t.id == task_id)
+        task = engine._tasks_by_id.get(task_id)
+        if task is None:
+            raise RuntimeError(f"task id not found in release queue: {task_id}")
         job_id = f"{task.id}@{release_idx}"
         absolute_deadline = release_time + task.deadline if task.deadline is not None else None
         base_priority = engine._task_priority_value(absolute_deadline, task.period)

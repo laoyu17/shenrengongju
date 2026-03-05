@@ -5,7 +5,7 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-03-01
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=d8fd356efbd34b71423c63185a457ce77e4e147d`
+- 实现快照：`git_sha=d7c36b4c283847bed358b9b4cb3538807619323a`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -56,6 +56,8 @@
 - 事件与指标导出（JSONL/JSON）已打通：`rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`rtos_sim/events/bus.py:14`
 - 已支持批量实验 runner（factors 参数矩阵 -> 汇总 CSV/JSON）：`rtos_sim/io/experiment_runner.py:24`
+- `batch-run` 已增加输出目录边界约束：批配置文件内的 `output_dir` 不允许越出批配置所在目录；CLI 显式 `--output-dir` 仍可覆盖：`rtos_sim/io/experiment_runner.py:69`
+- `batch-run` 子案例失败记录已增强可观测性：`runs[*]` 增加 `error_type` 与 `error_trace_path`，并落盘 traceback：`rtos_sim/io/experiment_runner.py:116`
 - UI 已支持结构化表单与 YAML/JSON 文本双向同步：`rtos_sim/ui/app.py:209`
 - UI 已支持多任务/多资源表格化增删改（表格 + 选中项详情联动）：`rtos_sim/ui/app.py:328`
 - UI 已支持单任务 DAG 图形化雏形（节点/边可视化 + 侧栏增删改）：`rtos_sim/ui/app.py:350`
@@ -78,6 +80,7 @@
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
+  - 新增复用模式：`--reuse-existing-artifacts --pytest-output-file <path>`；当复用摘要解析为失败且未开启 `--allow-fail` 时，脚本返回非 0：`scripts/quality_snapshot.py:85`
 
 ### 1.7 已修复：UI 有指标但 Gantt 无线段
 - 根因：`SimulationWorker` 在 `engine.build()` 前订阅事件，而 `build()` 内部 `reset()` 重建了事件总线，导致 UI 事件流被清空。

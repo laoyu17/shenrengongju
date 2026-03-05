@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from itertools import product
 import json
 from pathlib import Path
+import traceback
 from typing import Any
 
 import yaml
@@ -67,20 +68,24 @@ class ExperimentRunner:
 
         run_output_raw = output_dir or batch_payload.get("output_dir")
         if isinstance(run_output_raw, str) and run_output_raw:
-            run_output_dir = self._resolve_path(batch_path.parent, run_output_raw)
+            run_output_dir = self._resolve_path(
+                batch_path.parent,
+                run_output_raw,
+                require_within_base=output_dir is None,
+                field_name="batch output_dir",
+            )
         else:
             run_output_dir = (batch_path.parent / "artifacts" / "batch").resolve()
         run_output_dir.mkdir(parents=True, exist_ok=True)
 
         factor_paths = sorted(normalized_factors)
         factor_values = [normalized_factors[path] for path in factor_paths]
-        combinations = list(product(*factor_values))
         until_override = batch_payload.get("until")
         if until_override is not None and not isinstance(until_override, (int, float)):
             raise ConfigError("batch 'until' must be number when provided")
 
         rows: list[dict[str, Any]] = []
-        for idx, combo in enumerate(combinations):
+        for idx, combo in enumerate(product(*factor_values)):
             run_id = f"run_{idx:03d}"
             run_dir = run_output_dir / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +115,13 @@ class ExperimentRunner:
                 row.update(metrics)
             except Exception as exc:  # noqa: BLE001 - batch should continue with error summary
                 row["status"] = "error"
-                row["error"] = str(exc)
+                error_type = type(exc).__name__
+                error_message = str(exc)
+                row["error"] = f"{error_type}: {error_message}" if error_message else error_type
+                row["error_type"] = error_type
+                trace_path = run_dir / "error.traceback.txt"
+                trace_path.write_text(traceback.format_exc(), encoding="utf-8")
+                row["error_trace_path"] = str(trace_path)
 
             rows.append(row)
 
@@ -195,11 +206,28 @@ class ExperimentRunner:
             raise ConfigError(f"config root must be object: {path}")
         return payload
 
-    def _resolve_path(self, base_dir: Path, raw_path: str) -> Path:
+    def _resolve_path(
+        self,
+        base_dir: Path,
+        raw_path: str,
+        *,
+        require_within_base: bool = False,
+        field_name: str = "path",
+    ) -> Path:
+        base_resolved = base_dir.resolve()
         path = Path(raw_path)
         if path.is_absolute():
-            return path
-        return (base_dir / path).resolve()
+            resolved = path.resolve()
+        else:
+            resolved = (base_dir / path).resolve()
+        if require_within_base:
+            try:
+                resolved.relative_to(base_resolved)
+            except ValueError as exc:
+                raise ConfigError(
+                    f"{field_name} escapes batch workspace '{base_resolved}': {raw_path!r}"
+                ) from exc
+        return resolved
 
     def _write_summary_csv(self, path: Path, rows: list[dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

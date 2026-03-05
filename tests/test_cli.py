@@ -99,6 +99,65 @@ factors:
     assert payload["total_runs"] == 2
     assert payload["succeeded_runs"] == 1
     assert payload["failed_runs"] == 1
+    failed_run = next(item for item in payload["runs"] if item.get("status") == "error")
+    assert isinstance(failed_run.get("error"), str) and failed_run["error"]
+    assert isinstance(failed_run.get("error_type"), str) and failed_run["error_type"]
+    trace_path = Path(str(failed_run.get("error_trace_path", "")))
+    assert trace_path.exists()
+
+
+def test_cli_batch_run_rejects_config_output_dir_outside_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    base_config = workspace / "base.yaml"
+    base_config.write_text(
+        (EXAMPLES / "at01_single_dag_single_core.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    batch_config = workspace / "batch.yaml"
+    batch_config.write_text(
+        """
+version: "0.1"
+base_config: "base.yaml"
+output_dir: "../escape-out"
+factors:
+  scheduler.name: ["edf"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    code = main(["batch-run", "-b", str(batch_config)])
+    assert code == 1
+    assert not (tmp_path / "escape-out" / "summary.json").exists()
+
+
+def test_cli_batch_run_allows_cli_override_output_dir_outside_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    base_config = workspace / "base.yaml"
+    base_config.write_text(
+        (EXAMPLES / "at01_single_dag_single_core.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    batch_config = workspace / "batch.yaml"
+    batch_config.write_text(
+        """
+version: "0.1"
+base_config: "base.yaml"
+output_dir: "safe-out"
+factors:
+  scheduler.name: ["edf"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cli_output_dir = tmp_path / "cli-outside"
+    code = main(["batch-run", "-b", str(batch_config), "--output-dir", str(cli_output_dir)])
+    assert code == 0
+    assert (cli_output_dir / "summary.json").exists()
+    assert (cli_output_dir / "summary.csv").exists()
 
 
 def test_cli_compare_outputs_json_and_csv(tmp_path: Path) -> None:

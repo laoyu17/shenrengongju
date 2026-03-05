@@ -46,7 +46,37 @@ jobs:
           python -m pip install -e .[dev,ui]
 
       - name: Run unit tests
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          mkdir -p artifacts/quality
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          cmd = [
+              sys.executable,
+              "-m",
+              "pytest",
+              "--cov=rtos_sim",
+              "--cov-report=json:artifacts/quality/coverage.json",
+              "-q",
+          ]
+          result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+          output = f"{result.stdout}\n{result.stderr}".strip()
+          print(output)
+          pathlib.Path("artifacts/quality/pytest-output.txt").write_text(output + "\n", encoding="utf-8")
+          raise SystemExit(result.returncode)
+          PY
+
+      - name: Upload quality inputs (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-inputs-ubuntu
+          path: |
+            artifacts/quality/coverage.json
+            artifacts/quality/pytest-output.txt
 
   package:
     name: Build Distribution Artifacts
@@ -284,6 +314,42 @@ jobs:
         with:
           name: strict-plan-gate
           path: review/runtime/i2/strict_plan_pipeline_ci
+
+  doc_baseline_consistency_gate:
+    name: Docs Baseline Consistency Gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download quality inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: quality-inputs-ubuntu
+          path: artifacts/quality
+
+      - name: Generate quality snapshot
+        run: |
+          python scripts/quality_snapshot.py \
+            --output artifacts/quality/quality-snapshot.json \
+            --coverage-json artifacts/quality/coverage.json \
+            --pytest-output-file artifacts/quality/pytest-output.txt \
+            --reuse-existing-artifacts
+
+      - name: Run docs baseline consistency check
+        run: |
+          python scripts/check_doc_baseline_consistency.py \
+            --snapshot artifacts/quality/quality-snapshot.json \
+            --docs-root docs
 
   perf:
     name: Perf Report (PR/Push, 100/300)

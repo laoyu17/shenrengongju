@@ -142,6 +142,7 @@ class SimEngine(ISimEngine):
         self._aborted_jobs: set[str] = set()
         self._deterministic_hyper_period: float | None = None
         self._task_resource_usage: dict[str, set[str]] = {}
+        self._tasks_by_id: dict[str, TaskGraphSpec] = {}
         self._active_job_priorities: dict[str, float] = {}
 
         self._paused = False
@@ -160,6 +161,7 @@ class SimEngine(ISimEngine):
         self._arrival_rng = random.Random(spec.sim.seed)
         self._resource_acquire_policy = self._resolve_resource_acquire_policy(spec.scheduler.params)
         self._spec = spec
+        self._tasks_by_id = {task.id: task for task in spec.tasks}
 
         self._scheduler = self._external_scheduler or create_scheduler(
             spec.scheduler.name,
@@ -262,6 +264,7 @@ class SimEngine(ISimEngine):
         self._aborted_jobs = set()
         self._deterministic_hyper_period = None
         self._task_resource_usage = {}
+        self._tasks_by_id = {}
         self._active_job_priorities = {}
         self._paused = False
         self._stopped = False
