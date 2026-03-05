@@ -58,7 +58,7 @@ run_step 08 export_os_at06_strict python -m rtos_sim.cli.main export-os-config -
   --out-json "$OUT_DIR/artifacts/at06_os.json" \
   --out-csv "$OUT_DIR/artifacts/at06_os.csv"
 
-run_step 09 frozen_sched_rate_gate "$ROOT_DIR/review/scripts/i1_freeze_sched_rate_gate.sh" "$OUT_DIR/artifacts/sched_rate_gate"
+run_step 09 frozen_sched_rate_gate bash "$ROOT_DIR/review/scripts/i1_freeze_sched_rate_gate.sh" "$OUT_DIR/artifacts/sched_rate_gate"
 
 if [[ $FAIL_COUNT -ne 0 ]]; then
   echo "[ERROR] I1-2 CI gate failed, fail_count=$FAIL_COUNT" >&2
