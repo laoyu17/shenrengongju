@@ -47,6 +47,23 @@ def test_parse_pytest_summary_without_duration_suffix() -> None:
     assert summary["summary_line"] == "1 failed, 203 passed, 2 skipped"
 
 
+def test_parse_pytest_summary_with_assignment_style() -> None:
+    output = "pytest result: passed=361 failed=0 skipped=2"
+    summary = parse_pytest_summary(output)
+
+    assert summary["passed"] == 361
+    assert summary["failed"] == 0
+    assert summary["skipped"] == 2
+
+
+def test_parse_pytest_summary_with_tests_keyword_style() -> None:
+    output = "summary: 361 tests passed, 0 failed"
+    summary = parse_pytest_summary(output)
+
+    assert summary["passed"] == 361
+    assert summary["failed"] == 0
+
+
 def test_parse_pytest_summary_raises_when_missing() -> None:
     with pytest.raises(ValueError, match="pytest summary line"):
         parse_pytest_summary("no summary")

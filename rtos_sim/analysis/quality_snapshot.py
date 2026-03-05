@@ -7,7 +7,62 @@ import re
 from typing import Any
 
 _SUMMARY_TOKENS = {"passed", "failed", "error", "errors", "skipped", "xfailed", "xpassed"}
-_SUMMARY_PATTERN = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
+_SUMMARY_PATTERN = re.compile(
+    r"(?<![=\w])(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)\b(?!\s*=)",
+    re.IGNORECASE,
+)
+_SUMMARY_ASSIGNMENT_PATTERN = re.compile(
+    r"\b(passed|failed|error|errors|skipped|xfailed|xpassed)\s*[:=]\s*(\d+)\b",
+    re.IGNORECASE,
+)
+_SUMMARY_TOKEN_FIRST_PATTERN = re.compile(
+    r"\b(passed|failed|error|errors|skipped|xfailed|xpassed)\s+(\d+)\b",
+    re.IGNORECASE,
+)
+_SUMMARY_TESTS_PATTERN = re.compile(
+    r"\b(\d+)\s+tests?\s+(passed|failed|error|errors|skipped|xfailed|xpassed)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_counts(text: str) -> dict[str, int]:
+    counts = {
+        "passed": 0,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+    }
+    found = False
+
+    for count_raw, token_raw in _SUMMARY_PATTERN.findall(text):
+        token = token_raw.lower()
+        key = "errors" if token in {"error", "errors"} else token
+        counts[key] += int(count_raw)
+        found = True
+
+    for token_raw, count_raw in _SUMMARY_ASSIGNMENT_PATTERN.findall(text):
+        token = token_raw.lower()
+        key = "errors" if token in {"error", "errors"} else token
+        counts[key] += int(count_raw)
+        found = True
+
+    for token_raw, count_raw in _SUMMARY_TOKEN_FIRST_PATTERN.findall(text):
+        token = token_raw.lower()
+        key = "errors" if token in {"error", "errors"} else token
+        counts[key] += int(count_raw)
+        found = True
+
+    for count_raw, token_raw in _SUMMARY_TESTS_PATTERN.findall(text):
+        token = token_raw.lower()
+        key = "errors" if token in {"error", "errors"} else token
+        counts[key] += int(count_raw)
+        found = True
+
+    if not found:
+        return {}
+    return counts
 
 
 def parse_pytest_summary(output: str) -> dict[str, Any]:
@@ -19,12 +74,13 @@ def parse_pytest_summary(output: str) -> dict[str, Any]:
         line = raw_line.strip()
         if not line:
             continue
-        matches = _SUMMARY_PATTERN.findall(line)
-        if not matches:
+        counts = _extract_counts(line)
+        if not counts:
             continue
         # Prefer canonical summary lines with duration suffix.
         if " in " in line:
             summary_line = line
+            fallback_line = None
             break
         if fallback_line is None:
             fallback_line = line
@@ -33,19 +89,14 @@ def parse_pytest_summary(output: str) -> dict[str, Any]:
         summary_line = fallback_line
 
     if summary_line is None:
+        aggregated_counts = _extract_counts(output)
+        if aggregated_counts:
+            return {**aggregated_counts, "summary_line": ""}
         raise ValueError("unable to find pytest summary line")
 
-    counts = {
-        "passed": 0,
-        "failed": 0,
-        "errors": 0,
-        "skipped": 0,
-        "xfailed": 0,
-        "xpassed": 0,
-    }
-    for count_raw, token in _SUMMARY_PATTERN.findall(summary_line):
-        key = "errors" if token in {"error", "errors"} else token
-        counts[key] += int(count_raw)
+    counts = _extract_counts(summary_line)
+    if not counts:
+        raise ValueError("unable to parse pytest summary counters")
 
     return {**counts, "summary_line": summary_line}
 
