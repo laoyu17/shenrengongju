@@ -5,7 +5,7 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-03-01
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=c8da755615a05d9e8a94e08dc5dea5076f948c81`
+- 实现快照：`git_sha=be6d01360f544d9a239f32ff0ae4b434d6bdf4a7`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -73,8 +73,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`examples/at06_time_deterministic.yaml:1`、`examples/at09_table_based_etm.yaml:1`、`examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`tests/test_model_validation.py:41`、`tests/test_engine_scenarios.py:22`、`tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`tests/test_audit.py:1`、`tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-03-01）：`python -m pytest --maxfail=1` 通过，`307 passed`
-- 当前覆盖率快照（2026-03-01）：总覆盖率 90.94%（`coverage.line_rate=90.94124884650877`，来源：`artifacts/quality/quality-snapshot.json`）
+- 当前本地测试状态（2026-03-04）：`python -m pytest --maxfail=1` 通过，`357 passed`
+- 当前覆盖率快照（2026-03-04）：总覆盖率 89.68%（`coverage.line_rate=89.67967244701349`，来源：`artifacts/quality/quality-snapshot.json`）
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
@@ -305,7 +305,7 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `307 passed / 90.94%`）。
+- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `357 passed / 89.68%`）。
 - 历史首轮审查文档新增醒目提示，避免误读历史测试统计为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
