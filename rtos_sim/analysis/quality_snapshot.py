@@ -14,13 +14,23 @@ def parse_pytest_summary(output: str) -> dict[str, Any]:
     """Parse the terminal pytest summary line into normalized counters."""
 
     summary_line: str | None = None
+    fallback_line: str | None = None
     for raw_line in reversed(output.splitlines()):
         line = raw_line.strip()
-        if not line or " in " not in line:
+        if not line:
             continue
-        if any(f" {token}" in line for token in _SUMMARY_TOKENS):
+        matches = _SUMMARY_PATTERN.findall(line)
+        if not matches:
+            continue
+        # Prefer canonical summary lines with duration suffix.
+        if " in " in line:
             summary_line = line
             break
+        if fallback_line is None:
+            fallback_line = line
+
+    if summary_line is None:
+        summary_line = fallback_line
 
     if summary_line is None:
         raise ValueError("unable to find pytest summary line")
@@ -76,14 +86,32 @@ def build_quality_snapshot(
 ) -> dict[str, Any]:
     """Build a single quality snapshot from pytest and coverage outputs."""
 
-    pytest_summary = parse_pytest_summary(pytest_output)
+    pytest_parse_error: str | None = None
+    try:
+        pytest_summary = parse_pytest_summary(pytest_output)
+    except ValueError as exc:
+        pytest_parse_error = str(exc)
+        pytest_summary = {
+            "passed": 0,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "summary_line": "",
+        }
     coverage_summary = summarize_coverage_payload(coverage_payload)
 
     status = "pass"
-    if pytest_summary["failed"] > 0 or pytest_summary["errors"] > 0 or command_exit_code != 0:
+    if (
+        pytest_parse_error is not None
+        or pytest_summary["failed"] > 0
+        or pytest_summary["errors"] > 0
+        or command_exit_code != 0
+    ):
         status = "fail"
 
-    return {
+    snapshot = {
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "status": status,
         "git_sha": git_sha,
@@ -92,3 +120,6 @@ def build_quality_snapshot(
         "pytest": pytest_summary,
         "coverage": coverage_summary,
     }
+    if pytest_parse_error is not None:
+        snapshot["warning"] = f"pytest summary parse failed: {pytest_parse_error}"
+    return snapshot
