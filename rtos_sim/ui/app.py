@@ -7,7 +7,6 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
-import zlib
 
 import pyqtgraph as pg
 import yaml
@@ -44,7 +43,6 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -52,7 +50,16 @@ from PyQt6.QtWidgets import (
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader
 
-from .controllers import CompareController, DagController, FormController, RunController, TimelineController
+from .controllers import (
+    CompareController,
+    DagController,
+    FormController,
+    GanttStyleController,
+    PlanningController,
+    RunController,
+    TelemetryController,
+    TimelineController,
+)
 from .config_doc import ConfigDocument
 from .dag_layout import compute_auto_layout_positions
 from .gantt_helpers import (
@@ -67,6 +74,8 @@ from .gantt_helpers import (
     safe_optional_int,
     task_from_job,
 )
+from .panel_builders import build_compare_group, build_planning_tab
+from .panel_state import ComparePanelState, TelemetryPanelState
 from .table_validation import build_resource_table_errors, build_task_table_errors
 from .worker import SimulationWorker
 
@@ -204,12 +213,13 @@ class MainWindow(QMainWindow):
         self._lane_height = 0.62
         self._segment_label_min_duration = 0.85
 
-        self._hovered_segment_key: str | None = None
-        self._locked_segment_key: str | None = None
+        self._compare_panel_state = ComparePanelState()
+        self._telemetry_panel_state = TelemetryPanelState()
         self._latest_metrics_report: dict[str, Any] = {}
-        self._compare_left_metrics: dict[str, Any] | None = None
-        self._compare_right_metrics: dict[str, Any] | None = None
-        self._latest_compare_report: dict[str, Any] | None = None
+        self._latest_plan_result: Any | None = None
+        self._latest_plan_spec_fingerprint: str | None = None
+        self._latest_planning_wcrt_report: Any | None = None
+        self._latest_planning_os_payload: dict[str, Any] | None = None
 
         self._editor = QPlainTextEdit()
         self._editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -331,6 +341,67 @@ class MainWindow(QMainWindow):
         self._form_sim_seed.setRange(-2_147_483_648, 2_147_483_647)
         self._form_sim_seed.setValue(42)
 
+        self._planning_enabled = QCheckBox("planning.enabled")
+        self._planning_enabled.setChecked(False)
+        self._planning_planner = QComboBox()
+        self._planning_planner.addItems(["np_edf", "np_dm", "precautious_dm", "lp"])
+        self._planning_lp_objective = QComboBox()
+        self._planning_lp_objective.addItems(["response_time", "spread_execution"])
+        self._planning_task_scope = QComboBox()
+        self._planning_task_scope.addItems(["sync_only", "sync_and_dynamic_rt", "all"])
+        self._planning_include_non_rt = QCheckBox("include_non_rt")
+        self._planning_horizon = QDoubleSpinBox()
+        self._planning_horizon.setRange(0.0, 1_000_000.0)
+        self._planning_horizon.setDecimals(3)
+        self._planning_horizon.setSpecialValueText("auto")
+        self._planning_horizon.setValue(0.0)
+        self._planning_time_limit = QDoubleSpinBox()
+        self._planning_time_limit.setRange(0.1, 1_000_000.0)
+        self._planning_time_limit.setDecimals(3)
+        self._planning_time_limit.setValue(30.0)
+        self._planning_wcrt_max_iterations = QSpinBox()
+        self._planning_wcrt_max_iterations.setRange(1, 10_000)
+        self._planning_wcrt_max_iterations.setValue(64)
+        self._planning_wcrt_epsilon = QDoubleSpinBox()
+        self._planning_wcrt_epsilon.setDecimals(12)
+        self._planning_wcrt_epsilon.setRange(1e-12, 1.0)
+        self._planning_wcrt_epsilon.setValue(1e-9)
+        self._planning_plan_button = QPushButton("Plan Static")
+        self._planning_wcrt_button = QPushButton("Analyze WCRT")
+        self._planning_export_button = QPushButton("Export OS Config")
+
+        self._planning_random_seed = QSpinBox()
+        self._planning_random_seed.setRange(-2_147_483_648, 2_147_483_647)
+        self._planning_random_seed.setValue(20260304)
+        self._planning_random_load_tier = QComboBox()
+        self._planning_random_load_tier.addItems(["low", "medium", "high"])
+        self._planning_random_rule = QComboBox()
+        self._planning_random_rule.addItems(["single_chain", "fork_join"])
+        self._planning_random_task_count = QSpinBox()
+        self._planning_random_task_count.setRange(1, 64)
+        self._planning_random_task_count.setValue(3)
+        self._planning_random_generate_button = QPushButton("Generate Random Tasks")
+
+        self._planning_windows_table = QTableWidget(0, 8)
+        self._planning_windows_table.setHorizontalHeaderLabels(
+            ["segment_key", "task_id", "subtask_id", "segment_id", "core_id", "start", "end", "deadline"]
+        )
+        self._planning_windows_table.verticalHeader().setVisible(False)
+        self._planning_windows_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._planning_wcrt_table = QTableWidget(0, 4)
+        self._planning_wcrt_table.setHorizontalHeaderLabels(["task_id", "wcrt", "deadline", "schedulable"])
+        self._planning_wcrt_table.verticalHeader().setVisible(False)
+        self._planning_wcrt_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._planning_os_table = QTableWidget(0, 7)
+        self._planning_os_table.setHorizontalHeaderLabels(
+            ["task_id", "priority", "core_binding", "primary_core", "window_count", "deadline", "total_wcet"]
+        )
+        self._planning_os_table.verticalHeader().setVisible(False)
+        self._planning_os_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._planning_output = QPlainTextEdit()
+        self._planning_output.setReadOnly(True)
+        self._planning_output.setMaximumHeight(180)
+
         self._validate_button = QPushButton("Validate")
         self._run_button = QPushButton("Run")
         self._stop_button = QPushButton("Stop")
@@ -371,6 +442,11 @@ class MainWindow(QMainWindow):
         self._metrics = QTextEdit()
         self._metrics.setReadOnly(True)
 
+        self._state_legend = QLabel("State Legend: Released / Ready / Executing / Blocked")
+        self._state_view = QPlainTextEdit()
+        self._state_view.setReadOnly(True)
+        self._state_view.setMaximumHeight(150)
+
         self._details = QPlainTextEdit()
         self._details.setReadOnly(True)
         self._details.setMaximumHeight(200)
@@ -396,7 +472,10 @@ class MainWindow(QMainWindow):
         self._compare_controller = CompareController(self, _log_ui_error)
         self._form_controller = FormController(self, _log_ui_error)
         self._dag_controller = DagController(self)
+        self._gantt_style_controller = GanttStyleController(self)
+        self._planning_controller = PlanningController(self, _log_ui_error)
         self._run_controller = RunController(self, _log_ui_error)
+        self._telemetry_controller = TelemetryController(self)
         self._timeline_controller = TimelineController(self)
 
         self._build_layout()
@@ -406,6 +485,54 @@ class MainWindow(QMainWindow):
             self._load_file(config_path)
         else:
             self._sync_form_to_text(show_message=False)
+
+    @property
+    def _compare_left_metrics(self) -> dict[str, Any] | None:
+        return self._compare_panel_state.left_metrics
+
+    @_compare_left_metrics.setter
+    def _compare_left_metrics(self, value: dict[str, Any] | None) -> None:
+        self._compare_panel_state.left_metrics = value
+
+    @property
+    def _compare_right_metrics(self) -> dict[str, Any] | None:
+        return self._compare_panel_state.right_metrics
+
+    @_compare_right_metrics.setter
+    def _compare_right_metrics(self, value: dict[str, Any] | None) -> None:
+        self._compare_panel_state.right_metrics = value
+
+    @property
+    def _latest_compare_report(self) -> dict[str, Any] | None:
+        return self._compare_panel_state.latest_report
+
+    @_latest_compare_report.setter
+    def _latest_compare_report(self, value: dict[str, Any] | None) -> None:
+        self._compare_panel_state.latest_report = value
+
+    @property
+    def _state_transitions(self) -> list[str]:
+        return self._telemetry_panel_state.state_transitions
+
+    @_state_transitions.setter
+    def _state_transitions(self, value: list[str]) -> None:
+        self._telemetry_panel_state.state_transitions = list(value)
+
+    @property
+    def _hovered_segment_key(self) -> str | None:
+        return self._telemetry_panel_state.hovered_segment_key
+
+    @_hovered_segment_key.setter
+    def _hovered_segment_key(self, value: str | None) -> None:
+        self._telemetry_panel_state.hovered_segment_key = value
+
+    @property
+    def _locked_segment_key(self) -> str | None:
+        return self._telemetry_panel_state.locked_segment_key
+
+    @_locked_segment_key.setter
+    def _locked_segment_key(self, value: str | None) -> None:
+        self._telemetry_panel_state.locked_segment_key = value
 
     def _build_layout(self) -> None:
         root = QWidget(self)
@@ -555,8 +682,11 @@ class MainWindow(QMainWindow):
         text_tab_layout.addWidget(QLabel("YAML / JSON Text"))
         text_tab_layout.addWidget(self._editor)
 
+        planning_tab = build_planning_tab(self)
+
         self._editor_tabs.addTab(form_tab, "Structured Form")
         self._editor_tabs.addTab(text_tab, "YAML/JSON")
+        self._editor_tabs.addTab(planning_tab, "Planning")
         editor_layout.addWidget(self._editor_tabs)
         splitter.addWidget(editor_container)
 
@@ -580,32 +710,13 @@ class MainWindow(QMainWindow):
         telemetry_layout = QVBoxLayout(telemetry_panel)
         telemetry_layout.addWidget(QLabel("Metrics / Logs"))
         telemetry_layout.addWidget(self._metrics, stretch=2)
+        telemetry_layout.addWidget(self._state_legend)
+        telemetry_layout.addWidget(self._state_view, stretch=1)
         telemetry_layout.addWidget(QLabel("Segment Details (Hover/Click lock)"))
         telemetry_layout.addWidget(self._details, stretch=2)
         telemetry_layout.addWidget(self._compare_toggle_button)
 
-        self._compare_group = QGroupBox("FR-13 Compare (MVP)")
-        compare_layout = QVBoxLayout(self._compare_group)
-        compare_label_form = QFormLayout()
-        compare_label_form.addRow("left label", self._compare_left_label)
-        compare_label_form.addRow("right label", self._compare_right_label)
-        compare_layout.addLayout(compare_label_form)
-        compare_actions_grid = QGridLayout()
-        compare_actions_grid.addWidget(self._compare_load_left_button, 0, 0)
-        compare_actions_grid.addWidget(self._compare_load_right_button, 0, 1)
-        compare_actions_grid.addWidget(self._compare_use_latest_left_button, 1, 0)
-        compare_actions_grid.addWidget(self._compare_use_latest_right_button, 1, 1)
-        compare_actions_grid.setColumnStretch(0, 1)
-        compare_actions_grid.setColumnStretch(1, 1)
-        compare_layout.addLayout(compare_actions_grid)
-        compare_export_grid = QGridLayout()
-        compare_export_grid.addWidget(self._compare_build_button, 0, 0)
-        compare_export_grid.addWidget(self._compare_export_json_button, 0, 1)
-        compare_export_grid.addWidget(self._compare_export_csv_button, 1, 0, 1, 2)
-        compare_export_grid.setColumnStretch(0, 1)
-        compare_export_grid.setColumnStretch(1, 1)
-        compare_layout.addLayout(compare_export_grid)
-        compare_layout.addWidget(self._compare_output)
+        self._compare_group = build_compare_group(self)
         self._compare_group.setVisible(False)
         telemetry_layout.addWidget(self._compare_group)
 
@@ -669,6 +780,10 @@ class MainWindow(QMainWindow):
         self._compare_build_button.clicked.connect(self._on_compare_build)
         self._compare_export_json_button.clicked.connect(self._on_compare_export_json)
         self._compare_export_csv_button.clicked.connect(self._on_compare_export_csv)
+        self._planning_plan_button.clicked.connect(self._on_plan_static)
+        self._planning_wcrt_button.clicked.connect(self._on_plan_analyze_wcrt)
+        self._planning_export_button.clicked.connect(self._on_plan_export_os_config)
+        self._planning_random_generate_button.clicked.connect(self._on_plan_generate_random_tasks)
 
         self._editor.textChanged.connect(self._on_text_edited)
         self._register_form_change_signals()
@@ -704,6 +819,11 @@ class MainWindow(QMainWindow):
             self._form_tie_breaker,
             self._form_event_id_mode,
             self._form_resource_acquire_policy,
+            self._planning_planner,
+            self._planning_lp_objective,
+            self._planning_task_scope,
+            self._planning_random_load_tier,
+            self._planning_random_rule,
         ]
         for widget in combo_boxes:
             widget.currentIndexChanged.connect(self._mark_form_dirty)
@@ -713,6 +833,8 @@ class MainWindow(QMainWindow):
             self._form_task_abort_on_miss,
             self._form_segment_preemptible,
             self._form_allow_preempt,
+            self._planning_enabled,
+            self._planning_include_non_rt,
         ]
         for widget in check_boxes:
             widget.toggled.connect(self._mark_form_dirty)
@@ -725,6 +847,12 @@ class MainWindow(QMainWindow):
             self._form_segment_wcet,
             self._form_sim_duration,
             self._form_sim_seed,
+            self._planning_horizon,
+            self._planning_time_limit,
+            self._planning_wcrt_max_iterations,
+            self._planning_wcrt_epsilon,
+            self._planning_random_seed,
+            self._planning_random_task_count,
         ]
         for widget in spins:
             widget.valueChanged.connect(self._mark_form_dirty)
@@ -734,8 +862,15 @@ class MainWindow(QMainWindow):
             return
         self._config_doc = None
         self._dag_manual_positions_by_task.clear()
+        self._invalidate_planning_cache()
         if self._editor_tabs.currentIndex() == 1:
             self._form_hint.setText("Text changed. Use 'Sync Text -> Form' to refresh form.")
+
+    def _invalidate_planning_cache(self) -> None:
+        self._latest_plan_result = None
+        self._latest_plan_spec_fingerprint = None
+        self._latest_planning_wcrt_report = None
+        self._latest_planning_os_payload = None
 
     def _mark_form_dirty(self, *args: Any) -> None:  # noqa: ARG002
         if self._suspend_form_events:
@@ -793,6 +928,7 @@ class MainWindow(QMainWindow):
         scheduler = doc.get_scheduler()
         scheduler_params = scheduler.get("params")
         params = scheduler_params if isinstance(scheduler_params, dict) else {}
+        planning = doc.get_planning()
         sim = doc.get_sim()
 
         self._suspend_form_events = True
@@ -820,6 +956,19 @@ class MainWindow(QMainWindow):
             )
             self._form_sim_duration.setValue(safe_float(sim.get("duration"), 10.0))
             self._form_sim_seed.setValue(int(safe_float(sim.get("seed"), 42)))
+
+            self._planning_enabled.setChecked(self._to_bool(planning.get("enabled"), False))
+            self._set_combo_value(self._planning_planner, str(planning.get("planner", "np_edf")))
+            self._set_combo_value(
+                self._planning_lp_objective,
+                str(planning.get("lp_objective", "response_time")),
+            )
+            self._set_combo_value(
+                self._planning_task_scope,
+                str(planning.get("task_scope", "sync_only")),
+            )
+            self._planning_include_non_rt.setChecked(self._to_bool(planning.get("include_non_rt"), False))
+            self._planning_horizon.setValue(safe_float(planning.get("horizon"), 0.0))
         finally:
             self._suspend_form_events = False
 
@@ -1360,6 +1509,17 @@ class MainWindow(QMainWindow):
             },
         )
         doc.patch_sim(float(self._form_sim_duration.value()), int(self._form_sim_seed.value()))
+        planning_horizon = float(self._planning_horizon.value())
+        doc.patch_planning(
+            {
+                "enabled": bool(self._planning_enabled.isChecked()),
+                "planner": self._planning_planner.currentText().strip() or "np_edf",
+                "lp_objective": self._planning_lp_objective.currentText().strip() or "response_time",
+                "task_scope": self._planning_task_scope.currentText().strip() or "sync_only",
+                "include_non_rt": bool(self._planning_include_non_rt.isChecked()),
+                "horizon": None if planning_horizon <= 1e-12 else planning_horizon,
+            }
+        )
 
     @staticmethod
     def _set_table_item(table: QTableWidget, row: int, col: int, text: str) -> None:
@@ -1735,6 +1895,7 @@ class MainWindow(QMainWindow):
         finally:
             self._suspend_text_events = False
         self._config_doc = None
+        self._invalidate_planning_cache()
         self._sync_text_to_form(show_message=False)
         self._status_label.setText(f"Loaded: {path}")
 
@@ -1801,6 +1962,21 @@ class MainWindow(QMainWindow):
     def _on_compare_export_csv(self) -> None:
         self._compare_controller.on_compare_export_csv()
 
+    def _on_plan_static(self) -> None:
+        self._planning_controller.on_plan_static()
+
+    def _on_plan_analyze_wcrt(self) -> None:
+        self._planning_controller.on_plan_analyze_wcrt()
+
+    def _on_plan_export_os_config(self) -> None:
+        self._planning_controller.on_plan_export_os_config()
+
+    def _on_plan_generate_random_tasks(self) -> None:
+        self._planning_controller.on_generate_random_tasks()
+
+    def _append_state_transition(self, *, event_time: float, state: str, label: str) -> None:
+        self._telemetry_controller.append_state_transition(event_time=event_time, state=state, label=label)
+
     def _set_worker_controls(self, *, running: bool, paused: bool) -> None:
         self._run_controller.set_worker_controls(running=running, paused=paused)
 
@@ -1863,121 +2039,28 @@ class MainWindow(QMainWindow):
         return self._core_to_y[core_id]
 
     def _task_color(self, task_id: str) -> QColor:
-        return pg.intColor(
-            zlib.crc32(task_id.encode("utf-8")) % 24,
-            hues=24,
-            values=1,
-            minValue=170,
-            maxValue=255,
-        )
+        return self._gantt_style_controller.task_color(task_id)
 
     def _subtask_brush_style(self, task_id: str, subtask_id: str) -> Qt.BrushStyle:
-        key = (task_id, subtask_id)
-        cached = self._subtask_style_cache.get(key)
-        if cached is not None:
-            return cached
-        idx = zlib.crc32(f"{task_id}:{subtask_id}".encode("utf-8")) % len(self._SUBTASK_BRUSH_STYLES)
-        style = self._SUBTASK_BRUSH_STYLES[idx]
-        self._subtask_style_cache[key] = style
-        return style
+        return self._gantt_style_controller.subtask_brush_style(task_id, subtask_id)
 
     def _segment_pen_style(self, segment_id: str, interrupted: bool) -> Qt.PenStyle:
-        if interrupted:
-            return Qt.PenStyle.DashLine
-        cached = self._segment_style_cache.get(segment_id)
-        if cached is not None:
-            return cached
-        idx = zlib.crc32(segment_id.encode("utf-8")) % len(self._SEGMENT_PEN_STYLES)
-        style = self._SEGMENT_PEN_STYLES[idx]
-        self._segment_style_cache[segment_id] = style
-        return style
+        return self._gantt_style_controller.segment_pen_style(segment_id, interrupted)
 
     def _ensure_task_legend(self, task_id: str, color: QColor) -> None:
-        plot_item = self._plot.getPlotItem()
-        if task_id in self._legend_tasks or plot_item.legend is None:
-            return
-        sample = pg.PlotDataItem([0, 1], [0, 0], pen=pg.mkPen(color=color, width=6))
-        plot_item.legend.addItem(sample, task_id)
-        self._legend_samples.append(sample)
-        self._legend_tasks.add(task_id)
+        self._gantt_style_controller.ensure_task_legend(task_id, color)
 
     def _on_plot_mouse_moved(self, scene_pos: QPointF) -> None:
-        item = self._segment_item_from_scene(scene_pos)
-        if item is None:
-            self._hovered_segment_key = None
-            QToolTip.hideText()
-            if self._locked_segment_key is None:
-                self._hover_hint.setText("Hover a segment for details. Click segment to lock/unlock.")
-                self._details.clear()
-            return
-
-        self._hovered_segment_key = item.meta.segment_key
-        self._hover_hint.setText(
-            f"Hover: {item.meta.task_id}/{item.meta.subtask_id}/{item.meta.segment_id} "
-            f"core={item.meta.core_id} [{item.meta.start:.3f}, {item.meta.end:.3f}]"
-        )
-        # Wayland requires tooltip popups to have a transient parent.
-        view_pos = self._plot.mapFromScene(scene_pos)
-        viewport = self._plot.viewport()
-        global_pos = viewport.mapToGlobal(view_pos)
-        QToolTip.showText(global_pos, item.toolTip(), viewport)
-
-        if self._locked_segment_key is None:
-            self._details.setPlainText(self._format_segment_details(item.meta))
+        self._telemetry_controller.on_plot_mouse_moved(scene_pos)
 
     def _on_plot_mouse_clicked(self, event: Any) -> None:
-        scene_pos = event.scenePos() if hasattr(event, "scenePos") else QPointF()
-        item = self._segment_item_from_scene(scene_pos)
-        if item is None:
-            self._locked_segment_key = None
-            if self._hovered_segment_key is None:
-                self._details.clear()
-            if hasattr(event, "accept"):
-                event.accept()
-            return
-
-        key = item.meta.segment_key
-        if self._locked_segment_key == key:
-            self._locked_segment_key = None
-        else:
-            self._locked_segment_key = key
-            self._details.setPlainText(self._format_segment_details(item.meta))
-
-        if hasattr(event, "accept"):
-            event.accept()
+        self._telemetry_controller.on_plot_mouse_clicked(event)
 
     def _segment_item_from_scene(self, scene_pos: QPointF) -> SegmentBlockItem | None:
-        for raw_item in self._plot.scene().items(scene_pos):
-            if isinstance(raw_item, SegmentBlockItem):
-                return raw_item
-            parent = raw_item.parentItem() if hasattr(raw_item, "parentItem") else None
-            if isinstance(parent, SegmentBlockItem):
-                return parent
-        return None
+        return self._telemetry_controller.segment_item_from_scene(scene_pos)
 
     def _refresh_legend_details(self) -> None:
-        show_subtask = self._legend_toggle_subtask.isChecked()
-        show_segment = self._legend_toggle_segment.isChecked()
-        if not show_subtask and not show_segment:
-            self._legend_detail.clear()
-            self._legend_detail.hide()
-            return
-
-        lines: list[str] = []
-        if show_subtask:
-            lines.append("Subtask Legend (task/subtask -> brush pattern)")
-            for (task_id, subtask_id), style_name in sorted(self._subtask_legend_map.items()):
-                lines.append(f"- {task_id}/{subtask_id}: {style_name}")
-
-        if show_segment:
-            if lines:
-                lines.append("")
-            lines.append("Segment Legend (segment id -> border style)")
-            for segment_id, style_name in sorted(self._segment_legend_map.items()):
-                lines.append(f"- {segment_id}: {style_name}")
-
-        self._legend_detail.setPlainText("\n".join(lines))
-        self._legend_detail.show()
+        self._telemetry_controller.refresh_legend_details()
 
     def _format_segment_details(self, meta: SegmentVisualMeta) -> str:
         return format_segment_details(meta)
@@ -2013,13 +2096,7 @@ class MainWindow(QMainWindow):
         self._seen_event_ids.clear()
 
         self._max_time = 0.0
-        self._hovered_segment_key = None
-        self._locked_segment_key = None
-
-        self._hover_hint.setText("Hover a segment for details. Click segment to lock/unlock.")
-        self._details.clear()
-        self._refresh_legend_details()
-        QToolTip.hideText()
+        self._telemetry_controller.reset_panel_state()
 
 
 def run_ui(config_path: str | None = None) -> None:

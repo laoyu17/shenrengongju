@@ -1,0 +1,36 @@
+{
+  "planner": "np_edf",
+  "policy": "deadline_then_wcet",
+  "threads": [
+    {
+      "task_id": "periodic",
+      "priority": 1,
+      "core_binding": [
+        "c0"
+      ],
+      "primary_core": "c0",
+      "window_count": 1,
+      "deadline": 5.0,
+      "total_wcet": 1.0
+    }
+  ],
+  "schedule_windows": [
+    {
+      "segment_key": "periodic:s0:seg0",
+      "task_id": "periodic",
+      "subtask_id": "s0",
+      "segment_id": "seg0",
+      "core_id": "c0",
+      "start_time": 0.0,
+      "end_time": 1.0,
+      "release_time": 0.0,
+      "absolute_deadline": 5.0
+    }
+  ],
+  "summary": {
+    "core_count": 1,
+    "window_count": 1,
+    "task_count": 1,
+    "feasible": true
+  }
+}

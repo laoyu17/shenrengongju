@@ -1,0 +1,41 @@
+"""Legacy compatibility API layer."""
+
+from .report_api import (
+    partition_periodic_task,
+    sched_dy_task_complete,
+    sched_dy_task_new_arrival,
+    sched_analyze_wcrt,
+    sched_benchmark_sched_rate,
+    sched_export_os_config,
+    sched_get_sched_table,
+    sched_init_sched_table,
+    sched_model_change,
+    sched_pick_next_task,
+    sched_plan_static,
+    sched_sched_insert,
+    sched_sched_remove,
+    sched_schedule,
+    sched_td_task_complete,
+    sched_td_task_new_arrival,
+    wcrt_analyse,
+)
+
+__all__ = [
+    "sched_init_sched_table",
+    "sched_get_sched_table",
+    "sched_sched_insert",
+    "sched_sched_remove",
+    "sched_td_task_new_arrival",
+    "sched_td_task_complete",
+    "sched_pick_next_task",
+    "sched_schedule",
+    "sched_model_change",
+    "wcrt_analyse",
+    "partition_periodic_task",
+    "sched_dy_task_complete",
+    "sched_dy_task_new_arrival",
+    "sched_plan_static",
+    "sched_analyze_wcrt",
+    "sched_export_os_config",
+    "sched_benchmark_sched_rate",
+]

@@ -1,0 +1,184 @@
+{
+  "pytest_collected": 352,
+  "command_results": [
+    {
+      "id": "01",
+      "label": "validate_at01",
+      "rc": 0,
+      "log": "review/runtime/logs/01_validate_at01.log"
+    },
+    {
+      "id": "02",
+      "label": "run_at01",
+      "rc": 0,
+      "log": "review/runtime/logs/02_run_at01.log"
+    },
+    {
+      "id": "03",
+      "label": "inspect_at01_strict",
+      "rc": 0,
+      "log": "review/runtime/logs/03_inspect_at01_strict.log"
+    },
+    {
+      "id": "04",
+      "label": "plan_at06",
+      "rc": 0,
+      "log": "review/runtime/logs/04_plan_at06.log"
+    },
+    {
+      "id": "05",
+      "label": "wcrt_at06_strict_match",
+      "rc": 0,
+      "log": "review/runtime/logs/05_wcrt_at06_strict_match.log"
+    },
+    {
+      "id": "06",
+      "label": "export_os_at06_strict_match",
+      "rc": 0,
+      "log": "review/runtime/logs/06_export_os_at06_strict_match.log"
+    },
+    {
+      "id": "07",
+      "label": "benchmark_small",
+      "rc": 0,
+      "log": "review/runtime/logs/07_benchmark_small.log"
+    },
+    {
+      "id": "08",
+      "label": "wcrt_mismatch_strict",
+      "rc": 2,
+      "log": "review/runtime/logs/08_wcrt_mismatch_strict.log"
+    },
+    {
+      "id": "09",
+      "label": "export_strict_no_config",
+      "rc": 2,
+      "log": "review/runtime/logs/09_export_strict_no_config.log"
+    },
+    {
+      "id": "10",
+      "label": "validate_invalid_overlap",
+      "rc": 1,
+      "log": "review/runtime/logs/10_validate_invalid_overlap.log"
+    },
+    {
+      "id": "11",
+      "label": "benchmark_script_strict",
+      "rc": 0,
+      "log": "review/runtime/logs/11_benchmark_script_strict.log"
+    },
+    {
+      "id": "12",
+      "label": "validate_overlap_known",
+      "rc": 1,
+      "log": "review/runtime/logs/12_validate_overlap_known.log"
+    },
+    {
+      "id": "13",
+      "label": "migrate_at01",
+      "rc": 0,
+      "log": "review/runtime/logs/13_migrate_at01.log"
+    },
+    {
+      "id": "14",
+      "label": "inspect_at01_at10_strict",
+      "rc": 0,
+      "log": "review/runtime/logs/14_inspect_at01_at10_strict.log"
+    },
+    {
+      "id": "15",
+      "label": "run_at05_preempt",
+      "rc": 0,
+      "log": "review/runtime/logs/15_run_at05_preempt.log"
+    }
+  ],
+  "plan_static": {
+    "planner": "np_edf",
+    "feasible": true,
+    "window_count": 1,
+    "spec_fingerprint": "072f634504def92171cfad3c5ac2078996cee05be262102ed6e68f7bdba2212f",
+    "metadata_spec_fingerprint": "072f634504def92171cfad3c5ac2078996cee05be262102ed6e68f7bdba2212f"
+  },
+  "wcrt": {
+    "feasible": true,
+    "task_count": 1,
+    "items": [
+      {
+        "task_id": "periodic",
+        "wcrt": 1.0,
+        "deadline": 5.0,
+        "schedulable": true,
+        "iterations": [
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  "os_export": {
+    "thread_count": 1,
+    "window_count": 1
+  },
+  "inspect_model": {
+    "status": "pass",
+    "check_version": "0.2",
+    "summary": {
+      "task_count": 1,
+      "subtask_count": 2,
+      "segment_count": 2,
+      "core_count": 1,
+      "resource_count": 0,
+      "unbound_segment_count": 2,
+      "relation_row_count": 10
+    }
+  },
+  "benchmark_small": {
+    "total_cases": 2,
+    "baseline_schedulable_rate": 1.0,
+    "best_candidate_schedulable_rate": 1.0,
+    "candidate_only_schedulable_rate": 1.0,
+    "uplift": 0.0,
+    "candidate_only_uplift": 0.0
+  },
+  "benchmark_suite": {
+    "total_cases": 12,
+    "target_uplift": 0.3,
+    "macro_uplift": 0.833333333,
+    "gate_pass": true,
+    "tiers": [
+      {
+        "tier": "low",
+        "case_count": 4,
+        "utilization_min": 0.3009375,
+        "utilization_max": 0.4375,
+        "baseline_schedulable_rate": 0.5,
+        "best_candidate_schedulable_rate": 1.0,
+        "candidate_only_schedulable_rate": 1.0,
+        "uplift": 1.0,
+        "candidate_only_uplift": 1.0
+      },
+      {
+        "tier": "medium",
+        "case_count": 4,
+        "utilization_min": 0.4646875,
+        "utilization_max": 0.546875,
+        "baseline_schedulable_rate": 0.0,
+        "best_candidate_schedulable_rate": 1.0,
+        "candidate_only_schedulable_rate": 1.0,
+        "uplift": 1.0,
+        "candidate_only_uplift": 1.0
+      },
+      {
+        "tier": "high",
+        "case_count": 4,
+        "utilization_min": 0.574375,
+        "utilization_max": 0.65625,
+        "baseline_schedulable_rate": 0.5,
+        "best_candidate_schedulable_rate": 0.75,
+        "candidate_only_schedulable_rate": 0.75,
+        "uplift": 0.5,
+        "candidate_only_uplift": 0.5
+      }
+    ]
+  }
+}

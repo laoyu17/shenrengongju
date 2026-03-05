@@ -7,6 +7,10 @@ import heapq
 
 from rtos_sim.events import EventType
 from rtos_sim.model import CoreState, DecisionAction, ReadySegment, ScheduleSnapshot
+from .engine_static_window import (
+    apply_static_window_constraints as apply_static_window_constraints_impl,
+    enforce_static_window_before_schedule as enforce_static_window_before_schedule_impl,
+)
 
 if TYPE_CHECKING:
     from .engine import SimEngine
@@ -161,14 +165,16 @@ def schedule(engine: SimEngine, now: float) -> tuple[float, bool]:
     if not engine._ready and not any(core.running_segment_key for core in engine._cores.values()):
         return now, False
 
+    boundary_changed = enforce_static_window_before_schedule_impl(engine, now)
     decisions = engine._scheduler.schedule(now, engine._build_snapshot(now))
+    decisions = apply_static_window_constraints_impl(engine, now, decisions)
     schedule_cost = engine._overheads.on_schedule(engine._scheduler.__class__.__name__)
     if schedule_cost > 0:
         timeout = engine._env.timeout(schedule_cost)
         engine._env.run(until=timeout)
         now = engine._env.now
 
-    changed = False
+    changed = boundary_changed
     for decision in decisions:
         if decision.action == DecisionAction.PREEMPT and decision.from_core:
             if engine._apply_preempt(decision.from_core, now):

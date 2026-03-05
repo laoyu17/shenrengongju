@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from rtos_sim import api as sim_api
 from rtos_sim.analysis import (
     build_audit_report,
     build_compare_report,
@@ -17,9 +18,15 @@ from rtos_sim.analysis import (
     compare_report_to_rows,
     model_relations_report_to_rows,
 )
+from rtos_sim.cli.handlers_planning import (
+    cmd_analyze_wcrt,
+    cmd_export_os_config,
+    cmd_plan_static,
+)
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
 from rtos_sim.model import ModelSpec
+from rtos_sim.cli.parser_builder import build_parser as build_cli_parser
 
 
 def _collect_id_token_warnings(spec: ModelSpec) -> list[str]:
@@ -403,92 +410,116 @@ def cmd_migrate_config(args: argparse.Namespace) -> int:
         "[OK] config migration completed, "
         f"in={args.input_config}, out={args.output_config}, "
         f"removed_keys={len(report['removed_keys'])}, "
+        f"added_keys={len(report.get('added_keys', []))}, "
         f"validated={'no' if args.no_validate else 'yes'}"
     )
     return 0
 
 
+def _benchmark_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for case in report.get("cases", []):
+        if not isinstance(case, dict):
+            continue
+        base = {
+            "config": case.get("config"),
+            "baseline": case.get("baseline"),
+            "baseline_planning_feasible": case.get("baseline_planning_feasible"),
+            "baseline_wcrt_feasible": case.get("baseline_wcrt_feasible"),
+            "baseline_feasible": case.get("baseline_feasible"),
+            "best_candidate_feasible": case.get("best_candidate_feasible"),
+            "candidate_only_feasible": case.get("candidate_only_feasible"),
+        }
+        candidates = case.get("candidates", {})
+        if isinstance(candidates, dict):
+            for planner, feasible in sorted(candidates.items()):
+                if isinstance(feasible, dict):
+                    rows.append(
+                        {
+                            **base,
+                            "planner": planner,
+                            "planning_feasible": feasible.get("planning_feasible"),
+                            "wcrt_feasible": feasible.get("wcrt_feasible"),
+                            "feasible": feasible.get("schedulable"),
+                        }
+                    )
+                else:
+                    rows.append({**base, "planner": planner, "feasible": feasible})
+        else:
+            rows.append({**base, "planner": "", "feasible": None})
+    return rows
+
+
+def cmd_benchmark_sched_rate(args: argparse.Namespace) -> int:
+    try:
+        config_paths = sim_api.collect_config_paths(args.configs or [], args.config_list)
+        if not config_paths:
+            print("[ERROR] benchmark-sched-rate requires at least one config path")
+            return 1
+        candidates = [item.strip() for item in args.candidates.split(",") if item.strip()]
+        report = sim_api.benchmark_sched_rate(
+            config_paths,
+            baseline=args.baseline,
+            candidates=candidates,
+            task_scope=args.task_scope,
+            include_non_rt=args.include_non_rt,
+            horizon=args.horizon,
+            lp_objective=args.lp_objective,
+            lp_time_limit_seconds=args.lp_time_limit,
+            wcrt_max_iterations=args.wcrt_max_iterations,
+            wcrt_epsilon=args.wcrt_epsilon,
+        )
+    except ConfigError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] unexpected benchmark-sched-rate error: {exc}")
+        return 1
+
+    out_json = args.out_json or "artifacts/benchmark_sched_rate.json"
+    try:
+        _write_json(out_json, report)
+        if args.out_csv:
+            _write_rows_csv(args.out_csv, _benchmark_rows(report))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] failed to write benchmark-sched-rate outputs: {exc}")
+        return 1
+
+    print(
+        "[OK] sched-rate benchmark completed, "
+        f"cases={report.get('total_cases', 0)}, baseline_rate={report.get('baseline_schedulable_rate')}, "
+        f"candidate_rate={report.get('best_candidate_schedulable_rate')}, "
+        f"candidate_only_rate={report.get('candidate_only_schedulable_rate')}, "
+        f"uplift={report.get('uplift')}, candidate_only_uplift={report.get('candidate_only_uplift')}, "
+        f"json={out_json}, csv={args.out_csv or '-'}"
+    )
+
+    strict_uplift = float(report.get("candidate_only_uplift", report.get("uplift", 0.0)))
+    if args.target_uplift is not None and strict_uplift < args.target_uplift:
+        print(
+            "[ERROR] uplift target not met, "
+            f"target={args.target_uplift}, actual={strict_uplift} (metric=candidate_only_uplift)"
+        )
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rtos-sim", description="RTOS simulation CLI")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    validate_parser = subparsers.add_parser("validate", help="validate config file")
-    validate_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
-    validate_parser.add_argument(
-        "--strict-id-tokens",
-        action="store_true",
-        help="fail when IDs include reserved delimiters used by internal composite keys",
+    return build_cli_parser(
+        {
+            "validate": cmd_validate,
+            "run": cmd_run,
+            "ui": cmd_ui,
+            "batch-run": cmd_batch_run,
+            "compare": cmd_compare,
+            "inspect-model": cmd_inspect_model,
+            "migrate-config": cmd_migrate_config,
+            "plan-static": cmd_plan_static,
+            "analyze-wcrt": cmd_analyze_wcrt,
+            "benchmark-sched-rate": cmd_benchmark_sched_rate,
+            "export-os-config": cmd_export_os_config,
+        }
     )
-    validate_parser.set_defaults(func=cmd_validate)
-
-    run_parser = subparsers.add_parser("run", help="run simulation")
-    run_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
-    run_parser.add_argument("--until", type=float, default=None, help="override simulation duration")
-    run_parser.add_argument("--events-out", default=None, help="path to write JSONL events")
-    run_parser.add_argument("--events-csv-out", default=None, help="path to write CSV events")
-    run_parser.add_argument("--metrics-out", default=None, help="path to write metric JSON")
-    run_parser.add_argument("--audit-out", default=None, help="path to write audit report JSON")
-    run_parser.add_argument("--step", action="store_true", help="execute simulation by step loop")
-    run_parser.add_argument("--delta", type=float, default=None, help="delta for --step mode")
-    run_parser.add_argument(
-        "--pause-at",
-        type=float,
-        default=None,
-        help="stop advancing at this simulation time and keep partial results",
-    )
-    run_parser.set_defaults(func=cmd_run)
-
-    ui_parser = subparsers.add_parser("ui", help="launch PyQt UI")
-    ui_parser.add_argument("-c", "--config", default=None, help="path to initial config")
-    ui_parser.set_defaults(func=cmd_ui)
-
-    batch_parser = subparsers.add_parser("batch-run", help="run matrix experiments")
-    batch_parser.add_argument("-b", "--batch-config", required=True, help="path to batch config YAML/JSON")
-    batch_parser.add_argument("--output-dir", default=None, help="batch output directory")
-    batch_parser.add_argument("--summary-csv", default=None, help="summary CSV output path")
-    batch_parser.add_argument("--summary-json", default=None, help="summary JSON output path")
-    batch_parser.add_argument(
-        "--strict-fail-on-error",
-        action="store_true",
-        help="return non-zero when any batch run fails",
-    )
-    batch_parser.set_defaults(func=cmd_batch_run)
-
-    compare_parser = subparsers.add_parser("compare", help="compare two metrics json files")
-    compare_parser.add_argument("--left-metrics", required=True, help="left metrics JSON path")
-    compare_parser.add_argument("--right-metrics", required=True, help="right metrics JSON path")
-    compare_parser.add_argument("--left-label", default="left", help="left side label")
-    compare_parser.add_argument("--right-label", default="right", help="right side label")
-    compare_parser.add_argument("--out-json", default=None, help="compare report JSON path")
-    compare_parser.add_argument("--out-csv", default=None, help="compare rows CSV path")
-    compare_parser.set_defaults(func=cmd_compare)
-
-    inspect_parser = subparsers.add_parser("inspect-model", help="export model relation tables")
-    inspect_parser.add_argument("-c", "--config", required=True, help="path to config YAML/JSON")
-    inspect_parser.add_argument("--out-json", default=None, help="relation report JSON path")
-    inspect_parser.add_argument("--out-csv", default=None, help="relation report CSV path")
-    inspect_parser.add_argument(
-        "--strict-on-fail",
-        action="store_true",
-        help="return non-zero when model relation status is not pass",
-    )
-    inspect_parser.set_defaults(func=cmd_inspect_model)
-
-    migrate_parser = subparsers.add_parser(
-        "migrate-config",
-        help="normalize version and remove deprecated scheduler params",
-    )
-    migrate_parser.add_argument("--in", dest="input_config", required=True, help="input config YAML/JSON")
-    migrate_parser.add_argument("--out", dest="output_config", required=True, help="output config YAML/JSON")
-    migrate_parser.add_argument("--report-out", default=None, help="optional migration report JSON path")
-    migrate_parser.add_argument(
-        "--no-validate",
-        action="store_true",
-        help="skip strict schema/model validation after migration",
-    )
-    migrate_parser.set_defaults(func=cmd_migrate_config)
-
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:

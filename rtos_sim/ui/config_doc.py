@@ -46,6 +46,7 @@ class ConfigDocument:
         self._payload.setdefault("tasks", [])
         self._payload.setdefault("resources", [])
         self._payload.setdefault("scheduler", {"name": "edf", "params": {}})
+        self._payload.setdefault("planning", {})
         self._payload.setdefault("sim", {"duration": 10.0, "seed": 42})
 
     @classmethod
@@ -264,6 +265,26 @@ class ConfigDocument:
         sim = self.get_sim()
         sim["duration"] = duration
         sim["seed"] = seed
+
+    def get_planning(self) -> dict[str, Any]:
+        planning = _ensure_dict(self._payload.get("planning"))
+        planning.setdefault("enabled", False)
+        planning.setdefault("planner", "np_edf")
+        planning.setdefault("lp_objective", "response_time")
+        planning.setdefault("task_scope", "sync_only")
+        planning.setdefault("include_non_rt", False)
+        if "params" not in planning or not isinstance(planning.get("params"), dict):
+            planning["params"] = {}
+        self._payload["planning"] = planning
+        return planning
+
+    def patch_planning(self, values: dict[str, Any]) -> None:
+        planning = self.get_planning()
+        for key, value in values.items():
+            if key == "horizon" and value is None:
+                planning.pop("horizon", None)
+                continue
+            planning[key] = value
 
     def list_subtasks(self, task_index: int) -> list[dict[str, Any]]:
         task = self.get_task(task_index)

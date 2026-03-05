@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
 from typing import Any
 
 QUALITY_SNAPSHOT_PATH = "artifacts/quality/quality-snapshot.json"
@@ -62,6 +63,21 @@ def _load_snapshot(path: Path) -> dict[str, Any]:
 
 def _coverage_percent(snapshot: dict[str, Any]) -> str:
     return f"{float(snapshot['coverage']['line_rate']):.2f}%"
+
+
+def _resolve_git_sha() -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        return None
+    return value
 
 
 def build_doc_checks(snapshot: dict[str, Any]) -> list[DocCheck]:
@@ -140,6 +156,16 @@ def build_doc_checks(snapshot: dict[str, Any]) -> list[DocCheck]:
             ),
         ),
         DocCheck(
+            relative_path="22-分阶段验收报告.md",
+            required_substrings=(
+                f"git_sha={sha}",
+                f"pytest={passed} passed",
+                f"line_rate={line_rate}",
+                f"coverage={coverage_percent}",
+                QUALITY_SNAPSHOT_PATH,
+            ),
+        ),
+        DocCheck(
             relative_path="../README.md",
             required_substrings=(
                 "docs/15-研究闭环验收基线.md",
@@ -173,12 +199,28 @@ def _validate_doc(path: Path, check: DocCheck, expected_sha: str) -> list[str]:
     return errors
 
 
-def run_consistency_check(snapshot_path: Path, docs_root: Path) -> list[str]:
+def run_consistency_check(
+    snapshot_path: Path,
+    docs_root: Path,
+    *,
+    enforce_head_match: bool = True,
+    expected_head_sha: str | None = None,
+) -> list[str]:
     snapshot = _load_snapshot(snapshot_path)
     checks = build_doc_checks(snapshot)
     expected_sha = str(snapshot["git_sha"])
 
     errors: list[str] = []
+    if enforce_head_match:
+        head_sha = expected_head_sha or _resolve_git_sha()
+        if head_sha is None:
+            errors.append(f"{snapshot_path}: unable to resolve git HEAD")
+        elif head_sha != expected_sha:
+            errors.append(
+                f"{snapshot_path}: snapshot git_sha mismatch with git HEAD: "
+                f"expected {head_sha}, found {expected_sha}"
+            )
+
     for check in checks:
         errors.extend(_validate_doc(docs_root / check.relative_path, check, expected_sha))
     return errors
@@ -196,6 +238,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="docs",
         help="docs directory root",
     )
+    parser.add_argument(
+        "--allow-stale-snapshot",
+        action="store_true",
+        help="do not require snapshot git_sha to match current git HEAD",
+    )
     return parser
 
 
@@ -207,7 +254,11 @@ def main(argv: list[str] | None = None) -> int:
     docs_root = Path(args.docs_root)
 
     try:
-        errors = run_consistency_check(snapshot_path=snapshot_path, docs_root=docs_root)
+        errors = run_consistency_check(
+            snapshot_path=snapshot_path,
+            docs_root=docs_root,
+            enforce_head_match=not args.allow_stale_snapshot,
+        )
     except Exception as exc:  # pragma: no cover - CLI safeguard
         print(f"[FAIL] {exc}")
         return 2

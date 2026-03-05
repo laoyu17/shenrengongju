@@ -73,6 +73,15 @@ def _write_docs(docs_root: Path, snapshot: dict) -> None:
         ),
         encoding="utf-8",
     )
+    (docs_root / "22-分阶段验收报告.md").write_text(
+        (
+            f"代码快照：git_sha={sha}\n"
+            f"质量快照：pytest={passed} passed，coverage={coverage_percent}\n"
+            f"line_rate={line_rate}\n"
+            f"事实源：{quality_path}\n"
+        ),
+        encoding="utf-8",
+    )
     (docs_root.parent / "README.md").write_text(
         (
             "- 研究闭环验收基线：docs/15-研究闭环验收基线.md\n"
@@ -94,6 +103,7 @@ def test_run_consistency_check_pass(tmp_path: Path) -> None:
     errors = check_doc_baseline_consistency.run_consistency_check(
         snapshot_path=snapshot_path,
         docs_root=docs_root,
+        enforce_head_match=False,
     )
     assert errors == []
 
@@ -116,6 +126,7 @@ def test_run_consistency_check_detects_git_sha_drift(tmp_path: Path) -> None:
     errors = check_doc_baseline_consistency.run_consistency_check(
         snapshot_path=snapshot_path,
         docs_root=docs_root,
+        enforce_head_match=False,
     )
     assert any("14-docx需求追踪矩阵.md" in item for item in errors)
 
@@ -140,8 +151,41 @@ def test_run_consistency_check_detects_missing_required_token(tmp_path: Path) ->
     errors = check_doc_baseline_consistency.run_consistency_check(
         snapshot_path=snapshot_path,
         docs_root=docs_root,
+        enforce_head_match=False,
     )
     assert any("missing required token" in item for item in errors)
+
+
+def test_run_consistency_check_detects_snapshot_head_mismatch(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        expected_head_sha="b" * 40,
+    )
+    assert any("snapshot git_sha mismatch with git HEAD" in item for item in errors)
+
+
+def test_run_consistency_check_accepts_matching_snapshot_head(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        expected_head_sha=snapshot["git_sha"],
+    )
+    assert errors == []
 
 
 def test_main_returns_non_zero_when_docs_missing(tmp_path: Path) -> None:

@@ -57,6 +57,14 @@ CONFIG_SCHEMA: dict = {
                             "type": "string",
                             "enum": ["legacy_sequential", "atomic_rollback"],
                         },
+                        "static_window_mode": {
+                            "type": ["boolean", "number", "string"],
+                        },
+                        "static_windows": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/StaticWindowConstraint"},
+                            "default": [],
+                        },
                     },
                 },
             },
@@ -71,6 +79,7 @@ CONFIG_SCHEMA: dict = {
             },
             "additionalProperties": False,
         },
+        "planning": {"$ref": "#/$defs/Planning"},
     },
     "$defs": {
         "ProcessorType": {
@@ -221,6 +230,63 @@ CONFIG_SCHEMA: dict = {
                     },
                 }
             ],
+            "additionalProperties": False,
+        },
+        "StaticWindowConstraint": {
+            "type": "object",
+            "required": ["core_id"],
+            "properties": {
+                "core_id": {"type": "string", "minLength": 1},
+                "segment_key": {"type": "string", "minLength": 1},
+                "task_id": {"type": "string", "minLength": 1},
+                "subtask_id": {"type": "string", "minLength": 1},
+                "segment_id": {"type": "string", "minLength": 1},
+                "start": {"type": "number"},
+                "end": {"type": "number"},
+                "start_time": {"type": "number"},
+                "end_time": {"type": "number"},
+            },
+            "allOf": [
+                {
+                    "anyOf": [
+                        {"required": ["segment_key"]},
+                        {"required": ["task_id"]},
+                    ]
+                },
+                {
+                    "anyOf": [
+                        {"required": ["start", "end"]},
+                        {"required": ["start", "end_time"]},
+                        {"required": ["start_time", "end"]},
+                        {"required": ["start_time", "end_time"]},
+                    ]
+                },
+                {
+                    "if": {"required": ["subtask_id"]},
+                    "then": {"required": ["task_id", "segment_id"]},
+                },
+                {
+                    "if": {"required": ["segment_id"]},
+                    "then": {"required": ["task_id", "subtask_id"]},
+                },
+            ],
+            "additionalProperties": False,
+        },
+        "Planning": {
+            "type": "object",
+            "properties": {
+                "enabled": {"type": "boolean", "default": False},
+                "planner": {"type": "string", "default": "np_edf"},
+                "lp_objective": {"type": "string", "default": "response_time"},
+                "task_scope": {
+                    "type": "string",
+                    "enum": ["sync_only", "sync_and_dynamic_rt", "all"],
+                    "default": "sync_only",
+                },
+                "include_non_rt": {"type": "boolean", "default": False},
+                "horizon": {"type": ["number", "null"], "exclusiveMinimum": 0},
+                "params": {"type": "object", "default": {}},
+            },
             "additionalProperties": False,
         },
     },

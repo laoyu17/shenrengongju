@@ -1,0 +1,2 @@
+segment_key,task_id,subtask_id,segment_id,core_id,start_time,end_time,release_time,absolute_deadline,constraint_evidence
+periodic:s0:seg0,periodic,s0,seg0,c0,0.0,1.0,0.0,5.0,"{'planner': 'np_edf', 'predecessor_ready': 0.0, 'priority_metric': 5.0, 'slack_before_start': 4.0}"

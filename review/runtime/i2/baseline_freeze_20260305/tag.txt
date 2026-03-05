@@ -1,0 +1,4 @@
+tag_name=delivery-baseline-20260305-044118
+tag_status=created
+head_commit=be6d01360f544d9a239f32ff0ae4b434d6bdf4a7
+snapshot_id=baseline-freeze-20260305-044118

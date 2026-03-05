@@ -1,0 +1,3 @@
+python -m pytest -q
+bash review/scripts/i1_freeze_sched_rate_gate.sh
+bash review/scripts/i1_ci_gate.sh

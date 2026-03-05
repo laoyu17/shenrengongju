@@ -54,6 +54,7 @@ from .engine_runtime import (
     schedule_until_stable as schedule_until_stable_impl,
     truncate_running_segments as truncate_running_segments_impl,
 )
+from .engine_static_window import configure_static_window_mode as configure_static_window_mode_impl
 from .interfaces import ISimEngine
 
 
@@ -112,6 +113,8 @@ class SimEngine(ISimEngine):
         self._arrival_rng = random.Random(0)
         self._arrival_generators: dict[str, IArrivalGenerator] = {}
         self._resource_acquire_policy = self.DEFAULT_RESOURCE_ACQUIRE_POLICY
+        self._static_window_mode_enabled = False
+        self._static_windows_by_core: dict[str, list] = {}
 
         self._env = simpy.Environment()
         self._event_bus = self._create_event_bus()
@@ -185,6 +188,7 @@ class SimEngine(ISimEngine):
             processor_speed = processor_speed_by_type.get(core.type_id, 1.0)
             effective_speed = core.speed_factor * processor_speed
             self._cores[core.id] = CoreRuntime(core_id=core.id, speed=effective_speed)
+        configure_static_window_mode_impl(self, spec)
         self._deterministic_hyper_period = self._compute_deterministic_hyper_period(spec)
 
         for task in spec.tasks:
@@ -235,6 +239,8 @@ class SimEngine(ISimEngine):
         self._setup_event_pipeline()
         self._arrival_rng = random.Random(0)
         self._arrival_generators = {}
+        self._static_window_mode_enabled = False
+        self._static_windows_by_core = {}
 
         self._spec = None
         self._scheduler = None

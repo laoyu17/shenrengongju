@@ -1,0 +1,11 @@
+[OK] model relation report completed, config=examples/at01_single_dag_single_core.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at02_resource_mutex.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at03_resource_binding.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at04_deadline_miss.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at05_preempt.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at06_time_deterministic.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at07_heterogeneous_multicore.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at08_migration.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at09_table_based_etm.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+[OK] model relation report completed, config=examples/at10_arrival_process.yaml, json=artifacts/model_relations.json, csv=-, status=pass
+final_rc=0

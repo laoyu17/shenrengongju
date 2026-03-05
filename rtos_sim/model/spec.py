@@ -297,6 +297,33 @@ class SimSpec(BaseModel):
     seed: int = 42
 
 
+class PlanningSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    planner: str = "np_edf"
+    lp_objective: str = "response_time"
+    task_scope: str = "sync_only"
+    include_non_rt: bool = False
+    horizon: Optional[float] = Field(default=None, gt=0)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_planning(self) -> "PlanningSpec":
+        planner = self.planner.strip().lower()
+        if not planner:
+            raise ValueError("planning.planner must not be empty")
+        if self.lp_objective not in {"response_time", "spread_execution"}:
+            raise ValueError("planning.lp_objective must be response_time|spread_execution")
+        scope = self.task_scope.strip().lower()
+        if scope not in {"sync_only", "sync_and_dynamic_rt", "all"}:
+            raise ValueError("planning.task_scope must be sync_only|sync_and_dynamic_rt|all")
+        if self.include_non_rt:
+            scope = "all"
+        self.task_scope = scope
+        return self
+
+
 class PlatformSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -338,6 +365,7 @@ class ModelSpec(BaseModel):
     tasks: list[TaskGraphSpec] = Field(min_length=1)
     scheduler: SchedulerSpec
     sim: SimSpec
+    planning: Optional[PlanningSpec] = None
 
     @model_validator(mode="after")
     def validate_semantics(self) -> "ModelSpec":

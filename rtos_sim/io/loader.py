@@ -31,6 +31,14 @@ class ConfigLoader:
     """Load and validate model spec from JSON/YAML files."""
 
     SUPPORTED_VERSION = "0.2"
+    PLANNING_DEFAULTS: dict[str, Any] = {
+        "enabled": False,
+        "planner": "np_edf",
+        "lp_objective": "response_time",
+        "task_scope": "sync_only",
+        "include_non_rt": False,
+        "params": {},
+    }
 
     def load(self, path: str) -> ModelSpec:
         raw = self._read(path)
@@ -54,6 +62,7 @@ class ConfigLoader:
         input_version = str(payload.get("version", "0.1"))
         migrated = self._normalize_version(payload)
         removed_keys: list[str] = []
+        added_keys: list[str] = []
 
         scheduler = migrated.get("scheduler")
         if isinstance(scheduler, dict):
@@ -65,10 +74,24 @@ class ConfigLoader:
         if "ui_layout" in payload:
             migrated["ui_layout"] = deepcopy(payload["ui_layout"])
 
+        planning = migrated.get("planning")
+        if planning is None:
+            migrated["planning"] = deepcopy(self.PLANNING_DEFAULTS)
+            added_keys.append("planning")
+        elif not isinstance(planning, dict):
+            raise ConfigError("invalid config structure: planning must be object")
+        else:
+            for key, value in self.PLANNING_DEFAULTS.items():
+                if key not in planning:
+                    planning[key] = deepcopy(value)
+                    added_keys.append(f"planning.{key}")
+
         report = {
             "input_version": input_version,
             "output_version": str(migrated.get("version", self.SUPPORTED_VERSION)),
             "removed_keys": removed_keys,
+            "added_keys": added_keys,
+            "planning_defaults_applied": bool(added_keys),
         }
         return migrated, report
 

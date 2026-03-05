@@ -1,0 +1,73 @@
+{
+  "planner": "np_edf",
+  "feasible": true,
+  "assignments": {
+    "periodic:s0:seg0": "c0"
+  },
+  "unscheduled_segments": [],
+  "metadata": {
+    "segment_count": 1,
+    "scheduled_count": 1,
+    "spec_fingerprint": "072f634504def92171cfad3c5ac2078996cee05be262102ed6e68f7bdba2212f"
+  },
+  "schedule_table": {
+    "planner": "np_edf",
+    "core_ids": [
+      "c0"
+    ],
+    "feasible": true,
+    "windows": [
+      {
+        "segment_key": "periodic:s0:seg0",
+        "task_id": "periodic",
+        "subtask_id": "s0",
+        "segment_id": "seg0",
+        "core_id": "c0",
+        "start_time": 0.0,
+        "end_time": 1.0,
+        "release_time": 0.0,
+        "absolute_deadline": 5.0,
+        "constraint_evidence": {
+          "planner": "np_edf",
+          "predecessor_ready": 0.0,
+          "priority_metric": 5.0,
+          "slack_before_start": 4.0
+        }
+      }
+    ],
+    "violations": [],
+    "evidence": [
+      {
+        "rule": "wfd_assignment",
+        "message": "assigned periodic:s0:seg0 to c0",
+        "payload": {
+          "segment_key": "periodic:s0:seg0",
+          "core_id": "c0",
+          "utilization": 0.2,
+          "load_before": 0.0,
+          "load_after": 0.2,
+          "mapping_hint": "c0"
+        }
+      },
+      {
+        "rule": "wfd_load_summary",
+        "message": "core load summary after WFD assignment",
+        "payload": {
+          "c0": 0.2
+        }
+      },
+      {
+        "rule": "non_preemptive_dispatch",
+        "message": "scheduled periodic:s0:seg0 on c0",
+        "payload": {
+          "planner": "np_edf",
+          "segment_key": "periodic:s0:seg0",
+          "core_id": "c0",
+          "start_time": 0.0,
+          "end_time": 1.0
+        }
+      }
+    ]
+  },
+  "spec_fingerprint": "072f634504def92171cfad3c5ac2078996cee05be262102ed6e68f7bdba2212f"
+}

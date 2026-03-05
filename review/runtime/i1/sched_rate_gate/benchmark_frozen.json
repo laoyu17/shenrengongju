@@ -1,0 +1,331 @@
+{
+  "total_cases": 12,
+  "baseline": "np_edf",
+  "candidates": [
+    "np_dm",
+    "precautious_dm",
+    "lp"
+  ],
+  "task_scope": "sync_only",
+  "wcrt_max_iterations": 64,
+  "wcrt_epsilon": 1e-09,
+  "baseline_schedulable_rate": 0.333333333,
+  "best_candidate_schedulable_rate": 0.916666667,
+  "candidate_only_schedulable_rate": 0.916666667,
+  "uplift": 1.75,
+  "candidate_only_uplift": 1.75,
+  "cases": [
+    {
+      "config": "review/frozen/sched_rate/configs/low/low-01.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/low/low-02.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": true,
+      "baseline_wcrt_feasible": true,
+      "baseline_feasible": true,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/low/low-03.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": true,
+      "baseline_wcrt_feasible": true,
+      "baseline_feasible": true,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/low/low-04.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/medium/medium-01.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/medium/medium-02.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/medium/medium-03.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/medium/medium-04.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/high/high-01.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": true,
+      "baseline_wcrt_feasible": true,
+      "baseline_feasible": true,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/high/high-02.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/high/high-03.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": false,
+      "baseline_wcrt_feasible": false,
+      "baseline_feasible": false,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "precautious_dm": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        },
+        "lp": {
+          "planning_feasible": false,
+          "wcrt_feasible": false,
+          "schedulable": false
+        }
+      },
+      "best_candidate_feasible": false,
+      "candidate_only_feasible": false
+    },
+    {
+      "config": "review/frozen/sched_rate/configs/high/high-04.yaml",
+      "baseline": "np_edf",
+      "baseline_planning_feasible": true,
+      "baseline_wcrt_feasible": true,
+      "baseline_feasible": true,
+      "candidates": {
+        "np_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "precautious_dm": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        },
+        "lp": {
+          "planning_feasible": true,
+          "wcrt_feasible": true,
+          "schedulable": true
+        }
+      },
+      "best_candidate_feasible": true,
+      "candidate_only_feasible": true
+    }
+  ]
+}

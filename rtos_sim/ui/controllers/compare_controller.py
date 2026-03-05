@@ -27,6 +27,45 @@ class CompareController:
         self._owner = owner
         self._error_logger = error_logger
 
+    def _get_left_metrics(self) -> dict[str, Any] | None:
+        state = getattr(self._owner, "_compare_panel_state", None)
+        if state is not None:
+            return state.left_metrics
+        return getattr(self._owner, "_compare_left_metrics", None)
+
+    def _set_left_metrics(self, value: dict[str, Any] | None) -> None:
+        state = getattr(self._owner, "_compare_panel_state", None)
+        if state is not None:
+            state.left_metrics = value
+            return
+        self._owner._compare_left_metrics = value
+
+    def _get_right_metrics(self) -> dict[str, Any] | None:
+        state = getattr(self._owner, "_compare_panel_state", None)
+        if state is not None:
+            return state.right_metrics
+        return getattr(self._owner, "_compare_right_metrics", None)
+
+    def _set_right_metrics(self, value: dict[str, Any] | None) -> None:
+        state = getattr(self._owner, "_compare_panel_state", None)
+        if state is not None:
+            state.right_metrics = value
+            return
+        self._owner._compare_right_metrics = value
+
+    def _get_latest_compare_report(self) -> dict[str, Any] | None:
+        state = getattr(self._owner, "_compare_panel_state", None)
+        if state is not None:
+            return state.latest_report
+        return getattr(self._owner, "_latest_compare_report", None)
+
+    def _set_latest_compare_report(self, value: dict[str, Any] | None) -> None:
+        state = getattr(self._owner, "_compare_panel_state", None)
+        if state is not None:
+            state.latest_report = value
+            return
+        self._owner._latest_compare_report = value
+
     def on_compare_toggle(self, checked: bool) -> None:
         if self._owner._compare_group is None:
             return
@@ -71,7 +110,7 @@ class CompareController:
         if not path:
             return
         try:
-            self._owner._compare_left_metrics = read_metrics_json(path)
+            self._set_left_metrics(read_metrics_json(path))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._error_logger("compare_load_left", exc, path=path)
             QMessageBox.critical(self._owner, "Compare load failed", str(exc))
@@ -83,7 +122,7 @@ class CompareController:
         if not path:
             return
         try:
-            self._owner._compare_right_metrics = read_metrics_json(path)
+            self._set_right_metrics(read_metrics_json(path))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._error_logger("compare_load_right", exc, path=path)
             QMessageBox.critical(self._owner, "Compare load failed", str(exc))
@@ -94,18 +133,20 @@ class CompareController:
         if not self._owner._latest_metrics_report:
             QMessageBox.information(self._owner, "Compare", "No latest run metrics available.")
             return
-        self._owner._compare_left_metrics = dict(self._owner._latest_metrics_report)
+        self._set_left_metrics(dict(self._owner._latest_metrics_report))
         self._owner._compare_output.appendPlainText("[Compare] left metrics set from latest run")
 
     def on_compare_use_latest_right(self) -> None:
         if not self._owner._latest_metrics_report:
             QMessageBox.information(self._owner, "Compare", "No latest run metrics available.")
             return
-        self._owner._compare_right_metrics = dict(self._owner._latest_metrics_report)
+        self._set_right_metrics(dict(self._owner._latest_metrics_report))
         self._owner._compare_output.appendPlainText("[Compare] right metrics set from latest run")
 
     def on_compare_build(self) -> None:
-        if self._owner._compare_left_metrics is None or self._owner._compare_right_metrics is None:
+        left_metrics = self._get_left_metrics()
+        right_metrics = self._get_right_metrics()
+        if left_metrics is None or right_metrics is None:
             QMessageBox.information(
                 self._owner,
                 "Compare",
@@ -113,16 +154,17 @@ class CompareController:
             )
             return
         report = build_compare_report(
-            self._owner._compare_left_metrics,
-            self._owner._compare_right_metrics,
+            left_metrics,
+            right_metrics,
             left_label=self._owner._compare_left_label.text().strip() or "left",
             right_label=self._owner._compare_right_label.text().strip() or "right",
         )
-        self._owner._latest_compare_report = report
+        self._set_latest_compare_report(report)
         self._owner._compare_output.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
 
     def on_compare_export_json(self) -> None:
-        if self._owner._latest_compare_report is None:
+        latest_report = self._get_latest_compare_report()
+        if latest_report is None:
             QMessageBox.information(self._owner, "Compare", "Build compare report first.")
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -134,14 +176,15 @@ class CompareController:
         if not path:
             return
         try:
-            write_compare_report_json(path, self._owner._latest_compare_report)
+            write_compare_report_json(path, latest_report)
         except OSError as exc:
             QMessageBox.critical(self._owner, "Export failed", str(exc))
             return
         self._owner._status_label.setText(f"Compare JSON exported: {path}")
 
     def on_compare_export_csv(self) -> None:
-        if self._owner._latest_compare_report is None:
+        latest_report = self._get_latest_compare_report()
+        if latest_report is None:
             QMessageBox.information(self._owner, "Compare", "Build compare report first.")
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -153,7 +196,7 @@ class CompareController:
         if not path:
             return
         try:
-            write_compare_report_csv(path, self._owner._latest_compare_report)
+            write_compare_report_csv(path, latest_report)
         except OSError as exc:
             QMessageBox.critical(self._owner, "Export failed", str(exc))
             return

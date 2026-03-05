@@ -120,7 +120,7 @@ def test_ui_hover_tooltip_uses_plot_viewport_parent(
         scene_pos = first.sceneBoundingRect().center()
 
         monkeypatch.setattr(
-            "rtos_sim.ui.app.QToolTip.showText",
+            "rtos_sim.ui.controllers.telemetry_controller.QToolTip.showText",
             lambda _pos, text, parent=None, *_args: captured.update(
                 {"text": text, "parent": parent}
             ),
@@ -235,6 +235,120 @@ sim:
         assert window._form_tie_breaker.currentText() == "segment_key"
         assert window._form_event_id_mode.currentText() == "seeded_random"
         assert window._form_sim_seed.value() == 123
+    finally:
+        window.close()
+
+
+def test_ui_planning_panel_end_to_end() -> None:
+    window = MainWindow(config_path="examples/at06_time_deterministic.yaml")
+    try:
+        window._planning_planner.setCurrentText("np_edf")
+        window._planning_task_scope.setCurrentText("sync_only")
+        window._on_plan_static()
+        window._on_plan_analyze_wcrt()
+        window._on_plan_export_os_config()
+
+        assert window._planning_windows_table.rowCount() > 0
+        assert window._planning_wcrt_table.rowCount() > 0
+        assert window._planning_os_table.rowCount() > 0
+
+        logs = window._planning_output.toPlainText()
+        assert "plan-static done" in logs
+        assert "analyze-wcrt done" in logs
+        assert "export-os-config done" in logs
+    finally:
+        window.close()
+
+
+def test_ui_planning_blocks_stale_plan_after_form_changes() -> None:
+    window = MainWindow(config_path="examples/at06_time_deterministic.yaml")
+    try:
+        window._planning_planner.setCurrentText("np_edf")
+        window._planning_task_scope.setCurrentText("sync_only")
+        window._on_plan_static()
+        assert window._latest_plan_result is not None
+        assert isinstance(window._latest_plan_spec_fingerprint, str) and window._latest_plan_spec_fingerprint
+
+        # Change form values to make current config diverge from cached planning result.
+        window._form_task_id.setText("periodic_changed")
+        window._on_plan_analyze_wcrt()
+        assert window._latest_planning_wcrt_report is None
+        assert window._status_label.text() == "analyze-wcrt blocked by plan/config mismatch"
+
+        window._on_plan_export_os_config()
+        assert window._latest_planning_os_payload is None
+        assert window._status_label.text() == "export-os-config blocked by plan/config mismatch"
+
+        logs = window._planning_output.toPlainText()
+        assert "analyze-wcrt blocked: plan/config mismatch" in logs
+        assert "export-os-config blocked: plan/config mismatch" in logs
+    finally:
+        window.close()
+
+
+def test_ui_random_task_generation_is_seeded() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        window._planning_random_seed.setValue(123456)
+        window._planning_random_task_count.setValue(4)
+        window._planning_random_load_tier.setCurrentText("medium")
+        window._planning_random_rule.setCurrentText("single_chain")
+
+        window._on_plan_generate_random_tasks()
+        first_payload_text = window._editor.toPlainText()
+        first_payload = yaml.safe_load(first_payload_text)
+        assert len(first_payload["tasks"]) == 4
+
+        window._on_plan_generate_random_tasks()
+        second_payload_text = window._editor.toPlainText()
+        assert second_payload_text == first_payload_text
+    finally:
+        window.close()
+
+
+def test_ui_state_view_displays_release_ready_execute_blocked() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        window._on_event_batch(
+            [
+                {
+                    "event_id": "s0",
+                    "type": "JobReleased",
+                    "job_id": "job@0",
+                    "time": 0.0,
+                    "payload": {"absolute_deadline": 5.0},
+                },
+                {
+                    "event_id": "s1",
+                    "type": "SegmentReady",
+                    "job_id": "job@0",
+                    "time": 0.1,
+                    "payload": {"segment_key": "job@0:s0:seg0"},
+                },
+                {
+                    "event_id": "s2",
+                    "type": "SegmentStart",
+                    "job_id": "job@0",
+                    "segment_id": "seg0",
+                    "core_id": "c0",
+                    "time": 0.2,
+                    "payload": {"segment_key": "job@0:s0:seg0"},
+                },
+                {
+                    "event_id": "s3",
+                    "type": "SegmentBlocked",
+                    "job_id": "job@0",
+                    "time": 0.3,
+                    "payload": {"segment_key": "job@0:s0:seg0"},
+                },
+            ]
+        )
+
+        state_text = window._state_view.toPlainText()
+        assert "[Released]" in state_text
+        assert "[Ready]" in state_text
+        assert "[Executing]" in state_text
+        assert "[Blocked]" in state_text
     finally:
         window.close()
 

@@ -1,0 +1,78 @@
+version: '0.2'
+platform:
+  processor_types:
+  - id: CPU
+    name: cpu
+    core_count: 1
+    speed_factor: 1.0
+  cores:
+  - id: c0
+    type_id: CPU
+    speed_factor: 1.0
+resources: []
+tasks:
+- id: t0
+  name: t0
+  task_type: time_deterministic
+  period: 16.0
+  deadline: 11.95
+  arrival: 0.48
+  subtasks:
+  - id: s0
+    predecessors: []
+    successors: []
+    segments:
+    - id: g00
+      index: 1
+      wcet: 3.575
+      required_resources: []
+      mapping_hint: c0
+    - id: g01
+      index: 2
+      wcet: 0.473
+      required_resources: []
+      mapping_hint: c0
+- id: t1
+  name: t1
+  task_type: time_deterministic
+  period: 16.0
+  deadline: 10.29
+  arrival: 0.65
+  subtasks:
+  - id: s0
+    predecessors: []
+    successors: []
+    segments:
+    - id: g00
+      index: 1
+      wcet: 2.915
+      required_resources: []
+- id: t2
+  name: t2
+  task_type: time_deterministic
+  period: 8.0
+  deadline: 1.65
+  arrival: 3.76
+  subtasks:
+  - id: s0
+    predecessors: []
+    successors: []
+    segments:
+    - id: g00
+      index: 1
+      wcet: 0.847
+      required_resources: []
+      mapping_hint: c0
+    - id: g01
+      index: 2
+      wcet: 0.484
+      required_resources: []
+scheduler:
+  name: edf
+  params: {}
+sim:
+  duration: 60.0
+  seed: 20262307
+planning:
+  planner: np_edf
+  task_scope: sync_only

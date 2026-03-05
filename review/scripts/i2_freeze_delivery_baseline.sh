@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
+
+OUT_DIR="${1:-review/runtime/i2/baseline_freeze}"
+TIMESTAMP_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+STAMP="$(date -u +"%Y%m%d-%H%M%S")"
+SNAPSHOT_ID="baseline-freeze-${STAMP}"
+TAG_NAME="${BASELINE_TAG:-delivery-baseline-${STAMP}}"
+
+CHANGE_DIR="${OUT_DIR}/change_list"
+ARTIFACT_DIR="${OUT_DIR}/artifacts"
+mkdir -p "$CHANGE_DIR" "$ARTIFACT_DIR"
+
+HEAD_COMMIT="$(git rev-parse HEAD)"
+git status --short > "${CHANGE_DIR}/git_status_short.txt"
+git diff --stat > "${CHANGE_DIR}/git_diff_stat.txt"
+git diff --name-status > "${CHANGE_DIR}/git_diff_name_status.txt"
+CHANGED_COUNT="$(wc -l < "${CHANGE_DIR}/git_status_short.txt" | tr -d ' ')"
+
+TAG_STATUS="not_created"
+if git rev-parse -q --verify "refs/tags/${TAG_NAME}" >/dev/null; then
+  TAG_STATUS="exists"
+else
+  if git tag "${TAG_NAME}" "${HEAD_COMMIT}" >/dev/null 2>&1; then
+    TAG_STATUS="created"
+  else
+    TAG_STATUS="failed"
+  fi
+fi
+
+copy_artifact() {
+  local src="$1"
+  local rel="$2"
+  local dst="${ARTIFACT_DIR}/${rel}"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    echo "[OK] snapshot include: ${src} -> ${dst}"
+  else
+    echo "[WARN] snapshot source missing: ${src}" >&2
+  fi
+}
+
+copy_artifact "review/runtime/runtime_evidence.json" "runtime/runtime_evidence.json"
+copy_artifact "review/runtime/command_results.tsv" "runtime/command_results.tsv"
+copy_artifact "review/runtime/i1/ci_gate/results.tsv" "runtime/i1/ci_gate/results.tsv"
+copy_artifact "review/runtime/i1/sched_rate_gate/summary.txt" "runtime/i1/sched_rate_gate/summary.txt"
+copy_artifact "review/03-问题台账.csv" "review/03-问题台账.csv"
+copy_artifact "review/06-收口执行记录.md" "review/06-收口执行记录.md"
+copy_artifact "review/scripts/i1_ci_gate.sh" "scripts/i1_ci_gate.sh"
+copy_artifact "review/scripts/i1_freeze_sched_rate_gate.sh" "scripts/i1_freeze_sched_rate_gate.sh"
+copy_artifact "review/scripts/i2_freeze_delivery_baseline.sh" "scripts/i2_freeze_delivery_baseline.sh"
+copy_artifact "review/scripts/strict_plan_pipeline.sh" "scripts/strict_plan_pipeline.sh"
+copy_artifact ".github/workflows/ci.yml" "ci/ci.yml"
+
+cat > "${OUT_DIR}/reproduce_commands.txt" <<'EOF'
+python -m pytest -q
+bash review/scripts/i1_freeze_sched_rate_gate.sh
+bash review/scripts/i1_ci_gate.sh
+EOF
+
+cat > "${OUT_DIR}/tag.txt" <<EOF
+tag_name=${TAG_NAME}
+tag_status=${TAG_STATUS}
+head_commit=${HEAD_COMMIT}
+snapshot_id=${SNAPSHOT_ID}
+EOF
+
+python - <<'PY' "${OUT_DIR}" "${TIMESTAMP_UTC}" "${SNAPSHOT_ID}" "${HEAD_COMMIT}" "${TAG_NAME}" "${TAG_STATUS}" "${CHANGED_COUNT}"
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+out_dir = Path(sys.argv[1])
+timestamp_utc = sys.argv[2]
+snapshot_id = sys.argv[3]
+head_commit = sys.argv[4]
+tag_name = sys.argv[5]
+tag_status = sys.argv[6]
+changed_count = int(sys.argv[7])
+
+meta = {
+    "snapshot_id": snapshot_id,
+    "generated_at_utc": timestamp_utc,
+    "head_commit": head_commit,
+    "tag_name": tag_name,
+    "tag_status": tag_status,
+    "changed_file_count": changed_count,
+    "dirty_workspace": changed_count > 0,
+    "paths": {
+        "change_list": str(out_dir / "change_list"),
+        "artifacts": str(out_dir / "artifacts"),
+        "reproduce_commands": str(out_dir / "reproduce_commands.txt"),
+    },
+}
+(out_dir / "snapshot_meta.json").write_text(
+    json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+
+manifest_lines = ["sha256\tsize\tpath"]
+for file in sorted(p for p in out_dir.rglob("*") if p.is_file()):
+    digest = hashlib.sha256(file.read_bytes()).hexdigest()
+    size = file.stat().st_size
+    rel = file.relative_to(out_dir).as_posix()
+    manifest_lines.append(f"{digest}\t{size}\t{rel}")
+(out_dir / "manifest.tsv").write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
+PY
+
+echo "[OK] baseline freeze snapshot generated"
+echo "[OK] out_dir=${OUT_DIR}"
+echo "[OK] tag=${TAG_NAME} (${TAG_STATUS})"
+echo "[OK] changed_file_count=${CHANGED_COUNT}"

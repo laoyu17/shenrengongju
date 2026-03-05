@@ -16,6 +16,10 @@ class _Owner:
     _active_segments: dict[str, dict]
     _metrics: list[str]
     _core_to_y: dict[str, float]
+    _state_rows: list[tuple[float, str, str]]
+
+    def _append_state_transition(self, *, event_time: float, state: str, label: str) -> None:
+        self._state_rows.append((event_time, state, label))
 
 
 def _make_owner() -> _Owner:
@@ -27,6 +31,7 @@ def _make_owner() -> _Owner:
         _active_segments={},
         _metrics=[],
         _core_to_y={"c0": 0.0},
+        _state_rows=[],
     )
 
 
@@ -145,3 +150,49 @@ def test_preempt_event_marks_segment_preempted(monkeypatch: pytest.MonkeyPatch) 
     assert metas[0].remaining_after_preempt == pytest.approx(2.0)
     assert markers == [(3.0, "c0")]
     assert any(line.startswith("[Preempt] job@1:s0:seg1") for line in owner._metrics)
+
+
+def test_state_stream_emits_four_runtime_states() -> None:
+    owner = _make_owner()
+    controller = TimelineController(owner)
+
+    controller.on_event_batch(
+        [
+            {
+                "event_id": "e0",
+                "type": "JobReleased",
+                "job_id": "job@0",
+                "time": 0.0,
+                "payload": {"absolute_deadline": 5.0},
+            },
+            {
+                "event_id": "e1",
+                "type": "SegmentReady",
+                "job_id": "job@0",
+                "time": 0.1,
+                "payload": {"segment_key": "job@0:s0:seg0"},
+            },
+            {
+                "event_id": "e2",
+                "type": "SegmentStart",
+                "job_id": "job@0",
+                "segment_id": "seg0",
+                "core_id": "c0",
+                "time": 0.2,
+                "payload": {"segment_key": "job@0:s0:seg0"},
+            },
+            {
+                "event_id": "e3",
+                "type": "SegmentBlocked",
+                "job_id": "job@0",
+                "time": 0.3,
+                "payload": {"segment_key": "job@0:s0:seg0"},
+            },
+        ]
+    )
+
+    states = [item[1] for item in owner._state_rows]
+    assert "Released" in states
+    assert "Ready" in states
+    assert "Executing" in states
+    assert "Blocked" in states

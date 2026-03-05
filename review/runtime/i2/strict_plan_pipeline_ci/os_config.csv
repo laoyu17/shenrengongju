@@ -1,0 +1,2 @@
+task_id,priority,core_id,segment_key,start_time,end_time,absolute_deadline
+periodic,1,c0,periodic:s0:seg0,0.0,1.0,5.0

@@ -1,0 +1,43 @@
+{
+  "feasible": true,
+  "items": [
+    {
+      "task_id": "periodic",
+      "wcrt": 1.0,
+      "deadline": 5.0,
+      "schedulable": true,
+      "iterations": [
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "rule": "wcrt_components",
+      "message": "computed WCRT for task periodic",
+      "payload": {
+        "task_id": "periodic",
+        "task_type": "time_deterministic",
+        "wcet": 1.0,
+        "sync_interference": 0.0,
+        "sync_interference_sources": "",
+        "hp_independent_count": 0,
+        "hp_independent_tasks": "",
+        "hp_independent_interference": 0.0,
+        "deadline": 5.0,
+        "converged": true,
+        "iterations": 2
+      }
+    },
+    {
+      "rule": "wcrt_summary",
+      "message": "WCRT analysis summary",
+      "payload": {
+        "task_count": 1,
+        "schedulable_count": 1,
+        "feasible": true
+      }
+    }
+  ]
+}

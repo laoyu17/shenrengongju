@@ -27,6 +27,11 @@ class TimelineController:
     def __init__(self, owner: MainWindow) -> None:
         self._owner = owner
 
+    def _emit_state(self, *, event_time: float, state: str, label: str) -> None:
+        append_state = getattr(self._owner, "_append_state_transition", None)
+        if callable(append_state):
+            append_state(event_time=event_time, state=state, label=label)
+
     def on_event_batch(self, events: list[dict[str, Any]]) -> None:
         for event in events:
             event_id = event.get("event_id")
@@ -48,6 +53,11 @@ class TimelineController:
         if event_type == "JobReleased":
             job_id = str(event.get("job_id") or "")
             self._owner._job_deadlines[job_id] = safe_optional_float(payload.get("absolute_deadline"))
+            self._emit_state(event_time=event_time, state="Released", label=job_id)
+            return
+
+        if event_type == "SegmentReady" and isinstance(segment_key, str):
+            self._emit_state(event_time=event_time, state="Ready", label=segment_key)
             return
 
         if event_type == "ResourceAcquire" and isinstance(segment_key, str):
@@ -73,6 +83,7 @@ class TimelineController:
                 "correlation_id": str(event.get("correlation_id") or ""),
                 "absolute_deadline": self._owner._job_deadlines.get(job_id),
             }
+            self._emit_state(event_time=event_time, state="Executing", label=f"{segment_key} core={core_id}")
             return
 
         if event_type == "SegmentEnd" and isinstance(segment_key, str):
@@ -81,6 +92,14 @@ class TimelineController:
 
         if event_type == "Preempt" and isinstance(segment_key, str):
             self.close_segment(segment_key=segment_key, end_event=event, interrupted=True)
+            return
+
+        if event_type == "SegmentBlocked" and isinstance(segment_key, str):
+            self._emit_state(event_time=event_time, state="Blocked", label=segment_key)
+            return
+
+        if event_type == "SegmentUnblocked" and isinstance(segment_key, str):
+            self._emit_state(event_time=event_time, state="Ready", label=f"{segment_key} (unblocked)")
             return
 
         if event_type == "DeadlineMiss":

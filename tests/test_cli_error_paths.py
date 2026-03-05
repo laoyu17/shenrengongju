@@ -392,3 +392,13 @@ def test_cli_migrate_config_can_write_json_output(tmp_path: Path) -> None:
     assert code == 0
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     assert payload["version"] == "0.2"
+
+
+def test_cli_export_os_config_requires_plan_or_config() -> None:
+    code = main(["export-os-config"])
+    assert code == 1
+
+
+def test_cli_benchmark_sched_rate_requires_config_paths() -> None:
+    code = main(["benchmark-sched-rate"])
+    assert code == 1

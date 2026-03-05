@@ -1,0 +1,14 @@
+{
+  "snapshot_id": "baseline-freeze-20260305-044118",
+  "generated_at_utc": "2026-03-05T04:41:18Z",
+  "head_commit": "be6d01360f544d9a239f32ff0ae4b434d6bdf4a7",
+  "tag_name": "delivery-baseline-20260305-044118",
+  "tag_status": "created",
+  "changed_file_count": 54,
+  "dirty_workspace": true,
+  "paths": {
+    "change_list": "review/runtime/i2/baseline_freeze_20260305/change_list",
+    "artifacts": "review/runtime/i2/baseline_freeze_20260305/artifacts",
+    "reproduce_commands": "review/runtime/i2/baseline_freeze_20260305/reproduce_commands.txt"
+  }
+}

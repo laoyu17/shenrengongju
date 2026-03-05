@@ -1,0 +1,54 @@
+ M .github/workflows/ci.yml
+ M "docs/10-\350\257\246\347\273\206\350\256\276\350\256\241\350\257\264\346\230\216\344\271\246.md"
+ M "docs/11-\345\256\236\346\226\275\347\216\260\347\212\266\351\227\256\351\242\230\344\270\216Sprint\350\247\204\345\210\222.md"
+ M "docs/14-docx\351\234\200\346\261\202\350\277\275\350\270\252\347\237\251\351\230\265.md"
+ M "docs/15-\347\240\224\347\251\266\351\227\255\347\216\257\351\252\214\346\224\266\345\237\272\347\272\277.md"
+ M "docs/18-\347\273\274\345\220\210\345\256\241\346\237\245\346\212\245\345\221\212-2026-02-24.md"
+ M "docs/19-\347\224\250\346\210\267\344\275\277\347\224\250\350\257\264\346\230\216\344\271\246.md"
+ M "docs/20-\345\256\241\346\237\245\351\227\256\351\242\230\345\217\260\350\264\246.csv"
+ M "docs/21-\345\205\250\351\207\217\345\237\272\347\272\277\344\270\200\350\207\264\346\200\247\346\240\241\351\252\214\350\256\260\345\275\225-2026-02-24.md"
+ M "docs/22-\345\210\206\351\230\266\346\256\265\351\252\214\346\224\266\346\212\245\345\221\212.md"
+ M docs/README.md
+ M pyproject.toml
+ M rtos_sim/cli/main.py
+ M rtos_sim/core/engine.py
+ M rtos_sim/core/engine_runtime.py
+ M rtos_sim/io/loader.py
+ M rtos_sim/io/schema.py
+ M rtos_sim/model/__init__.py
+ M rtos_sim/model/spec.py
+ M rtos_sim/ui/app.py
+ M rtos_sim/ui/config_doc.py
+ M rtos_sim/ui/controllers/__init__.py
+ M rtos_sim/ui/controllers/timeline_controller.py
+ M scripts/check_doc_baseline_consistency.py
+ M tests/test_cli_error_paths.py
+ M tests/test_doc_baseline_consistency.py
+ M tests/test_ui_gantt.py
+ M tests/ui/test_timeline_controller.py
+?? "docs/25-\350\256\276\350\256\241\346\226\271\346\241\210\346\212\245\345\221\212\345\205\250\351\207\217\350\277\275\350\270\252\347\237\251\351\230\265.md"
+?? "docs/26-\344\270\245\346\240\274Docx\351\252\214\346\224\266\347\237\251\351\230\265.md"
+?? "docs/26-\344\272\244\344\273\230\346\270\205\345\215\225.md"
+?? "docs/26-\346\265\213\350\257\225\346\212\245\345\221\212.md"
+?? "docs/26-\346\265\213\350\257\225\347\273\206\345\210\231.md"
+?? "docs/26-\347\224\250\346\210\267\345\237\271\350\256\255\350\256\260\345\275\225.md"
+?? "docs/26-\347\224\250\346\210\267\347\273\264\346\212\244\345\217\212\344\275\277\347\224\250\346\211\213\345\206\214.md"
+?? "docs/26-\347\240\224\345\210\266\346\200\273\347\273\223\346\212\245\345\221\212.md"
+?? "docs/26-\351\234\200\346\261\202\345\210\206\346\236\220\346\212\245\345\221\212.md"
+?? docs/uml-src/drawio/
+?? docs/uml-src/png/
+?? docs/uml-src/svg/
+?? review/
+?? rtos_sim/api.py
+?? rtos_sim/core/engine_static_window.py
+?? rtos_sim/legacy/
+?? rtos_sim/planning/
+?? rtos_sim/ui/controllers/planning_controller.py
+?? scripts/benchmark_sched_rate.py
+?? scripts/paper_assets/
+?? tests/test_cli_planning_commands.py
+?? tests/test_engine_static_window_mode.py
+?? tests/test_planning_heuristics.py
+?? tests/test_planning_lp.py
+?? tests/test_sched_rate_benchmark_script.py
+?? tests/test_wcrt_analysis.py
