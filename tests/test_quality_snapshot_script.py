@@ -97,6 +97,35 @@ def test_main_reuse_mode_returns_non_zero_when_summary_has_failures(tmp_path: Pa
     assert payload["command_exit_code"] == 0
 
 
+def test_main_reuse_mode_accepts_quiet_progress_only_output(tmp_path: Path) -> None:
+    coverage_path = tmp_path / "coverage.json"
+    coverage_path.write_text(json.dumps(_coverage_payload()), encoding="utf-8")
+    pytest_output_path = tmp_path / "pytest-output.txt"
+    pytest_output_path.write_text(
+        ".................................... [100%]\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "quality-snapshot.json"
+
+    code = quality_snapshot_script.main(
+        [
+            "--output",
+            str(output_path),
+            "--coverage-json",
+            str(coverage_path),
+            "--pytest-output-file",
+            str(pytest_output_path),
+            "--reuse-existing-artifacts",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "pass"
+    assert payload["pytest"]["passed"] == 36
+    assert payload["pytest"]["parse_mode"] == "quiet_progress"
+
+
 def test_cli_entrypoint_works_without_site_packages() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(

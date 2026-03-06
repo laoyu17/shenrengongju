@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsLineItem,
@@ -65,14 +64,9 @@ from .dag_layout import compute_auto_layout_positions
 from .gantt_helpers import (
     SegmentBlockItem,
     SegmentVisualMeta,
-    brush_style_name,
     format_segment_details,
-    parse_segment_key,
-    pen_style_name,
     safe_float,
     safe_optional_float,
-    safe_optional_int,
-    task_from_job,
 )
 from .panel_builders import build_compare_group, build_planning_tab
 from .panel_state import ComparePanelState, TelemetryPanelState
@@ -344,7 +338,9 @@ class MainWindow(QMainWindow):
         self._planning_enabled = QCheckBox("planning.enabled")
         self._planning_enabled.setChecked(False)
         self._planning_planner = QComboBox()
-        self._planning_planner.addItems(["np_edf", "np_dm", "precautious_dm", "lp"])
+        self._planning_planner.addItems(
+            ["np_edf", "np_dm", "np_rm", "precautious_dm", "precautious_rm", "lp"]
+        )
         self._planning_lp_objective = QComboBox()
         self._planning_lp_objective.addItems(["response_time", "spread_execution"])
         self._planning_task_scope = QComboBox()

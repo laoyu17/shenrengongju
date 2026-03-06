@@ -64,6 +64,31 @@ def test_parse_pytest_summary_with_tests_keyword_style() -> None:
     assert summary["failed"] == 0
 
 
+def test_parse_pytest_summary_with_quiet_progress_only() -> None:
+    output = """\
+....sXxFEE [100%]
+"""
+    summary = parse_pytest_summary(output)
+
+    assert summary["passed"] == 4
+    assert summary["skipped"] == 1
+    assert summary["xpassed"] == 1
+    assert summary["xfailed"] == 1
+    assert summary["failed"] == 1
+    assert summary["errors"] == 2
+    assert summary["parse_mode"] == "quiet_progress"
+
+
+def test_parse_pytest_summary_with_ansi_quiet_progress() -> None:
+    output = "\x1b[32m.....\x1b[0m [100%]\n"
+    summary = parse_pytest_summary(output)
+
+    assert summary["passed"] == 5
+    assert summary["failed"] == 0
+    assert summary["errors"] == 0
+    assert summary["parse_mode"] == "quiet_progress"
+
+
 def test_parse_pytest_summary_raises_when_missing() -> None:
     with pytest.raises(ValueError, match="pytest summary line"):
         parse_pytest_summary("no summary")

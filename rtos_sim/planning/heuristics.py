@@ -16,7 +16,7 @@ from .types import (
 
 
 EPSILON = 1e-12
-PlannerName = Literal["np_dm", "np_edf", "precautious_dm"]
+PlannerName = Literal["np_dm", "np_edf", "np_rm", "precautious_dm", "precautious_rm"]
 
 
 def _segment_utilization(segment: PlanningSegment, *, horizon: float | None) -> float:
@@ -98,10 +98,17 @@ def _priority_key(segment: PlanningSegment, *, start_time: float, planner: Plann
         if segment.relative_deadline is not None
         else float("inf")
     )
+    period = (
+        float(segment.period)
+        if segment.period is not None and float(segment.period) > EPSILON
+        else float("inf")
+    )
     if planner == "np_edf":
         return (absolute_deadline, relative_deadline, segment.release_time)
     if planner in {"np_dm", "precautious_dm"}:
         return (relative_deadline, absolute_deadline, segment.release_time)
+    if planner in {"np_rm", "precautious_rm"}:
+        return (period, relative_deadline, absolute_deadline, segment.release_time)
     raise ValueError(f"unsupported planner: {planner}")
 
 
@@ -115,6 +122,7 @@ def _predecessor_ready_time(
 
 def _precautious_risk_candidate(
     *,
+    planner: PlannerName,
     core_id: str,
     dispatch_start: float,
     dispatch_segment: PlanningSegment,
@@ -123,8 +131,11 @@ def _precautious_risk_candidate(
     assignments: dict[str, str],
     unscheduled: set[str],
 ) -> dict[str, float | str] | None:
+    if planner not in {"precautious_dm", "precautious_rm"}:
+        raise ValueError(f"unsupported precautious planner: {planner}")
+
     dispatch_finish = dispatch_start + dispatch_segment.wcet
-    risky_rows: list[tuple[float, float, float, str, float]] = []
+    risky_rows: list[tuple[float, float, float, float, str, float]] = []
 
     for segment_key in sorted(unscheduled):
         if segment_key == dispatch_segment.key:
@@ -148,11 +159,20 @@ def _precautious_risk_candidate(
             if candidate.relative_deadline is not None
             else float("inf")
         )
+        period = (
+            float(candidate.period)
+            if candidate.period is not None and float(candidate.period) > EPSILON
+            else float("inf")
+        )
         absolute_deadline = float(candidate.absolute_deadline)
+        primary = period if planner == "precautious_rm" else relative_deadline
+        secondary = relative_deadline if planner == "precautious_rm" else absolute_deadline
+        tertiary = absolute_deadline if planner == "precautious_rm" else arrival_time
         risky_rows.append(
             (
-                relative_deadline,
-                absolute_deadline,
+                primary,
+                secondary,
+                tertiary,
                 arrival_time,
                 segment_key,
                 predicted_finish,
@@ -161,17 +181,26 @@ def _precautious_risk_candidate(
 
     if not risky_rows:
         return None
-    relative_deadline, absolute_deadline, arrival_time, segment_key, predicted_finish = min(
+    primary, secondary, tertiary, arrival_time, segment_key, predicted_finish = min(
         risky_rows,
-        key=lambda item: (item[0], item[1], item[2], item[3]),
+        key=lambda item: (item[0], item[1], item[2], item[3], item[4]),
     )
     return {
         "segment_key": segment_key,
         "arrival_time": arrival_time,
         "predicted_finish": predicted_finish,
-        "relative_deadline": relative_deadline,
-        "absolute_deadline": absolute_deadline,
+        "risk_primary": primary,
+        "risk_secondary": secondary,
+        "risk_tertiary": tertiary,
     }
+
+
+def _precautious_base_planner(planner: PlannerName) -> PlannerName:
+    if planner == "precautious_dm":
+        return "np_dm"
+    if planner == "precautious_rm":
+        return "np_rm"
+    raise ValueError(f"unsupported precautious planner: {planner}")
 
 
 def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> PlanningResult:
@@ -238,8 +267,9 @@ def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> P
         )
         selected_segment_key = segment_key
         segment = segment_map[segment_key]
-        if planner == "precautious_dm":
+        if planner in {"precautious_dm", "precautious_rm"}:
             risk = _precautious_risk_candidate(
+                planner=planner,
                 core_id=core_id,
                 dispatch_start=start_time,
                 dispatch_segment=segment,
@@ -258,16 +288,22 @@ def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> P
                             rule="precautious_wait",
                             message=f"wait on {core_id} for risky segment {risk_segment_key}",
                             payload={
+                                "planner": planner,
                                 "core_id": core_id,
                                 "wait_start": round(start_time, 8),
                                 "wait_until": round(risk_arrival, 8),
                                 "wait_duration": round(risk_arrival - start_time, 8),
                                 "deferred_segment": segment_key,
                                 "risky_segment": risk_segment_key,
-                                "risky_relative_deadline": round(float(risk["relative_deadline"]), 8)
-                                if float(risk["relative_deadline"]) != float("inf")
+                                "risk_primary": round(float(risk["risk_primary"]), 8)
+                                if float(risk["risk_primary"]) != float("inf")
                                 else None,
-                                "risky_absolute_deadline": round(float(risk["absolute_deadline"]), 8),
+                                "risk_secondary": round(float(risk["risk_secondary"]), 8)
+                                if float(risk["risk_secondary"]) != float("inf")
+                                else None,
+                                "risk_tertiary": round(float(risk["risk_tertiary"]), 8)
+                                if float(risk["risk_tertiary"]) != float("inf")
+                                else None,
                                 "predicted_finish_if_not_wait": round(float(risk["predicted_finish"]), 8),
                             },
                         )
@@ -281,17 +317,18 @@ def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> P
                     completion_times=completion_times,
                 )
                 start_time = max(core_available[core_id], segment.release_time, predecessor_ready)
-                leading_priority = _priority_key(segment, start_time=start_time, planner="np_dm")[0]
+                base_planner = _precautious_base_planner(planner)
+                leading_priority = _priority_key(segment, start_time=start_time, planner=base_planner)[0]
                 evidence.append(
                     PlanningEvidence(
                         rule="precautious_risk_override",
-                        message=f"override NP-DM dispatch with risky segment {segment_key}",
+                        message=f"override dispatch with risky segment {segment_key}",
                         payload={
+                            "planner": planner,
                             "core_id": core_id,
                             "override_time": round(start_time, 8),
                             "deferred_segment": selected_segment_key,
                             "risky_segment": segment_key,
-                            "risky_absolute_deadline": round(float(risk["absolute_deadline"]), 8),
                             "predicted_finish_if_deferred": round(float(risk["predicted_finish"]), 8),
                         },
                     )
@@ -385,8 +422,16 @@ def plan_np_edf(problem: PlanningProblem) -> PlanningResult:
     return _plan_non_preemptive(problem, planner="np_edf")
 
 
+def plan_np_rm(problem: PlanningProblem) -> PlanningResult:
+    return _plan_non_preemptive(problem, planner="np_rm")
+
+
 def plan_precautious_dm(problem: PlanningProblem) -> PlanningResult:
     return _plan_non_preemptive(problem, planner="precautious_dm")
+
+
+def plan_precautious_rm(problem: PlanningProblem) -> PlanningResult:
+    return _plan_non_preemptive(problem, planner="precautious_rm")
 
 
 def plan_static(problem: PlanningProblem, planner: str = "np_edf") -> PlanningResult:
@@ -395,6 +440,10 @@ def plan_static(problem: PlanningProblem, planner: str = "np_edf") -> PlanningRe
         return plan_np_dm(problem)
     if key == "np_edf":
         return plan_np_edf(problem)
+    if key == "np_rm":
+        return plan_np_rm(problem)
     if key in {"precautious", "precautious_dm"}:
         return plan_precautious_dm(problem)
+    if key == "precautious_rm":
+        return plan_precautious_rm(problem)
     raise ValueError(f"unsupported planner: {planner}")

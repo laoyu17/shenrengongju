@@ -45,6 +45,7 @@ QT_QPA_PLATFORM=xcb rtos-sim ui -c examples/at01_single_dag_single_core.yaml
 
 # 批量实验（参数矩阵）
 rtos-sim batch-run -b examples/batch_matrix.yaml
+# 默认输出目录：examples/artifacts/batch-at01/
 
 # 注意：batch_matrix 属于批跑配置，不适用 validate 子命令
 # rtos-sim validate -c examples/batch_matrix.yaml 会提示改用 batch-run

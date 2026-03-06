@@ -436,6 +436,10 @@ def benchmark_sched_rate(
     baseline_pass = 0
     best_pass = 0
     candidate_only_pass = 0
+    baseline_pass_non_empty = 0
+    best_pass_non_empty = 0
+    candidate_only_pass_non_empty = 0
+    empty_scope_case_count = 0
     resolved_scope = normalize_task_scope(task_scope, include_non_rt=include_non_rt)
 
     unique_candidates = [item.strip().lower() for item in candidates if item.strip()]
@@ -449,6 +453,9 @@ def benchmark_sched_rate(
             include_non_rt=include_non_rt,
             horizon=horizon,
         )
+        is_empty_scope_case = len(problem.segments) == 0
+        if is_empty_scope_case:
+            empty_scope_case_count += 1
 
         baseline_eval = plan_and_analyze_schedulability(
             problem,
@@ -463,6 +470,8 @@ def benchmark_sched_rate(
         )
         baseline_feasible = bool(baseline_eval["schedulable"])
         baseline_pass += int(baseline_feasible)
+        if not is_empty_scope_case:
+            baseline_pass_non_empty += int(baseline_feasible)
 
         candidate_results: dict[str, dict[str, bool]] = {}
         for candidate in unique_candidates:
@@ -489,10 +498,15 @@ def benchmark_sched_rate(
         candidate_only_feasible = any(item["schedulable"] for item in candidate_results.values())
         best_pass += int(best_candidate_feasible)
         candidate_only_pass += int(candidate_only_feasible)
+        if not is_empty_scope_case:
+            best_pass_non_empty += int(best_candidate_feasible)
+            candidate_only_pass_non_empty += int(candidate_only_feasible)
 
         case_reports.append(
             {
                 "config": str(path),
+                "scope_segment_count": len(problem.segments),
+                "is_empty_scope_case": is_empty_scope_case,
                 "baseline": baseline,
                 "baseline_planning_feasible": bool(baseline_eval["planning_feasible"]),
                 "baseline_wcrt_feasible": bool(baseline_eval["wcrt_feasible"]),
@@ -507,6 +521,16 @@ def benchmark_sched_rate(
     baseline_rate = (baseline_pass / total) if total else 0.0
     candidate_rate = (best_pass / total) if total else 0.0
     candidate_only_rate = (candidate_only_pass / total) if total else 0.0
+    non_empty_case_count = total - empty_scope_case_count
+    baseline_rate_non_empty = (
+        (baseline_pass_non_empty / non_empty_case_count) if non_empty_case_count else 0.0
+    )
+    candidate_rate_non_empty = (
+        (best_pass_non_empty / non_empty_case_count) if non_empty_case_count else 0.0
+    )
+    candidate_only_rate_non_empty = (
+        (candidate_only_pass_non_empty / non_empty_case_count) if non_empty_case_count else 0.0
+    )
     uplift = (
         (candidate_rate - baseline_rate) / baseline_rate
         if baseline_rate > 1e-12
@@ -517,9 +541,21 @@ def benchmark_sched_rate(
         if baseline_rate > 1e-12
         else (1.0 if candidate_only_rate > 0 else 0.0)
     )
+    non_empty_uplift = (
+        (candidate_rate_non_empty - baseline_rate_non_empty) / baseline_rate_non_empty
+        if baseline_rate_non_empty > 1e-12
+        else (1.0 if candidate_rate_non_empty > 0 else 0.0)
+    )
+    non_empty_candidate_only_uplift = (
+        (candidate_only_rate_non_empty - baseline_rate_non_empty) / baseline_rate_non_empty
+        if baseline_rate_non_empty > 1e-12
+        else (1.0 if candidate_only_rate_non_empty > 0 else 0.0)
+    )
 
     return {
         "total_cases": total,
+        "empty_scope_case_count": empty_scope_case_count,
+        "non_empty_case_count": non_empty_case_count,
         "baseline": baseline,
         "candidates": unique_candidates,
         "task_scope": resolved_scope,
@@ -528,8 +564,13 @@ def benchmark_sched_rate(
         "baseline_schedulable_rate": round(baseline_rate, 9),
         "best_candidate_schedulable_rate": round(candidate_rate, 9),
         "candidate_only_schedulable_rate": round(candidate_only_rate, 9),
+        "non_empty_baseline_schedulable_rate": round(baseline_rate_non_empty, 9),
+        "non_empty_best_candidate_schedulable_rate": round(candidate_rate_non_empty, 9),
+        "non_empty_candidate_only_schedulable_rate": round(candidate_only_rate_non_empty, 9),
         "uplift": round(uplift, 9),
         "candidate_only_uplift": round(candidate_only_uplift, 9),
+        "non_empty_uplift": round(non_empty_uplift, 9),
+        "non_empty_candidate_only_uplift": round(non_empty_candidate_only_uplift, 9),
         "cases": case_reports,
     }
 

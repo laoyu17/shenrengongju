@@ -490,6 +490,7 @@ def cmd_benchmark_sched_rate(args: argparse.Namespace) -> int:
         f"cases={report.get('total_cases', 0)}, baseline_rate={report.get('baseline_schedulable_rate')}, "
         f"candidate_rate={report.get('best_candidate_schedulable_rate')}, "
         f"candidate_only_rate={report.get('candidate_only_schedulable_rate')}, "
+        f"non_empty_cases={report.get('non_empty_case_count')}, "
         f"uplift={report.get('uplift')}, candidate_only_uplift={report.get('candidate_only_uplift')}, "
         f"json={out_json}, csv={args.out_csv or '-'}"
     )

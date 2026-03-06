@@ -23,6 +23,8 @@ _SUMMARY_TESTS_PATTERN = re.compile(
     r"\b(\d+)\s+tests?\s+(passed|failed|error|errors|skipped|xfailed|xpassed)\b",
     re.IGNORECASE,
 )
+_QUIET_PROGRESS_PATTERN = re.compile(r"^([.FEsxX]+)\s*\[\s*\d+%\s*\]$")
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _extract_counts(text: str) -> dict[str, int]:
@@ -65,6 +67,42 @@ def _extract_counts(text: str) -> dict[str, int]:
     return counts
 
 
+def _extract_quiet_progress_counts(output: str) -> dict[str, int]:
+    counts = {
+        "passed": 0,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+    }
+    found = False
+
+    for raw_line in output.splitlines():
+        normalized_line = _ANSI_ESCAPE_PATTERN.sub("", raw_line).strip()
+        match = _QUIET_PROGRESS_PATTERN.match(normalized_line)
+        if match is None:
+            continue
+        found = True
+        for token in match.group(1):
+            if token == ".":
+                counts["passed"] += 1
+            elif token == "F":
+                counts["failed"] += 1
+            elif token == "E":
+                counts["errors"] += 1
+            elif token == "s":
+                counts["skipped"] += 1
+            elif token == "x":
+                counts["xfailed"] += 1
+            elif token == "X":
+                counts["xpassed"] += 1
+
+    if not found:
+        return {}
+    return counts
+
+
 def parse_pytest_summary(output: str) -> dict[str, Any]:
     """Parse the terminal pytest summary line into normalized counters."""
 
@@ -91,14 +129,17 @@ def parse_pytest_summary(output: str) -> dict[str, Any]:
     if summary_line is None:
         aggregated_counts = _extract_counts(output)
         if aggregated_counts:
-            return {**aggregated_counts, "summary_line": ""}
+            return {**aggregated_counts, "summary_line": "", "parse_mode": "aggregate_counts"}
+        quiet_progress_counts = _extract_quiet_progress_counts(output)
+        if quiet_progress_counts:
+            return {**quiet_progress_counts, "summary_line": "", "parse_mode": "quiet_progress"}
         raise ValueError("unable to find pytest summary line")
 
     counts = _extract_counts(summary_line)
     if not counts:
         raise ValueError("unable to parse pytest summary counters")
 
-    return {**counts, "summary_line": summary_line}
+    return {**counts, "summary_line": summary_line, "parse_mode": "summary_line"}
 
 
 def summarize_coverage_payload(payload: dict[str, Any]) -> dict[str, Any]:

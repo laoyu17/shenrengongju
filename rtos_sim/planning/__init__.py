@@ -4,7 +4,9 @@ from .heuristics import (
     assign_segments_wfd,
     plan_np_dm,
     plan_np_edf,
+    plan_np_rm,
     plan_precautious_dm,
+    plan_precautious_rm,
     plan_static,
 )
 from .lp_solver import plan_lp
@@ -28,7 +30,9 @@ __all__ = [
     "assign_segments_wfd",
     "plan_np_dm",
     "plan_np_edf",
+    "plan_np_rm",
     "plan_precautious_dm",
+    "plan_precautious_rm",
     "plan_static",
     "plan_lp",
     "analyze_wcrt",

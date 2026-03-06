@@ -104,7 +104,7 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
     plan_static_parser.add_argument(
         "--planner",
         default=None,
-        help="planner name: np_edf|np_dm|precautious_dm|lp (default from planning section)",
+        help="planner name: np_edf|np_dm|np_rm|precautious_dm|precautious_rm|lp (default from planning section)",
     )
     plan_static_parser.add_argument(
         "--lp-objective",
@@ -144,7 +144,11 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
         action="store_true",
         help="strictly require --plan-json spec_fingerprint matches --config",
     )
-    wcrt_parser.add_argument("--planner", default=None, help="planner used when --plan-json not provided")
+    wcrt_parser.add_argument(
+        "--planner",
+        default=None,
+        help="planner used when --plan-json not provided: np_edf|np_dm|np_rm|precautious_dm|precautious_rm|lp",
+    )
     wcrt_parser.add_argument("--lp-objective", default=None, help="LP objective when planner=lp")
     wcrt_parser.add_argument(
         "--task-scope",
@@ -243,7 +247,11 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
         action="store_true",
         help="strictly require --plan-json spec_fingerprint matches --config",
     )
-    export_parser.add_argument("--planner", default=None, help="planner used when --plan-json not provided")
+    export_parser.add_argument(
+        "--planner",
+        default=None,
+        help="planner used when --plan-json not provided: np_edf|np_dm|np_rm|precautious_dm|precautious_rm|lp",
+    )
     export_parser.add_argument("--lp-objective", default=None, help="LP objective when planner=lp")
     export_parser.add_argument(
         "--task-scope",

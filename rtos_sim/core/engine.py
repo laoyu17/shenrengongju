@@ -11,16 +11,13 @@ from typing import Any, Callable, Optional
 
 import simpy
 
-from rtos_sim.arrival import IArrivalGenerator, create_arrival_generator
+from rtos_sim.arrival import IArrivalGenerator
 from rtos_sim.etm import IExecutionTimeModel, create_etm
 from rtos_sim.events import EventBus, EventType, SimEvent
 from rtos_sim.metrics import CoreMetrics, IMetric
 from rtos_sim.model import (
-    CoreState,
-    DecisionAction,
     JobState,
     ModelSpec,
-    ReadySegment,
     RuntimeSegmentState,
     ScheduleSnapshot,
     TaskGraphSpec,

@@ -21,9 +21,9 @@
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
 ## 2. 当前基线快照（2026-03-05）
-- 代码快照：`git_sha=d7c36b4c283847bed358b9b4cb3538807619323a`
-- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `361 passed`）。
-- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.74%`，`line_rate=89.74056603773585`）。
+- 代码快照：`git_sha=6b240e985bf45bf741df38ea83324257bef92599`
+- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `386 passed`）。
+- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.73%`，`line_rate=89.7307960083546`）。
 - 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`
 - 主要差距：证明资产“可判定”已具备，但“反例深度 + 报告模板化 + CI 稳定化”尚未形成闭环产线。
 - 门禁升级建议：维持 `research_audit` 非阻断；当连续 7 天 `research_v1=pass` 且 `unexpected_actual_checks=0` 后，再评估升级为阻断。

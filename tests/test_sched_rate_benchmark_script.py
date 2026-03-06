@@ -45,12 +45,15 @@ def test_benchmark_sched_rate_script_generates_stratified_report(tmp_path: Path)
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["gate_pass"] is True
-    assert report["overall"]["total_cases"] == 3
-    assert len(report["tiers"]) == 3
+    assert "profiles" in report
+    assert report["profiles"]["standard_seeded"]["overall"]["total_cases"] == 3
+    assert len(report["profiles"]["standard_seeded"]["tiers"]) == 3
     assert report["macro_uplift"] >= 0.3
-    assert report["gate_metric"] == "candidate_only_uplift"
+    assert report["gate_metric"] == "macro_uplift"
     assert "macro_best_candidate_uplift" in report
-    assert "candidate_only_uplift" in report["tiers"][0]
+    assert "candidate_only_uplift" in report["profiles"]["standard_seeded"]["tiers"][0]
+    assert report["profiles"]["standard_seeded"]["overall"]["non_empty_case_count"] > 0
+    assert report["profiles"]["docx_mixed"]["overall"]["non_empty_case_count"] > 0
 
 
 def test_benchmark_sched_rate_script_strict_gate_failure_returns_nonzero(tmp_path: Path) -> None:

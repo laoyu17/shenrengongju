@@ -7,7 +7,9 @@ from rtos_sim.planning import (
     assign_segments_wfd,
     plan_np_dm,
     plan_np_edf,
+    plan_np_rm,
     plan_precautious_dm,
+    plan_precautious_rm,
 )
 
 
@@ -79,6 +81,17 @@ def test_np_edf_orders_by_absolute_deadline() -> None:
     assert core_windows[1].segment_key == late.key
 
 
+def test_np_rm_orders_by_period() -> None:
+    longer_period = _segment(task_id="slow", segment_id="a", wcet=1.0, period=20.0, deadline=10.0, mapping_hint="c0")
+    shorter_period = _segment(task_id="fast", segment_id="b", wcet=1.0, period=5.0, deadline=10.0, mapping_hint="c0")
+    result = plan_np_rm(PlanningProblem(core_ids=["c0"], segments=[longer_period, shorter_period]))
+
+    core_windows = result.schedule_table.by_core()["c0"]
+    assert result.feasible
+    assert core_windows[0].segment_key == shorter_period.key
+    assert core_windows[1].segment_key == longer_period.key
+
+
 def test_precautious_dm_waits_for_risky_short_deadline_task() -> None:
     long_running = _segment(
         task_id="long",
@@ -103,6 +116,35 @@ def test_precautious_dm_waits_for_risky_short_deadline_task() -> None:
     assert by_key[short_deadline.key].start_time == 1.0
     assert by_key[short_deadline.key].end_time == 2.0
     assert by_key[long_running.key].start_time == 2.0
+    assert any(item.rule == "precautious_wait" for item in result.schedule_table.evidence)
+
+
+def test_precautious_rm_waits_for_risky_short_period_task() -> None:
+    long_period_task = _segment(
+        task_id="long_period",
+        segment_id="a",
+        wcet=4.0,
+        release=0.0,
+        period=20.0,
+        deadline=12.0,
+        mapping_hint="c0",
+    )
+    short_period_task = _segment(
+        task_id="short_period",
+        segment_id="b",
+        wcet=1.0,
+        release=1.0,
+        period=4.0,
+        deadline=2.0,
+        mapping_hint="c0",
+    )
+    result = plan_precautious_rm(PlanningProblem(core_ids=["c0"], segments=[long_period_task, short_period_task]))
+    by_key = {window.segment_key: window for window in result.schedule_table.windows}
+
+    assert result.feasible
+    assert by_key[short_period_task.key].start_time == 1.0
+    assert by_key[short_period_task.key].end_time == 2.0
+    assert by_key[long_period_task.key].start_time == 2.0
     assert any(item.rule == "precautious_wait" for item in result.schedule_table.evidence)
 
 

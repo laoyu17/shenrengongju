@@ -12,7 +12,6 @@ from .types import (
     PlanningEvidence,
     PlanningProblem,
     PlanningResult,
-    PlanningSegment,
     ScheduleTable,
     ScheduleWindow,
 )

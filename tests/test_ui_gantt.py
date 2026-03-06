@@ -260,6 +260,16 @@ def test_ui_planning_panel_end_to_end() -> None:
         window.close()
 
 
+def test_ui_planning_planner_combo_includes_rm_variants() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        options = [window._planning_planner.itemText(i) for i in range(window._planning_planner.count())]
+        assert "np_rm" in options
+        assert "precautious_rm" in options
+    finally:
+        window.close()
+
+
 def test_ui_planning_blocks_stale_plan_after_form_changes() -> None:
     window = MainWindow(config_path="examples/at06_time_deterministic.yaml")
     try:

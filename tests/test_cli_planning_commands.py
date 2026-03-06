@@ -42,6 +42,26 @@ def test_cli_plan_static_outputs_json_and_csv(tmp_path: Path) -> None:
     assert payload["metadata"]["spec_fingerprint"] == payload["spec_fingerprint"]
 
 
+def test_cli_plan_static_supports_np_rm_planner(tmp_path: Path) -> None:
+    out_json = tmp_path / "plan-rm.json"
+
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--planner",
+            "np_rm",
+            "--out-json",
+            str(out_json),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["planner"] == "np_rm"
+
+
 def test_cli_analyze_wcrt_can_reuse_plan_json(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan.json"
     report_json = tmp_path / "wcrt.json"
@@ -270,6 +290,9 @@ def test_cli_benchmark_sched_rate_outputs_report(tmp_path: Path) -> None:
     assert "uplift" in payload
     assert "candidate_only_uplift" in payload
     assert "candidate_only_schedulable_rate" in payload
+    assert "empty_scope_case_count" in payload
+    assert "non_empty_case_count" in payload
+    assert "non_empty_candidate_only_uplift" in payload
     assert report_csv.exists()
 
 

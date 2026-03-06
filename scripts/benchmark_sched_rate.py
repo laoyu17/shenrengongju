@@ -1,4 +1,4 @@
-"""Generate standard schedulability benchmark set and run stratified uplift gate."""
+"""Generate schedulability benchmark profiles and apply dual hard gates."""
 
 from __future__ import annotations
 
@@ -133,12 +133,6 @@ def _total_utilization(spec: dict[str, Any]) -> float:
     return round(total, 9)
 
 
-def _relative_uplift(baseline_rate: float, candidate_rate: float) -> float:
-    if baseline_rate > 1e-12:
-        return (candidate_rate - baseline_rate) / baseline_rate
-    return 1.0 if candidate_rate > 0.0 else 0.0
-
-
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -160,11 +154,11 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate fixed-seed stratified sched-rate benchmark set and apply macro-uplift gate."
+        description="Generate fixed-seed sched-rate benchmark profiles and apply dual hard gates."
     )
     parser.add_argument("--output-dir", default="artifacts/sched-rate-benchmark", help="output root directory")
     parser.add_argument("--seed", type=int, default=20260304, help="deterministic seed for case selection")
-    parser.add_argument("--cases-per-tier", type=int, default=4, help="number of configs per load tier")
+    parser.add_argument("--cases-per-tier", type=int, default=4, help="number of generated configs per load tier")
     parser.add_argument("--baseline", default="np_edf", help="baseline planner name")
     parser.add_argument(
         "--candidates",
@@ -180,30 +174,66 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lp-time-limit", type=float, default=30.0, help="LP time limit in seconds")
     parser.add_argument("--wcrt-max-iterations", type=int, default=64, help="max WCRT fixed-point iterations")
     parser.add_argument("--wcrt-epsilon", type=float, default=1e-9, help="WCRT fixed-point epsilon")
-    parser.add_argument("--target-uplift", type=float, default=0.30, help="required macro uplift threshold")
-    parser.add_argument("--strict", action="store_true", help="return non-zero when gate not met")
+    parser.add_argument("--target-uplift", type=float, default=0.30, help="required uplift threshold for both gates")
+    parser.add_argument(
+        "--docx-config-list",
+        default="review/frozen/sched_rate/config-list.txt",
+        help="config list used by docx_mixed frozen profile",
+    )
+    parser.add_argument("--strict", action="store_true", help="return non-zero when any hard gate fails")
     parser.add_argument("--out-json", default="", help="benchmark report json path")
     parser.add_argument("--out-csv", default="", help="benchmark strata csv path")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    if args.cases_per_tier <= 0:
-        print("[ERROR] --cases-per-tier must be > 0")
-        return 1
+def _resolve_benchmark_kwargs(args: argparse.Namespace, candidate_list: list[str]) -> dict[str, Any]:
+    return {
+        "baseline": args.baseline,
+        "candidates": candidate_list,
+        "task_scope": args.task_scope,
+        "include_non_rt": False,
+        "horizon": None,
+        "lp_objective": args.lp_objective,
+        "lp_time_limit_seconds": args.lp_time_limit,
+        "wcrt_max_iterations": args.wcrt_max_iterations,
+        "wcrt_epsilon": args.wcrt_epsilon,
+    }
 
-    output_dir = Path(args.output_dir)
-    out_json = Path(args.out_json) if args.out_json else output_dir / "sched-rate-benchmark.json"
-    out_csv = Path(args.out_csv) if args.out_csv else output_dir / "sched-rate-benchmark.csv"
 
-    candidate_list = [item.strip() for item in args.candidates.split(",") if item.strip()]
-    if not candidate_list:
-        print("[ERROR] --candidates cannot be empty")
-        return 1
+def _load_config_list(path: Path) -> list[str]:
+    if not path.exists():
+        raise FileNotFoundError(f"config-list not found: {path}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_paths: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        candidate = Path(line)
+        search_paths: list[Path] = [candidate]
+        if not candidate.is_absolute():
+            search_paths.append(path.parent / candidate)
+
+        resolved: Path | None = None
+        for probe in search_paths:
+            if probe.exists():
+                resolved = probe.resolve()
+                break
+        if resolved is None:
+            raise FileNotFoundError(f"config listed but missing: {line}")
+        resolved_paths.append(str(resolved))
+
+    if not resolved_paths:
+        raise ValueError(f"config-list is empty: {path}")
+    return resolved_paths
+
+
+def _build_standard_seeded_profile(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    benchmark_kwargs: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
     configs_dir = output_dir / "configs"
     case_manifest: list[dict[str, Any]] = []
     tier_paths: dict[str, list[str]] = {tier: [] for tier in TIER_ORDER}
@@ -246,45 +276,180 @@ def main(argv: list[str] | None = None) -> int:
     for tier in TIER_ORDER:
         all_paths.extend(tier_paths[tier])
 
-    benchmark_kwargs = {
-        "baseline": args.baseline,
-        "candidates": candidate_list,
-        "task_scope": args.task_scope,
-        "include_non_rt": False,
-        "horizon": None,
-        "lp_objective": args.lp_objective,
-        "lp_time_limit_seconds": args.lp_time_limit,
-        "wcrt_max_iterations": args.wcrt_max_iterations,
-        "wcrt_epsilon": args.wcrt_epsilon,
-    }
     overall = sim_api.benchmark_sched_rate(all_paths, **benchmark_kwargs)
 
     strata_rows: list[dict[str, Any]] = []
     for tier in TIER_ORDER:
         report = sim_api.benchmark_sched_rate(tier_paths[tier], **benchmark_kwargs)
-        baseline_rate = float(report.get("baseline_schedulable_rate", 0.0))
-        best_candidate_rate = float(report.get("best_candidate_schedulable_rate", 0.0))
-        candidate_only_rate = float(report.get("candidate_only_schedulable_rate", 0.0))
-        best_candidate_uplift = _relative_uplift(baseline_rate, best_candidate_rate)
-        candidate_only_uplift = _relative_uplift(baseline_rate, candidate_only_rate)
         tier_cases = [item for item in case_manifest if item["tier"] == tier]
         strata_rows.append(
             {
+                "profile": "standard_seeded",
                 "tier": tier,
                 "case_count": int(report.get("total_cases", 0)),
+                "empty_scope_case_count": int(report.get("empty_scope_case_count", 0)),
+                "non_empty_case_count": int(report.get("non_empty_case_count", 0)),
                 "utilization_min": min(item["utilization"] for item in tier_cases),
                 "utilization_max": max(item["utilization"] for item in tier_cases),
-                "baseline_schedulable_rate": round(baseline_rate, 9),
-                "best_candidate_schedulable_rate": round(best_candidate_rate, 9),
-                "candidate_only_schedulable_rate": round(candidate_only_rate, 9),
-                "uplift": round(best_candidate_uplift, 9),
-                "candidate_only_uplift": round(candidate_only_uplift, 9),
+                "baseline_schedulable_rate": float(report.get("baseline_schedulable_rate", 0.0)),
+                "best_candidate_schedulable_rate": float(report.get("best_candidate_schedulable_rate", 0.0)),
+                "candidate_only_schedulable_rate": float(report.get("candidate_only_schedulable_rate", 0.0)),
+                "non_empty_baseline_schedulable_rate": float(
+                    report.get("non_empty_baseline_schedulable_rate", 0.0)
+                ),
+                "non_empty_best_candidate_schedulable_rate": float(
+                    report.get("non_empty_best_candidate_schedulable_rate", 0.0)
+                ),
+                "non_empty_candidate_only_schedulable_rate": float(
+                    report.get("non_empty_candidate_only_schedulable_rate", 0.0)
+                ),
+                "uplift": float(report.get("uplift", 0.0)),
+                "candidate_only_uplift": float(report.get("candidate_only_uplift", 0.0)),
+                "non_empty_uplift": float(report.get("non_empty_uplift", 0.0)),
+                "non_empty_candidate_only_uplift": float(
+                    report.get("non_empty_candidate_only_uplift", 0.0)
+                ),
             }
         )
 
-    macro_uplift = round(sum(item["candidate_only_uplift"] for item in strata_rows) / len(strata_rows), 9)
-    macro_best_candidate_uplift = round(sum(item["uplift"] for item in strata_rows) / len(strata_rows), 9)
-    gate_pass = macro_uplift >= float(args.target_uplift)
+    macro_uplift = round(
+        sum(item["non_empty_candidate_only_uplift"] for item in strata_rows) / len(strata_rows),
+        9,
+    )
+    macro_best_candidate_uplift = round(
+        sum(item["non_empty_uplift"] for item in strata_rows) / len(strata_rows),
+        9,
+    )
+    non_empty_case_count = int(overall.get("non_empty_case_count", 0))
+    gate_pass = macro_uplift >= float(args.target_uplift) and non_empty_case_count > 0
+
+    profile_payload = {
+        "profile": "standard_seeded",
+        "seed": int(args.seed),
+        "cases_per_tier": int(args.cases_per_tier),
+        "target_uplift": float(args.target_uplift),
+        "gate_metric": "macro_uplift",
+        "macro_uplift": macro_uplift,
+        "macro_best_candidate_uplift": macro_best_candidate_uplift,
+        "gate_pass": gate_pass,
+        "tiers": strata_rows,
+        "overall": overall,
+        "cases": case_manifest,
+    }
+    return profile_payload, strata_rows, all_paths
+
+
+def _build_docx_mixed_profile(
+    *,
+    args: argparse.Namespace,
+    benchmark_kwargs: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    config_list_path = Path(args.docx_config_list)
+    config_paths = _load_config_list(config_list_path)
+    overall = sim_api.benchmark_sched_rate(config_paths, **benchmark_kwargs)
+
+    gate_value = float(overall.get("candidate_only_uplift", 0.0))
+    non_empty_case_count = int(overall.get("non_empty_case_count", 0))
+    gate_pass = gate_value >= float(args.target_uplift) and non_empty_case_count > 0
+
+    row = {
+        "profile": "docx_mixed",
+        "tier": "frozen",
+        "case_count": int(overall.get("total_cases", 0)),
+        "empty_scope_case_count": int(overall.get("empty_scope_case_count", 0)),
+        "non_empty_case_count": non_empty_case_count,
+        "utilization_min": None,
+        "utilization_max": None,
+        "baseline_schedulable_rate": float(overall.get("baseline_schedulable_rate", 0.0)),
+        "best_candidate_schedulable_rate": float(overall.get("best_candidate_schedulable_rate", 0.0)),
+        "candidate_only_schedulable_rate": float(overall.get("candidate_only_schedulable_rate", 0.0)),
+        "non_empty_baseline_schedulable_rate": float(overall.get("non_empty_baseline_schedulable_rate", 0.0)),
+        "non_empty_best_candidate_schedulable_rate": float(
+            overall.get("non_empty_best_candidate_schedulable_rate", 0.0)
+        ),
+        "non_empty_candidate_only_schedulable_rate": float(
+            overall.get("non_empty_candidate_only_schedulable_rate", 0.0)
+        ),
+        "uplift": float(overall.get("uplift", 0.0)),
+        "candidate_only_uplift": gate_value,
+        "non_empty_uplift": float(overall.get("non_empty_uplift", 0.0)),
+        "non_empty_candidate_only_uplift": float(overall.get("non_empty_candidate_only_uplift", 0.0)),
+    }
+
+    profile_payload = {
+        "profile": "docx_mixed",
+        "variant": "frozen",
+        "source_config_list": str(config_list_path),
+        "target_uplift": float(args.target_uplift),
+        "gate_metric": "candidate_only_uplift",
+        "gate_value": gate_value,
+        "gate_pass": gate_pass,
+        "overall": overall,
+    }
+    return profile_payload, [row]
+
+
+def _profile_gate_failure_reasons(profile_name: str, profile_payload: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    target = float(profile_payload.get("target_uplift", 0.0))
+    overall = profile_payload.get("overall", {})
+    if not isinstance(overall, dict):
+        overall = {}
+    non_empty_case_count = int(overall.get("non_empty_case_count", 0))
+
+    if profile_name == "standard_seeded":
+        metric = float(profile_payload.get("macro_uplift", 0.0))
+        if metric < target:
+            reasons.append(f"macro_uplift<{target} (actual={metric})")
+    else:
+        metric = float(profile_payload.get("gate_value", 0.0))
+        if metric < target:
+            reasons.append(f"candidate_only_uplift<{target} (actual={metric})")
+
+    if non_empty_case_count <= 0:
+        reasons.append("non_empty_case_count<=0")
+    return reasons
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.cases_per_tier <= 0:
+        print("[ERROR] --cases-per-tier must be > 0")
+        return 1
+
+    output_dir = Path(args.output_dir)
+    out_json = Path(args.out_json) if args.out_json else output_dir / "sched-rate-benchmark.json"
+    out_csv = Path(args.out_csv) if args.out_csv else output_dir / "sched-rate-benchmark.csv"
+
+    candidate_list = [item.strip() for item in args.candidates.split(",") if item.strip()]
+    if not candidate_list:
+        print("[ERROR] --candidates cannot be empty")
+        return 1
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    benchmark_kwargs = _resolve_benchmark_kwargs(args, candidate_list)
+
+    try:
+        standard_profile, standard_rows, standard_all_paths = _build_standard_seeded_profile(
+            args=args,
+            output_dir=output_dir,
+            benchmark_kwargs=benchmark_kwargs,
+        )
+        docx_profile, docx_rows = _build_docx_mixed_profile(
+            args=args,
+            benchmark_kwargs=benchmark_kwargs,
+        )
+    except Exception as exc:
+        print(f"[ERROR] benchmark generation failed: {exc}")
+        return 1
+
+    profiles = {
+        "standard_seeded": standard_profile,
+        "docx_mixed": docx_profile,
+    }
+    all_gate_pass = all(bool(profile.get("gate_pass")) for profile in profiles.values())
+
     payload = {
         "generated_at_utc": _utc_now(),
         "seed": int(args.seed),
@@ -293,25 +458,39 @@ def main(argv: list[str] | None = None) -> int:
         "candidates": candidate_list,
         "task_scope": args.task_scope,
         "target_uplift": float(args.target_uplift),
-        "macro_uplift": macro_uplift,
-        "macro_best_candidate_uplift": macro_best_candidate_uplift,
-        "gate_metric": "candidate_only_uplift",
-        "gate_pass": gate_pass,
-        "tiers": strata_rows,
-        "overall": overall,
-        "cases": case_manifest,
+        "profiles": profiles,
+        # Backward-compatible aliases (standard profile)
+        "macro_uplift": standard_profile["macro_uplift"],
+        "macro_best_candidate_uplift": standard_profile["macro_best_candidate_uplift"],
+        "gate_metric": standard_profile["gate_metric"],
+        "gate_pass": standard_profile["gate_pass"],
+        "dual_gate_pass": all_gate_pass,
+        "tiers": standard_profile["tiers"],
+        "overall": standard_profile["overall"],
+        "cases": standard_profile["cases"],
     }
+
+    csv_rows = [*standard_rows, *docx_rows]
     _write_json(out_json, payload)
-    _write_csv(out_csv, strata_rows)
-    (output_dir / "config-list.txt").write_text("\n".join(all_paths) + "\n", encoding="utf-8")
+    _write_csv(out_csv, csv_rows)
+    (output_dir / "config-list.txt").write_text("\n".join(standard_all_paths) + "\n", encoding="utf-8")
 
     print(
-        "[OK] benchmark generated and evaluated, "
-        f"cases={len(all_paths)}, macro_uplift={macro_uplift}, "
-        f"target={args.target_uplift}, gate_pass={gate_pass}, json={out_json}, csv={out_csv}"
+        "[OK] benchmark profiles generated, "
+        f"standard_macro_uplift={standard_profile['macro_uplift']}, "
+        f"docx_candidate_only_uplift={docx_profile['gate_value']}, "
+        f"all_gate_pass={all_gate_pass}, json={out_json}, csv={out_csv}"
     )
-    if args.strict and not gate_pass:
-        print(f"[ERROR] macro uplift target not met: target={args.target_uplift}, actual={macro_uplift}")
+
+    if args.strict and not all_gate_pass:
+        failed_profiles: list[str] = []
+        for profile_name, profile_payload in profiles.items():
+            if bool(profile_payload.get("gate_pass")):
+                continue
+            reasons = _profile_gate_failure_reasons(profile_name, profile_payload)
+            detail = ", ".join(reasons) if reasons else "unknown"
+            failed_profiles.append(f"{profile_name}({detail})")
+        print("[ERROR] dual gate not met: " + "; ".join(failed_profiles))
         return 2
     return 0
 
