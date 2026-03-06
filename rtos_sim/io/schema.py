@@ -241,6 +241,7 @@ CONFIG_SCHEMA: dict = {
                 "task_id": {"type": "string", "minLength": 1},
                 "subtask_id": {"type": "string", "minLength": 1},
                 "segment_id": {"type": "string", "minLength": 1},
+                "release_index": {"type": "integer", "minimum": 0},
                 "start": {"type": "number"},
                 "end": {"type": "number"},
                 "start_time": {"type": "number"},

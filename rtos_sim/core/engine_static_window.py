@@ -24,6 +24,7 @@ class StaticWindow:
     task_id: str | None = None
     subtask_id: str | None = None
     segment_id: str | None = None
+    release_index: int | None = None
 
 
 def _to_bool(raw: object, *, default: bool = False) -> bool:
@@ -56,22 +57,35 @@ def _segment_matches_window(window: StaticWindow, segment: object) -> bool:
     if not isinstance(task_id, str) or not isinstance(subtask_id, str) or not isinstance(segment_id, str):
         return False
 
+    segment_release_index = getattr(segment, "release_index", None)
+
     if window.segment_key is not None:
-        return _planning_segment_key(
+        matches = _planning_segment_key(
             task_id=task_id,
             subtask_id=subtask_id,
             segment_id=segment_id,
         ) == window.segment_key
+        if not matches:
+            return False
+        if window.release_index is not None:
+            return segment_release_index == window.release_index
+        return True
 
     if window.task_id is None:
         return False
     if window.subtask_id is not None and window.segment_id is not None:
-        return (
+        matches = (
             task_id == window.task_id
             and subtask_id == window.subtask_id
             and segment_id == window.segment_id
         )
-    return task_id == window.task_id
+    else:
+        matches = task_id == window.task_id
+    if not matches:
+        return False
+    if window.release_index is not None:
+        return segment_release_index == window.release_index
+    return True
 
 
 def configure_static_window_mode(engine: SimEngine, spec: ModelSpec) -> None:
@@ -141,6 +155,15 @@ def configure_static_window_mode(engine: SimEngine, spec: ModelSpec) -> None:
                 )
             segment_id = segment_id_raw.strip()
 
+        release_index_raw = item.get("release_index")
+        release_index: int | None = None
+        if release_index_raw is not None:
+            if isinstance(release_index_raw, bool) or not isinstance(release_index_raw, int) or release_index_raw < 0:
+                raise ValueError(
+                    f"scheduler.params.static_windows[{index}].release_index must be integer >= 0"
+                )
+            release_index = int(release_index_raw)
+
         if segment_key is None and task_id is None:
             raise ValueError(
                 f"scheduler.params.static_windows[{index}] requires segment_key or task_id"
@@ -192,6 +215,7 @@ def configure_static_window_mode(engine: SimEngine, spec: ModelSpec) -> None:
                 task_id=task_id,
                 subtask_id=subtask_id,
                 segment_id=segment_id,
+                release_index=release_index,
             )
         )
 

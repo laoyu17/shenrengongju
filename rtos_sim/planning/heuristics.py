@@ -12,6 +12,9 @@ from .types import (
     PlanningSegment,
     ScheduleTable,
     ScheduleWindow,
+    eligible_core_ids_for_segment,
+    execution_cost_for_core,
+    max_execution_cost,
 )
 
 
@@ -19,11 +22,17 @@ EPSILON = 1e-12
 PlannerName = Literal["np_dm", "np_edf", "np_rm", "precautious_dm", "precautious_rm"]
 
 
-def _segment_utilization(segment: PlanningSegment, *, horizon: float | None) -> float:
+def _segment_utilization(
+    segment: PlanningSegment,
+    *,
+    horizon: float | None,
+    core_id: str | None = None,
+) -> float:
+    execution_cost = execution_cost_for_core(segment, core_id)
     base = segment.period or segment.relative_deadline or horizon
     if base is None or base <= EPSILON:
-        base = max(segment.wcet, 1.0)
-    return float(segment.wcet) / float(base)
+        base = max(execution_cost, 1.0)
+    return float(execution_cost) / float(base)
 
 
 def assign_segments_wfd(
@@ -36,17 +45,20 @@ def assign_segments_wfd(
     violations: list[ConstraintViolation] = []
     core_loads = {core_id: 0.0 for core_id in problem.core_ids}
     segment_util = {
-        segment.key: _segment_utilization(segment, horizon=problem.horizon)
+        segment.key: max(
+            _segment_utilization(segment, horizon=problem.horizon, core_id=core_id)
+            for core_id in eligible_core_ids_for_segment(segment, problem.core_ids) or problem.core_ids
+        )
         for segment in problem.segments
     }
 
     ordered_segments = sorted(
         problem.segments,
-        key=lambda item: (-segment_util[item.key], -item.wcet, item.key),
+        key=lambda item: (-segment_util[item.key], -max_execution_cost(item, problem.core_ids), item.key),
     )
 
     for segment in ordered_segments:
-        eligible_cores = [segment.mapping_hint] if segment.mapping_hint else list(problem.core_ids)
+        eligible_cores = eligible_core_ids_for_segment(segment, problem.core_ids)
         eligible_cores = [core_id for core_id in eligible_cores if core_id in core_loads]
         if not eligible_cores:
             violations.append(
@@ -58,9 +70,9 @@ def assign_segments_wfd(
                 )
             )
             continue
-        target_core = min(eligible_cores, key=lambda core_id: (core_loads[core_id], core_id))
+        target_core = min(eligible_cores, key=lambda core_id: (core_loads[core_id], _segment_utilization(segment, horizon=problem.horizon, core_id=core_id), core_id))
         before_load = core_loads[target_core]
-        core_loads[target_core] += segment_util[segment.key]
+        core_loads[target_core] += _segment_utilization(segment, horizon=problem.horizon, core_id=target_core)
         assignments[segment.key] = target_core
         evidence.append(
             PlanningEvidence(
@@ -69,7 +81,8 @@ def assign_segments_wfd(
                 payload={
                     "segment_key": segment.key,
                     "core_id": target_core,
-                    "utilization": round(segment_util[segment.key], 8),
+                    "utilization": round(_segment_utilization(segment, horizon=problem.horizon, core_id=target_core), 8),
+                    "execution_cost": round(execution_cost_for_core(segment, target_core), 8),
                     "load_before": round(before_load, 8),
                     "load_after": round(core_loads[target_core], 8),
                     "mapping_hint": segment.mapping_hint,
@@ -134,7 +147,7 @@ def _precautious_risk_candidate(
     if planner not in {"precautious_dm", "precautious_rm"}:
         raise ValueError(f"unsupported precautious planner: {planner}")
 
-    dispatch_finish = dispatch_start + dispatch_segment.wcet
+    dispatch_finish = dispatch_start + execution_cost_for_core(dispatch_segment, core_id)
     risky_rows: list[tuple[float, float, float, float, str, float]] = []
 
     for segment_key in sorted(unscheduled):
@@ -151,7 +164,7 @@ def _precautious_risk_candidate(
             continue
         if candidate.absolute_deadline is None:
             continue
-        predicted_finish = max(dispatch_finish, arrival_time) + candidate.wcet
+        predicted_finish = max(dispatch_finish, arrival_time) + execution_cost_for_core(candidate, core_id)
         if predicted_finish <= candidate.absolute_deadline + EPSILON:
             continue
         relative_deadline = (
@@ -333,14 +346,14 @@ def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> P
                         },
                     )
                 )
-        end_time = start_time + segment.wcet
+        end_time = start_time + execution_cost_for_core(segment, core_id)
         completion_times[segment_key] = end_time
         core_available[core_id] = end_time
         unscheduled.remove(segment_key)
 
         slack_before_start = None
         if segment.absolute_deadline is not None:
-            slack_before_start = segment.absolute_deadline - start_time - segment.wcet
+            slack_before_start = segment.absolute_deadline - start_time - execution_cost_for_core(segment, core_id)
         windows.append(
             ScheduleWindow(
                 segment_key=segment_key,
@@ -348,6 +361,7 @@ def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> P
                 subtask_id=segment.subtask_id,
                 segment_id=segment.segment_id,
                 core_id=core_id,
+                release_index=segment.release_index,
                 start_time=start_time,
                 end_time=end_time,
                 release_time=segment.release_time,
@@ -374,6 +388,7 @@ def _plan_non_preemptive(problem: PlanningProblem, *, planner: PlannerName) -> P
                     "core_id": core_id,
                     "start_time": round(start_time, 8),
                     "end_time": round(end_time, 8),
+                    "execution_cost": round(execution_cost_for_core(segment, core_id), 8),
                 },
             )
         )

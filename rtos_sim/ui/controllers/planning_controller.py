@@ -145,8 +145,17 @@ class PlanningController:
             lp_objective=str(options["lp_objective"]),
             time_limit_seconds=float(options["time_limit_seconds"]),
         )
+        plan_payload = sim_api.serialize_planning_result(
+            plan_result,
+            spec_or_payload=spec,
+            task_scope=str(options["task_scope"]),
+            include_non_rt=bool(options["include_non_rt"]),
+            horizon=options["horizon"],
+        )
         self._owner._latest_plan_result = plan_result
+        self._owner._latest_plan_payload = plan_payload
         self._owner._latest_plan_spec_fingerprint = spec_fingerprint
+        self._owner._latest_plan_semantic_fingerprint = sim_api.extract_plan_semantic_fingerprint(plan_payload)
         self._owner._latest_planning_wcrt_report = None
         self._owner._latest_planning_os_payload = None
         self._render_plan_table(plan_result)
@@ -156,17 +165,20 @@ class PlanningController:
         plan_result = self._owner._latest_plan_result
         if plan_result is None:
             return True
-        current_spec_fingerprint = sim_api.model_spec_fingerprint(spec)
-        plan_spec_fingerprint = self._owner._latest_plan_spec_fingerprint
-        if isinstance(plan_spec_fingerprint, str) and plan_spec_fingerprint.strip():
-            plan_spec_fingerprint = plan_spec_fingerprint.strip()
-        else:
-            plan_spec_fingerprint = None
-        if plan_spec_fingerprint == current_spec_fingerprint:
+        plan_payload = self._owner._latest_plan_payload
+        if not isinstance(plan_payload, dict):
+            return True
+        expectations = sim_api.plan_fingerprint_expectations(spec, plan_payload)
+        expected_spec = str(expectations["expected_spec_fingerprint"])
+        actual_spec = expectations["actual_spec_fingerprint"] or "missing"
+        expected_semantic = str(expectations["expected_semantic_fingerprint"])
+        actual_semantic = expectations["actual_semantic_fingerprint"] or "missing"
+        if actual_spec == expected_spec and actual_semantic == expected_semantic:
             return True
         self._append_log(
             f"[Planning][ERROR] {action_name} blocked: "
-            f"plan/config mismatch, expected#{current_spec_fingerprint}, actual#{plan_spec_fingerprint or 'missing'}; "
+            f"plan/config mismatch, expected spec#{expected_spec}, actual spec#{actual_spec}, "
+            f"expected semantic#{expected_semantic}, actual semantic#{actual_semantic}; "
             "run plan-static first."
         )
         self._owner._status_label.setText(f"{action_name} blocked by plan/config mismatch")
@@ -190,7 +202,8 @@ class PlanningController:
         self._append_log(
             "[Planning] plan-static done: "
             f"planner={plan_result.planner}, feasible={plan_result.feasible}, "
-            f"windows={len(plan_result.schedule_table.windows)}, spec_fingerprint={spec_fingerprint}"
+            f"windows={len(plan_result.schedule_table.windows)}, spec_fingerprint={spec_fingerprint}, "
+            f"semantic_fingerprint={self._owner._latest_plan_semantic_fingerprint or 'missing'}"
         )
         self._owner._status_label.setText("Planning done")
 

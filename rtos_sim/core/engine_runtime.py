@@ -113,6 +113,7 @@ def build_snapshot(engine: SimEngine, now: float) -> ScheduleSnapshot:
                 required_resources=list(segment.required_resources),
                 preemptible=segment.preemptible,
                 release_time=segment.release_time,
+                release_index=segment.release_index,
                 priority_value=segment.effective_priority,
             )
         )

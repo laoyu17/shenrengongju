@@ -14,6 +14,10 @@ from .types import (
     PlanningResult,
     ScheduleTable,
     ScheduleWindow,
+    eligible_core_ids_for_segment,
+    execution_cost_for_core,
+    max_execution_cost,
+    min_execution_cost,
 )
 
 
@@ -39,10 +43,10 @@ def _precheck_problem(problem: PlanningProblem) -> _PrecheckResult:
     graph: dict[str, list[str]] = defaultdict(list)
     in_degree = {segment.key: 0 for segment in problem.segments}
     violations: list[ConstraintViolation] = []
-    known_cores = set(problem.core_ids)
 
     for segment in problem.segments:
-        if segment.mapping_hint is not None and segment.mapping_hint not in known_cores:
+        eligible_cores = eligible_core_ids_for_segment(segment, problem.core_ids)
+        if not eligible_cores:
             violations.append(
                 ConstraintViolation(
                     constraint="invalid_mapping_hint",
@@ -53,16 +57,17 @@ def _precheck_problem(problem: PlanningProblem) -> _PrecheckResult:
             )
         if segment.absolute_deadline is not None:
             budget = float(segment.absolute_deadline) - float(segment.release_time)
-            if budget + EPSILON < float(segment.wcet):
+            min_cost = min_execution_cost(segment, problem.core_ids)
+            if budget + EPSILON < float(min_cost):
                 violations.append(
                     ConstraintViolation(
                         constraint="deadline_window_too_small",
-                        message="segment wcet exceeds release-to-deadline window",
+                        message="segment execution cost exceeds release-to-deadline window",
                         segment_key=segment.key,
                         payload={
                             "release_time": segment.release_time,
                             "absolute_deadline": segment.absolute_deadline,
-                            "wcet": segment.wcet,
+                            "execution_cost": min_cost,
                         },
                     )
                 )
@@ -134,7 +139,7 @@ def _build_failed_result(
 
 
 def _estimate_big_m(problem: PlanningProblem) -> float:
-    total_wcet = sum(float(segment.wcet) for segment in problem.segments)
+    total_wcet = sum(max_execution_cost(segment, problem.core_ids) for segment in problem.segments)
     max_release = max((float(segment.release_time) for segment in problem.segments), default=0.0)
     max_deadline = max(
         (
@@ -214,6 +219,11 @@ def plan_lp(
     segment_keys = sorted(segment_map)
     core_ids = list(problem.core_ids)
     big_m = _estimate_big_m(problem)
+    duration_by_assignment = {
+        (key, core_id): execution_cost_for_core(segment_map[key], core_id)
+        for key in segment_keys
+        for core_id in core_ids
+    }
 
     model = pulp.LpProblem("rtos_sim_static_planning_lp", pulp.LpMinimize)
     start_vars = {
@@ -241,7 +251,10 @@ def plan_lp(
 
     for key in segment_keys:
         segment = segment_map[key]
-        model += end_vars[key] == start_vars[key] + float(segment.wcet), f"duration_{key}"
+        model += end_vars[key] == start_vars[key] + pulp.lpSum(
+            duration_by_assignment[(key, core_id)] * assign_vars[(key, core_id)]
+            for core_id in core_ids
+        ), f"duration_{key}"
         model += (
             pulp.lpSum(assign_vars[(key, core_id)] for core_id in core_ids) == 1
         ), f"assign_once_{key}"
@@ -256,19 +269,17 @@ def plan_lp(
             model += start_vars[key] >= end_vars[predecessor], f"precedence_{predecessor}_to_{key}"
 
     for left, right in combinations(segment_keys, 2):
-        left_segment = segment_map[left]
-        right_segment = segment_map[right]
         for core_id in core_ids:
             order = order_vars[(left, right, core_id)]
             left_assign = assign_vars[(left, core_id)]
             right_assign = assign_vars[(right, core_id)]
             # If two segments are assigned to the same core, one must end before the other starts.
             model += (
-                start_vars[left] + float(left_segment.wcet)
+                end_vars[left]
                 <= start_vars[right] + big_m * (1 - order) + big_m * (2 - left_assign - right_assign)
             ), f"nonoverlap_l_{left}_{right}_{core_id}"
             model += (
-                start_vars[right] + float(right_segment.wcet)
+                end_vars[right]
                 <= start_vars[left] + big_m * order + big_m * (2 - left_assign - right_assign)
             ), f"nonoverlap_r_{left}_{right}_{core_id}"
 
@@ -284,7 +295,7 @@ def plan_lp(
         max_load = pulp.LpVariable("max_load", lowBound=0, cat="Continuous")
         for core_id in core_ids:
             model += load_vars[core_id] == pulp.lpSum(
-                float(segment_map[key].wcet) * assign_vars[(key, core_id)] for key in segment_keys
+                duration_by_assignment[(key, core_id)] * assign_vars[(key, core_id)] for key in segment_keys
             ), f"load_eq_{core_id}"
             model += load_vars[core_id] <= max_load, f"load_cap_{core_id}"
         model += max_load * 1000 + pulp.lpSum(
@@ -359,6 +370,7 @@ def plan_lp(
                 subtask_id=segment.subtask_id,
                 segment_id=segment.segment_id,
                 core_id=assigned_core,
+                release_index=segment.release_index,
                 start_time=start_time,
                 end_time=end_time,
                 release_time=segment.release_time,

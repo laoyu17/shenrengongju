@@ -47,23 +47,80 @@ def _read_planning_result(path: str) -> dict[str, Any]:
     return payload
 
 
+def parse_arrival_envelope_min_intervals(raw: str | None) -> dict[str, float] | None:
+    if raw is None or not str(raw).strip():
+        return None
+    result: dict[str, float] = {}
+    for token in str(raw).split(","):
+        item = token.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ConfigError(
+                "arrival envelope min intervals must use 'task_id=value' comma-separated format"
+            )
+        task_id, value_raw = item.split("=", 1)
+        task_id = task_id.strip()
+        if not task_id:
+            raise ConfigError("arrival envelope min intervals contain empty task id")
+        try:
+            value = float(value_raw)
+        except ValueError as exc:
+            raise ConfigError(f"arrival envelope min interval for '{task_id}' must be number") from exc
+        if value <= 0:
+            raise ConfigError(f"arrival envelope min interval for '{task_id}' must be > 0")
+        result[task_id] = value
+    return result or None
+
+
+def apply_cli_planning_overrides(spec: ModelSpec, args: argparse.Namespace) -> ModelSpec:
+    arrival_mode = args.arrival_analysis_mode if hasattr(args, "arrival_analysis_mode") else None
+    arrival_envelope = parse_arrival_envelope_min_intervals(
+        args.arrival_envelope_min_intervals if hasattr(args, "arrival_envelope_min_intervals") else None
+    )
+    return sim_api.apply_planning_overrides(
+        spec,
+        arrival_analysis_mode=arrival_mode,
+        arrival_envelope_min_intervals=arrival_envelope,
+    )
+
+
 def _validate_plan_fingerprint_match(
     *,
     command: str,
-    expected_fingerprint: str,
+    spec: ModelSpec,
     plan_payload: dict[str, Any],
     strict: bool,
 ) -> bool:
-    actual_fingerprint = sim_api.extract_plan_spec_fingerprint(plan_payload)
-    if not actual_fingerprint:
+    expectations = sim_api.plan_fingerprint_expectations(spec, plan_payload)
+    expected_spec = str(expectations["expected_spec_fingerprint"])
+    actual_spec = expectations["actual_spec_fingerprint"]
+    if not actual_spec:
         level = "[ERROR]" if strict else "[WARN]"
-        print(f"{level} {command}: plan-json missing spec_fingerprint, 期望指纹#{expected_fingerprint}")
+        print(f"{level} {command}: plan-json missing spec_fingerprint, 期望指纹#{expected_spec}")
         return not strict
-    if actual_fingerprint != expected_fingerprint:
+    if actual_spec != expected_spec:
         level = "[ERROR]" if strict else "[WARN]"
         print(
             f"{level} {command}: plan/config mismatch, "
-            f"期望指纹#{expected_fingerprint}, 实际指纹#{actual_fingerprint}"
+            f"期望指纹#{expected_spec}, 实际指纹#{actual_spec}"
+        )
+        return not strict
+
+    expected_semantic = expectations["expected_semantic_fingerprint"]
+    actual_semantic = expectations["actual_semantic_fingerprint"]
+    if not isinstance(actual_semantic, str) or not actual_semantic.strip():
+        level = "[ERROR]" if strict else "[WARN]"
+        print(
+            f"{level} {command}: plan-json missing semantic_fingerprint, "
+            f"期望语义指纹#{expected_semantic}"
+        )
+        return not strict
+    if actual_semantic != expected_semantic:
+        level = "[ERROR]" if strict else "[WARN]"
+        print(
+            f"{level} {command}: plan semantic mismatch, "
+            f"期望语义指纹#{expected_semantic}, 实际语义指纹#{actual_semantic}"
         )
         return not strict
     return True
@@ -110,7 +167,8 @@ def _resolve_planning_options(
 def cmd_plan_static(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
     try:
-        spec = loader.load(args.config)
+        raw_spec = loader.load(args.config)
+        spec = apply_cli_planning_overrides(raw_spec, args)
         planner, lp_objective, task_scope, include_non_rt, horizon = _resolve_planning_options(
             spec=spec,
             planner=args.planner,
@@ -137,14 +195,18 @@ def cmd_plan_static(args: argparse.Namespace) -> int:
 
     out_json = args.out_json or "artifacts/plan_static.json"
     try:
-        result_payload = result.to_dict()
-        spec_fingerprint = sim_api.model_spec_fingerprint(spec)
+        result_payload = sim_api.serialize_planning_result(
+            result,
+            spec_or_payload=spec,
+            task_scope=task_scope,
+            include_non_rt=include_non_rt,
+            horizon=horizon,
+        )
+        spec_fingerprint = sim_api.model_spec_fingerprint(raw_spec)
         result_payload["spec_fingerprint"] = spec_fingerprint
         metadata = result_payload.get("metadata")
         if isinstance(metadata, dict):
             metadata["spec_fingerprint"] = spec_fingerprint
-        else:
-            result_payload["metadata"] = {"spec_fingerprint": spec_fingerprint}
         _write_json(out_json, result_payload)
         if args.out_csv:
             rows = [window.to_dict() for window in result.schedule_table.windows]
@@ -167,7 +229,8 @@ def cmd_plan_static(args: argparse.Namespace) -> int:
 def cmd_analyze_wcrt(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
     try:
-        spec = loader.load(args.config)
+        raw_spec = loader.load(args.config)
+        spec = apply_cli_planning_overrides(raw_spec, args)
         planner, lp_objective, task_scope, include_non_rt, horizon = _resolve_planning_options(
             spec=spec,
             planner=args.planner,
@@ -178,14 +241,30 @@ def cmd_analyze_wcrt(args: argparse.Namespace) -> int:
         )
         if args.plan_json:
             plan_payload = _read_planning_result(args.plan_json)
-            expected_fingerprint = sim_api.model_spec_fingerprint(spec)
             if not _validate_plan_fingerprint_match(
                 command="analyze-wcrt",
-                expected_fingerprint=expected_fingerprint,
+                spec=raw_spec,
                 plan_payload=plan_payload,
                 strict=args.strict_plan_match,
             ):
                 return 2
+            plan_context = sim_api.extract_plan_planning_context(plan_payload)
+            spec = sim_api.apply_planning_overrides(
+                raw_spec,
+                arrival_analysis_mode=(
+                    str(plan_context["arrival_analysis_mode"])
+                    if isinstance(plan_context.get("arrival_analysis_mode"), str)
+                    else None
+                ),
+                arrival_envelope_min_intervals=(
+                    plan_context["arrival_envelope_min_intervals"]
+                    if isinstance(plan_context.get("arrival_envelope_min_intervals"), dict)
+                    else None
+                ),
+            )
+            task_scope = str(plan_context["task_scope"])
+            include_non_rt = bool(plan_context["include_non_rt"])
+            horizon = plan_context["horizon"]
             schedule_table = sim_api.planning_result_from_dict(plan_payload).schedule_table
         else:
             schedule_table = sim_api.plan_static(
@@ -241,10 +320,9 @@ def cmd_export_os_config(args: argparse.Namespace) -> int:
             if args.config:
                 loader = ConfigLoader()
                 spec = loader.load(args.config)
-                expected_fingerprint = sim_api.model_spec_fingerprint(spec)
                 if not _validate_plan_fingerprint_match(
                     command="export-os-config",
-                    expected_fingerprint=expected_fingerprint,
+                    spec=spec,
                     plan_payload=plan_payload,
                     strict=args.strict_plan_match,
                 ):
@@ -255,7 +333,8 @@ def cmd_export_os_config(args: argparse.Namespace) -> int:
             schedule_table = sim_api.planning_result_from_dict(plan_payload).schedule_table
         elif args.config:
             loader = ConfigLoader()
-            spec = loader.load(args.config)
+            raw_spec = loader.load(args.config)
+            spec = apply_cli_planning_overrides(raw_spec, args)
             planner, lp_objective, task_scope, include_non_rt, horizon = _resolve_planning_options(
                 spec=spec,
                 planner=args.planner,

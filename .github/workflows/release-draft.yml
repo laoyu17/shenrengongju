@@ -39,6 +39,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .[dev,ui]
 
+      - name: Run ruff check
+        run: |
+          ruff check .
+
       - name: Validate tag matches pyproject version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -62,7 +66,28 @@ jobs:
           PY
 
       - name: Run unit tests
-        run: python -m pytest -q
+        run: |
+          mkdir -p artifacts/quality
+          set -o pipefail
+          python -m pytest --cov=rtos_sim --cov-report=json:artifacts/quality/coverage.json -q | tee artifacts/quality/pytest-output.txt
+
+      - name: Generate quality snapshot
+        run: |
+          python scripts/quality_snapshot.py \
+            --output artifacts/quality/quality-snapshot.json \
+            --coverage-json artifacts/quality/coverage.json \
+            --pytest-output-file artifacts/quality/pytest-output.txt \
+            --reuse-existing-artifacts
+
+      - name: Run docs baseline consistency check
+        run: |
+          python scripts/check_doc_baseline_consistency.py \
+            --snapshot artifacts/quality/quality-snapshot.json \
+            --docs-root docs
+
+      - name: Run docs reference integrity check
+        run: |
+          python scripts/check_doc_reference_integrity.py --repo-root .
 
   build:
     name: Build Distribution

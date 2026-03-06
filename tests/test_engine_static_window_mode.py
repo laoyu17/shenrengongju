@@ -276,3 +276,58 @@ def test_static_window_schema_rejects_subtask_without_segment_id() -> None:
 
     with pytest.raises(ConfigError, match=r"scheduler\.params\.static_windows\.0: .*segment_id"):
         ConfigLoader().load_data(payload)
+
+
+def test_static_window_release_index_targets_specific_job_instance() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [{"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "fixed",
+                "name": "fixed",
+                "task_type": "time_deterministic",
+                "period": 4.0,
+                "deadline": 10.0,
+                "arrival": 0.0,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [
+                            {"id": "seg0", "index": 1, "wcet": 6.0, "mapping_hint": "c0"}
+                        ],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {
+            "name": "edf",
+            "params": {
+                "static_window_mode": True,
+                "static_windows": [
+                    {"core_id": "c0", "task_id": "fixed", "release_index": 1, "start": 4.0, "end": 5.0}
+                ],
+            },
+        },
+        "sim": {"duration": 8.0, "seed": 7},
+    }
+
+    events, _ = _run_payload(payload)
+    forced_preempts = [
+        event for event in events
+        if event["type"] == "Preempt" and event.get("payload", {}).get("reason") == "static_window_boundary"
+    ]
+    starts_at_four = [
+        event for event in events
+        if event["type"] == "SegmentStart" and abs(float(event["time"]) - 4.0) <= 1e-9
+    ]
+
+    assert forced_preempts
+    assert starts_at_four
+    assert starts_at_four[0]["job_id"] == "fixed@1"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from rtos_sim.model import ModelSpec
 from rtos_sim.planning import (
     PlanningProblem,
@@ -292,6 +294,218 @@ def test_planning_problem_default_task_scope_includes_sync_only() -> None:
     )
     problem = PlanningProblem.from_model_spec(spec)
 
-    assert [segment.task_id for segment in problem.segments] == ["sync"]
+    assert [segment.task_id for segment in problem.segments] == ["sync", "sync", "sync"]
     assert problem.metadata["task_scope"] == "sync_only"
     assert problem.metadata["skipped_dynamic_rt_tasks"] == 1
+    assert problem.metadata["expanded_release_count"] == 3
+
+
+def test_planning_problem_expands_time_deterministic_release_offsets_across_horizon() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "det",
+                    "name": "det",
+                    "task_type": "time_deterministic",
+                    "arrival": 0.0,
+                    "phase_offset": 1.0,
+                    "period": 4.0,
+                    "deadline": 4.0,
+                    "subtasks": [
+                        {
+                            "id": "s0",
+                            "predecessors": [],
+                            "successors": [],
+                            "segments": [
+                                {"id": "seg0", "index": 1, "wcet": 0.1, "release_offsets": [0.5, 1.5]}
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 12.0, "seed": 19},
+        }
+    )
+
+    problem = PlanningProblem.from_model_spec(spec)
+
+    assert [segment.key for segment in problem.segments] == [
+        "det@0:s0:seg0",
+        "det@1:s0:seg0",
+        "det@2:s0:seg0",
+    ]
+    assert [segment.release_time for segment in problem.segments] == pytest.approx([1.5, 6.5, 9.5])
+    assert problem.metadata["expanded_release_count"] == 3
+
+
+def test_planning_problem_expands_poisson_arrival_with_seeded_sample_path() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+            "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "poisson",
+                "name": "poisson-arrival-task",
+                "task_type": "dynamic_rt",
+                "deadline": 30.0,
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "poisson",
+                    "params": {"rate": 2.0},
+                    "max_releases": 6,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 20.0, "seed": 31},
+    }
+
+    problem_a = PlanningProblem.from_model_spec(ModelSpec.model_validate(payload), task_scope="sync_and_dynamic_rt")
+    problem_b = PlanningProblem.from_model_spec(ModelSpec.model_validate(payload), task_scope="sync_and_dynamic_rt")
+    payload["sim"]["seed"] = 32
+    problem_c = PlanningProblem.from_model_spec(ModelSpec.model_validate(payload), task_scope="sync_and_dynamic_rt")
+
+    release_times_a = [segment.release_time for segment in problem_a.segments]
+    release_times_b = [segment.release_time for segment in problem_b.segments]
+    release_times_c = [segment.release_time for segment in problem_c.segments]
+
+    assert len(release_times_a) == 6
+    assert release_times_a == pytest.approx(release_times_b)
+    assert release_times_c != release_times_a
+
+
+def test_planning_problem_conservative_envelope_uses_uniform_min_interval() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "u",
+                    "name": "uniform",
+                    "task_type": "dynamic_rt",
+                    "deadline": 10.0,
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "uniform",
+                        "params": {"min_interval": 1.0, "max_interval": 3.0},
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 11},
+            "planning": {"enabled": True, "params": {"arrival_analysis_mode": "conservative_envelope"}},
+        }
+    )
+
+    problem = PlanningProblem.from_model_spec(spec, task_scope="sync_and_dynamic_rt")
+
+    assert [segment.release_time for segment in problem.segments] == pytest.approx([0.0, 1.0, 2.0, 3.0, 4.0])
+    assert problem.metadata["arrival_analysis_mode"] == "conservative_envelope"
+
+
+def test_planning_problem_conservative_envelope_uses_task_override_for_poisson() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "p",
+                    "name": "poisson",
+                    "task_type": "dynamic_rt",
+                    "deadline": 10.0,
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "poisson",
+                        "params": {"rate": 2.0},
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 31},
+            "planning": {
+                "enabled": True,
+                "params": {
+                    "arrival_analysis_mode": "conservative_envelope",
+                    "arrival_envelope_min_intervals": {"p": 0.25},
+                },
+            },
+        }
+    )
+
+    problem = PlanningProblem.from_model_spec(spec, task_scope="sync_and_dynamic_rt")
+
+    assert [segment.release_time for segment in problem.segments] == pytest.approx([0.0, 0.25, 0.5, 0.75, 1.0])
+
+
+def test_planning_problem_conservative_envelope_poisson_requires_override() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "p",
+                    "name": "poisson",
+                    "task_type": "dynamic_rt",
+                    "deadline": 10.0,
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "poisson",
+                        "params": {"rate": 2.0},
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 31},
+            "planning": {"enabled": True, "params": {"arrival_analysis_mode": "conservative_envelope"}},
+        }
+    )
+
+    with pytest.raises(ValueError, match="arrival_envelope_min_intervals"):
+        PlanningProblem.from_model_spec(spec, task_scope="sync_and_dynamic_rt")

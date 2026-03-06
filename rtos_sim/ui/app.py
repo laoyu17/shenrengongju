@@ -211,7 +211,9 @@ class MainWindow(QMainWindow):
         self._telemetry_panel_state = TelemetryPanelState()
         self._latest_metrics_report: dict[str, Any] = {}
         self._latest_plan_result: Any | None = None
+        self._latest_plan_payload: dict[str, Any] | None = None
         self._latest_plan_spec_fingerprint: str | None = None
+        self._latest_plan_semantic_fingerprint: str | None = None
         self._latest_planning_wcrt_report: Any | None = None
         self._latest_planning_os_payload: dict[str, Any] | None = None
 
@@ -864,7 +866,9 @@ class MainWindow(QMainWindow):
 
     def _invalidate_planning_cache(self) -> None:
         self._latest_plan_result = None
+        self._latest_plan_payload = None
         self._latest_plan_spec_fingerprint = None
+        self._latest_plan_semantic_fingerprint = None
         self._latest_planning_wcrt_report = None
         self._latest_planning_os_payload = None
 

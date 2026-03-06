@@ -60,7 +60,9 @@
             "resource_acquire_policy": {
               "type": "string",
               "enum": ["legacy_sequential", "atomic_rollback"]
-            }
+            },
+            "static_window_mode": { "type": ["boolean", "number", "string"] },
+            "static_windows": { "type": "array" }
           }
         }
       },
@@ -185,6 +187,45 @@
 ```
 
 ### 2.1 `arrival_process` 补充（v0.2）
+
+### 2.2 `planning.params` 到达分析模式（v0.2）
+
+`planning.params` 现支持到达分析模式切换：
+
+```yaml
+planning:
+  enabled: true
+  planner: np_edf
+  params:
+    arrival_analysis_mode: sample_path | conservative_envelope
+    arrival_envelope_min_intervals:
+      task_a: 0.25   # 可选：为 poisson / 无法静态求下界的 custom arrival 提供保守最小间隔
+```
+
+说明：
+- `sample_path`：默认模式，按 `sim.seed` 生成可复现 release sample-path。
+- `conservative_envelope`：按最小间隔包络展开多次 release；对 `poisson` 和部分 `custom` generator 需要显式提供 `arrival_envelope_min_intervals`。
+
+### 2.3 `scheduler.params.static_windows[*].release_index`（v0.2）
+
+```yaml
+scheduler:
+  name: edf
+  params:
+    static_window_mode: true
+    static_windows:
+      - core_id: c0
+        task_id: det
+        release_index: 1
+        start: 4.0
+        end: 5.0
+```
+
+说明：
+- `release_index` 可选，取值 `>= 0`。
+- 当同一任务存在多次重叠 release 时，可用该字段将静态窗口显式绑定到目标 release instance。
+- `run --plan-json` 导出的 `runtime_static_windows` 也会携带该字段。
+
 
 `TaskGraph` 支持可选统一到达过程字段：
 

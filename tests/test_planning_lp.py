@@ -96,3 +96,19 @@ def test_lp_spread_execution_prefers_balanced_assignment() -> None:
 
     assert result.feasible
     assert result.assignments[left.key] != result.assignments[right.key]
+
+
+def test_lp_uses_execution_cost_by_core_for_assignment_and_duration() -> None:
+    pulp = pytest.importorskip("pulp")
+    assert pulp is not None
+
+    segment = _segment(task_id="t0", segment_id="hetero", wcet=4.0, deadline=10.0)
+    segment.metadata["eligible_core_ids"] = ["c0", "c1"]
+    segment.metadata["execution_cost_by_core"] = {"c0": 4.0, "c1": 2.0}
+    segment.metadata["default_execution_cost"] = 2.0
+    result = plan_lp(_problem([segment], cores=["c0", "c1"]), objective="response_time")
+
+    assert result.feasible
+    assert result.assignments[segment.key] == "c1"
+    window = result.schedule_table.windows[0]
+    assert window.end_time - window.start_time == pytest.approx(2.0)

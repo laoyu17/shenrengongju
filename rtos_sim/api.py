@@ -20,6 +20,7 @@ from rtos_sim.planning import (
     ScheduleWindow,
     WCRTReport,
     analyze_wcrt as _analyze_wcrt,
+    build_normalized_execution_model,
     normalize_task_scope,
     plan_lp,
     plan_static as _plan_static,
@@ -55,6 +56,37 @@ def _as_model_spec(spec_or_payload: ModelSpec | Mapping[str, Any]) -> ModelSpec:
     return ConfigLoader().load_data(dict(spec_or_payload))
 
 
+def apply_planning_overrides(
+    spec_or_payload: ModelSpec | Mapping[str, Any],
+    *,
+    arrival_analysis_mode: str | None = None,
+    arrival_envelope_min_intervals: Mapping[str, float] | None = None,
+) -> ModelSpec:
+    """Return a spec copy with planning override params merged in."""
+
+    spec = _as_model_spec(spec_or_payload)
+    if arrival_analysis_mode is None and not arrival_envelope_min_intervals:
+        return spec
+
+    payload = spec.model_dump(mode="json", by_alias=True, exclude_none=True)
+    planning_payload = payload.setdefault("planning", planning_defaults())
+    if not isinstance(planning_payload, dict):
+        planning_payload = planning_defaults()
+        payload["planning"] = planning_payload
+    params = planning_payload.setdefault("params", {})
+    if not isinstance(params, dict):
+        params = {}
+        planning_payload["params"] = params
+    if arrival_analysis_mode is not None:
+        params["arrival_analysis_mode"] = str(arrival_analysis_mode).strip().lower()
+    if arrival_envelope_min_intervals:
+        params["arrival_envelope_min_intervals"] = {
+            str(task_id): float(value)
+            for task_id, value in arrival_envelope_min_intervals.items()
+        }
+    return ConfigLoader().load_data(payload)
+
+
 def model_spec_fingerprint(spec_or_payload: ModelSpec | Mapping[str, Any]) -> str:
     """Build stable SHA-256 fingerprint for semantic-equivalent model specs."""
 
@@ -81,20 +113,158 @@ def extract_plan_spec_fingerprint(payload: Mapping[str, Any]) -> str | None:
     return None
 
 
+def semantic_model_fingerprint(
+    spec_or_payload: ModelSpec | Mapping[str, Any],
+    *,
+    task_scope: str | None = None,
+    include_non_rt: bool = False,
+    horizon: float | None = None,
+    arrival_analysis_mode: str | None = None,
+    arrival_envelope_min_intervals: Mapping[str, float] | None = None,
+) -> str:
+    """Build semantic fingerprint for the normalized planning/runtime projection."""
+
+    spec = apply_planning_overrides(
+        spec_or_payload,
+        arrival_analysis_mode=arrival_analysis_mode,
+        arrival_envelope_min_intervals=arrival_envelope_min_intervals,
+    )
+    normalized = build_normalized_execution_model(
+        spec,
+        task_scope=task_scope,
+        include_non_rt=include_non_rt,
+        horizon=horizon,
+    )
+    return normalized.semantic_fingerprint()
+
+
+def extract_plan_semantic_fingerprint(payload: Mapping[str, Any]) -> str | None:
+    """Read semantic fingerprint from plan JSON payload."""
+
+    value = payload.get("semantic_fingerprint")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        value = metadata.get("semantic_fingerprint")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def extract_plan_planning_context(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Read planning-context fields from plan JSON payload."""
+
+    context_payload = payload.get("planning_context")
+    if not isinstance(context_payload, Mapping):
+        metadata = payload.get("metadata")
+        if isinstance(metadata, Mapping):
+            nested = metadata.get("planning_context")
+            context_payload = nested if isinstance(nested, Mapping) else metadata
+
+    task_scope = context_payload.get("task_scope") if isinstance(context_payload, Mapping) else None
+    include_non_rt = context_payload.get("include_non_rt") if isinstance(context_payload, Mapping) else False
+    horizon = context_payload.get("horizon") if isinstance(context_payload, Mapping) else None
+    planner = context_payload.get("planner") if isinstance(context_payload, Mapping) else None
+    arrival_analysis_mode = (
+        context_payload.get("arrival_analysis_mode") if isinstance(context_payload, Mapping) else None
+    )
+    arrival_envelope_min_intervals = (
+        context_payload.get("arrival_envelope_min_intervals") if isinstance(context_payload, Mapping) else None
+    )
+
+    resolved_horizon: float | None
+    if horizon in (None, ""):
+        resolved_horizon = None
+    else:
+        resolved_horizon = float(horizon)
+
+    resolved_envelope: dict[str, float] = {}
+    if isinstance(arrival_envelope_min_intervals, Mapping):
+        for task_id, value in arrival_envelope_min_intervals.items():
+            if isinstance(task_id, str) and isinstance(value, (int, float)):
+                resolved_envelope[task_id] = float(value)
+
+    return {
+        "task_scope": str(task_scope or DEFAULT_PLANNING_SECTION["task_scope"]),
+        "include_non_rt": bool(include_non_rt),
+        "horizon": resolved_horizon,
+        "planner": str(planner) if isinstance(planner, str) and planner.strip() else None,
+        "arrival_analysis_mode": (
+            str(arrival_analysis_mode).strip().lower()
+            if isinstance(arrival_analysis_mode, str) and arrival_analysis_mode.strip()
+            else None
+        ),
+        "arrival_envelope_min_intervals": resolved_envelope,
+    }
+
+
+def plan_fingerprint_expectations(
+    spec_or_payload: ModelSpec | Mapping[str, Any],
+    plan_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compute expected/actual plan fingerprint values for one spec."""
+
+    spec = _as_model_spec(spec_or_payload)
+    context = extract_plan_planning_context(plan_payload)
+    semantic_spec = apply_planning_overrides(
+        spec,
+        arrival_analysis_mode=(
+            str(context["arrival_analysis_mode"])
+            if isinstance(context.get("arrival_analysis_mode"), str)
+            else None
+        ),
+        arrival_envelope_min_intervals=(
+            context["arrival_envelope_min_intervals"]
+            if isinstance(context.get("arrival_envelope_min_intervals"), Mapping)
+            else None
+        ),
+    )
+    return {
+        "expected_spec_fingerprint": model_spec_fingerprint(spec),
+        "actual_spec_fingerprint": extract_plan_spec_fingerprint(plan_payload),
+        "expected_semantic_fingerprint": semantic_model_fingerprint(
+            semantic_spec,
+            task_scope=str(context["task_scope"]),
+            include_non_rt=bool(context["include_non_rt"]),
+            horizon=context["horizon"],
+            arrival_analysis_mode=(
+                str(context["arrival_analysis_mode"])
+                if isinstance(context.get("arrival_analysis_mode"), str)
+                else None
+            ),
+            arrival_envelope_min_intervals=(
+                context["arrival_envelope_min_intervals"]
+                if isinstance(context.get("arrival_envelope_min_intervals"), Mapping)
+                else None
+            ),
+        ),
+        "actual_semantic_fingerprint": extract_plan_semantic_fingerprint(plan_payload),
+        "planning_context": context,
+    }
+
+
 def build_planning_problem(
     spec_or_payload: ModelSpec | Mapping[str, Any],
     *,
     task_scope: str | None = None,
     include_non_rt: bool = False,
     horizon: float | None = None,
+    arrival_analysis_mode: str | None = None,
+    arrival_envelope_min_intervals: Mapping[str, float] | None = None,
 ) -> PlanningProblem:
-    spec = _as_model_spec(spec_or_payload)
-    return PlanningProblem.from_model_spec(
+    spec = apply_planning_overrides(
+        spec_or_payload,
+        arrival_analysis_mode=arrival_analysis_mode,
+        arrival_envelope_min_intervals=arrival_envelope_min_intervals,
+    )
+    normalized = build_normalized_execution_model(
         spec,
         task_scope=task_scope,
         include_non_rt=include_non_rt,
         horizon=horizon,
     )
+    return normalized.to_planning_problem()
 
 
 def _run_static_planner(
@@ -119,6 +289,8 @@ def plan_static(
     horizon: float | None = None,
     lp_objective: str = "response_time",
     time_limit_seconds: float | None = 30.0,
+    arrival_analysis_mode: str | None = None,
+    arrival_envelope_min_intervals: Mapping[str, float] | None = None,
 ) -> PlanningResult:
     """Plan a static schedule table from spec/problem input."""
 
@@ -130,6 +302,8 @@ def plan_static(
             task_scope=task_scope,
             include_non_rt=include_non_rt,
             horizon=horizon,
+            arrival_analysis_mode=arrival_analysis_mode,
+            arrival_envelope_min_intervals=arrival_envelope_min_intervals,
         )
     return _run_static_planner(
         problem,
@@ -148,6 +322,8 @@ def analyze_wcrt(
     horizon: float | None = None,
     max_iterations: int = 64,
     epsilon: float = 1e-9,
+    arrival_analysis_mode: str | None = None,
+    arrival_envelope_min_intervals: Mapping[str, float] | None = None,
 ) -> WCRTReport:
     """Run analytical WCRT based on a schedule table."""
 
@@ -159,13 +335,85 @@ def analyze_wcrt(
             task_scope=task_scope,
             include_non_rt=include_non_rt,
             horizon=horizon,
+            arrival_analysis_mode=arrival_analysis_mode,
+            arrival_envelope_min_intervals=arrival_envelope_min_intervals,
         )
-    return _analyze_wcrt(
+    report = _analyze_wcrt(
         problem,
         schedule_table,
         max_iterations=max_iterations,
         epsilon=epsilon,
     )
+    if isinstance(spec_or_problem, PlanningProblem):
+        resolved_scope = str(problem.metadata.get("task_scope", DEFAULT_TASK_SCOPE))
+        resolved_include_non_rt = bool(problem.metadata.get("include_non_rt", include_non_rt))
+        resolved_horizon = horizon if horizon is not None else problem.horizon
+        normalized = None
+    else:
+        spec = _as_model_spec(spec_or_problem)
+        resolved_scope = normalize_task_scope(task_scope, include_non_rt=include_non_rt)
+        resolved_include_non_rt = bool(include_non_rt or resolved_scope == "all")
+        resolved_horizon = horizon
+        normalized = build_normalized_execution_model(
+            spec,
+            task_scope=resolved_scope,
+            include_non_rt=resolved_include_non_rt,
+            horizon=resolved_horizon,
+        )
+
+    if normalized is not None:
+        modeled_dimensions = {
+            str(item)
+            for item in report.metadata.get("modeled_dimensions", [])
+            if isinstance(item, str) and item.strip()
+        }
+        filtered_unsupported: list[dict[str, Any]] = []
+        for item in normalized.unsupported_dimensions:
+            if not isinstance(item, Mapping):
+                continue
+            item_id = item.get("id")
+            if item_id == "resource_blocking_not_in_static_plan" and "resource_blocking" in modeled_dimensions:
+                continue
+            if item_id == "runtime_overheads_not_in_static_plan" and modeled_dimensions.intersection({"dispatch_overhead", "migration_overhead"}):
+                continue
+            filtered_unsupported.append(dict(item))
+
+        remaining_ids = {
+            item["id"]
+            for item in filtered_unsupported
+            if isinstance(item.get("id"), str)
+        }
+        report.metadata.update(
+            {
+                "semantic_fingerprint": normalized.semantic_fingerprint(),
+                "planning_context": {
+                    "task_scope": resolved_scope,
+                    "include_non_rt": resolved_include_non_rt,
+                    "horizon": resolved_horizon,
+                },
+                "coverage_summary": dict(normalized.coverage_summary),
+                "assumptions": [dict(item) for item in normalized.assumptions],
+                "unsupported_dimensions": filtered_unsupported,
+                "blocking_bound": report.metadata.get(
+                    "blocking_bound",
+                    "modeled" if "resource_blocking" in modeled_dimensions else "not_applicable",
+                ),
+                "overhead_bound": report.metadata.get(
+                    "overhead_bound",
+                    "modeled" if modeled_dimensions.intersection({"dispatch_overhead", "migration_overhead"}) else "zero_or_not_applicable",
+                ),
+                "heterogeneous_speed_mode": (
+                    "uniform_assumed"
+                    if "heterogeneous_core_speed_not_modeled" in remaining_ids
+                    else (
+                        "modeled"
+                        if int(normalized.coverage_summary.get("effective_core_speed_count", 1) or 1) > 1
+                        else "uniform_only"
+                    )
+                ),
+            }
+        )
+    return report
 
 
 def schedule_table_from_dict(payload: Mapping[str, Any]) -> ScheduleTable:
@@ -188,6 +436,11 @@ def schedule_table_from_dict(payload: Mapping[str, Any]) -> ScheduleTable:
                 absolute_deadline=(
                     float(row["absolute_deadline"])
                     if row.get("absolute_deadline") is not None
+                    else None
+                ),
+                release_index=(
+                    int(row["release_index"])
+                    if row.get("release_index") is not None
                     else None
                 ),
                 constraint_evidence=dict(row.get("constraint_evidence", {})),
@@ -242,6 +495,15 @@ def planning_result_from_dict(payload: Mapping[str, Any]) -> PlanningResult:
     plan_fingerprint = extract_plan_spec_fingerprint(payload)
     if plan_fingerprint and "spec_fingerprint" not in metadata:
         metadata["spec_fingerprint"] = plan_fingerprint
+    semantic_fingerprint = extract_plan_semantic_fingerprint(payload)
+    if semantic_fingerprint and "semantic_fingerprint" not in metadata:
+        metadata["semantic_fingerprint"] = semantic_fingerprint
+    planning_context = payload.get("planning_context")
+    if isinstance(planning_context, Mapping) and "planning_context" not in metadata:
+        metadata["planning_context"] = dict(planning_context)
+    coverage_summary = payload.get("coverage_summary")
+    if isinstance(coverage_summary, Mapping) and "coverage_summary" not in metadata:
+        metadata["coverage_summary"] = dict(coverage_summary)
     return PlanningResult(
         planner=str(payload.get("planner", schedule_table.planner)),
         schedule_table=schedule_table,
@@ -255,6 +517,75 @@ def planning_result_from_dict(payload: Mapping[str, Any]) -> PlanningResult:
         ],
         metadata=metadata,
     )
+
+
+def serialize_planning_result(
+    result: PlanningResult,
+    *,
+    spec_or_payload: ModelSpec | Mapping[str, Any],
+    task_scope: str | None = None,
+    include_non_rt: bool = False,
+    horizon: float | None = None,
+) -> dict[str, Any]:
+    """Serialize planning result into a unified artifact for CLI/UI/runtime reuse."""
+
+    spec = _as_model_spec(spec_or_payload)
+    resolved_scope = normalize_task_scope(task_scope, include_non_rt=include_non_rt)
+    resolved_include_non_rt = bool(include_non_rt or resolved_scope == "all")
+    planning_params = spec.planning.params if spec.planning is not None and isinstance(spec.planning.params, dict) else {}
+    arrival_analysis_mode = str(planning_params.get("arrival_analysis_mode", "sample_path") or "sample_path")
+    raw_envelope = planning_params.get("arrival_envelope_min_intervals", {})
+    arrival_envelope_min_intervals = (
+        {
+            str(task_id): float(value)
+            for task_id, value in raw_envelope.items()
+            if isinstance(task_id, str) and isinstance(value, (int, float))
+        }
+        if isinstance(raw_envelope, dict)
+        else {}
+    )
+    normalized = build_normalized_execution_model(
+        spec,
+        task_scope=resolved_scope,
+        include_non_rt=resolved_include_non_rt,
+        horizon=horizon,
+    )
+    spec_fingerprint = model_spec_fingerprint(spec)
+    semantic_fingerprint = normalized.semantic_fingerprint()
+    payload = result.to_dict()
+    payload.update(
+        {
+            "spec_fingerprint": spec_fingerprint,
+            "semantic_fingerprint": semantic_fingerprint,
+            "planning_context": {
+                "task_scope": resolved_scope,
+                "include_non_rt": resolved_include_non_rt,
+                "horizon": horizon,
+                "planner": result.planner,
+                "arrival_analysis_mode": arrival_analysis_mode,
+                "arrival_envelope_min_intervals": arrival_envelope_min_intervals,
+            },
+            "coverage_summary": dict(normalized.coverage_summary),
+            "assumptions": [dict(item) for item in normalized.assumptions],
+            "unsupported_dimensions": [dict(item) for item in normalized.unsupported_dimensions],
+            "runtime_static_windows": schedule_table_to_runtime_windows(result.schedule_table),
+        }
+    )
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata.update(
+        {
+            "spec_fingerprint": spec_fingerprint,
+            "semantic_fingerprint": semantic_fingerprint,
+            "planning_context": dict(payload["planning_context"]),
+            "coverage_summary": dict(normalized.coverage_summary),
+            "assumption_count": len(normalized.assumptions),
+            "unsupported_dimension_count": len(normalized.unsupported_dimensions),
+        }
+    )
+    payload["metadata"] = metadata
+    return payload
 
 
 def export_os_config(
@@ -354,15 +685,54 @@ def schedule_table_to_runtime_windows(schedule_table: ScheduleTable) -> list[dic
         rows.append(
             {
                 "core_id": window.core_id,
-                "segment_key": window.segment_key,
+                "segment_key": f"{window.task_id}:{window.subtask_id}:{window.segment_id}",
                 "task_id": window.task_id,
                 "subtask_id": window.subtask_id,
                 "segment_id": window.segment_id,
+                "release_index": window.release_index,
                 "start": window.start_time,
                 "end": window.end_time,
             }
         )
     return rows
+
+
+def extract_plan_runtime_windows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Read runtime static windows from unified plan artifact."""
+
+    rows = payload.get("runtime_static_windows")
+    if isinstance(rows, list):
+        return [dict(row) for row in rows if isinstance(row, Mapping)]
+    schedule_payload = payload.get("schedule_table")
+    if isinstance(schedule_payload, Mapping):
+        return schedule_table_to_runtime_windows(schedule_table_from_dict(schedule_payload))
+    return []
+
+
+def materialize_runtime_spec_from_plan(
+    spec_or_payload: ModelSpec | Mapping[str, Any],
+    plan_payload: Mapping[str, Any],
+) -> ModelSpec:
+    """Inject plan runtime windows into scheduler.params and re-validate the spec."""
+
+    if not bool(plan_payload.get("feasible", False)):
+        raise ValueError("plan-json is infeasible and cannot be materialized for runtime execution")
+
+    runtime_windows = extract_plan_runtime_windows(plan_payload)
+    if not runtime_windows:
+        raise ValueError("plan-json does not contain runtime_static_windows")
+
+    spec = _as_model_spec(spec_or_payload)
+    payload = spec.model_dump(mode="json", by_alias=True, exclude_none=True)
+    scheduler_payload = payload.setdefault("scheduler", {})
+    if not isinstance(scheduler_payload, dict):
+        raise ValueError("invalid scheduler payload while materializing runtime plan")
+    params = scheduler_payload.setdefault("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("invalid scheduler.params payload while materializing runtime plan")
+    params["static_window_mode"] = True
+    params["static_windows"] = runtime_windows
+    return ConfigLoader().load_data(payload)
 
 
 def plan_and_analyze_schedulability(
@@ -428,6 +798,8 @@ def benchmark_sched_rate(
     lp_time_limit_seconds: float | None = 30.0,
     wcrt_max_iterations: int = 64,
     wcrt_epsilon: float = 1e-9,
+    arrival_analysis_mode: str | None = None,
+    arrival_envelope_min_intervals: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Benchmark schedulable-rate uplift using plan feasibility + WCRT feasibility."""
 
@@ -446,7 +818,12 @@ def benchmark_sched_rate(
 
     for raw_path in config_paths:
         path = Path(raw_path)
-        spec = loader.load(str(path))
+        raw_spec = loader.load(str(path))
+        spec = apply_planning_overrides(
+            raw_spec,
+            arrival_analysis_mode=arrival_analysis_mode,
+            arrival_envelope_min_intervals=arrival_envelope_min_intervals,
+        )
         problem = PlanningProblem.from_model_spec(
             spec,
             task_scope=resolved_scope,
@@ -561,6 +938,11 @@ def benchmark_sched_rate(
         "task_scope": resolved_scope,
         "wcrt_max_iterations": wcrt_max_iterations,
         "wcrt_epsilon": wcrt_epsilon,
+        "arrival_analysis_mode": arrival_analysis_mode or "sample_path",
+        "arrival_envelope_min_intervals": {
+            str(task_id): float(value)
+            for task_id, value in (arrival_envelope_min_intervals or {}).items()
+        },
         "baseline_schedulable_rate": round(baseline_rate, 9),
         "best_candidate_schedulable_rate": round(candidate_rate, 9),
         "candidate_only_schedulable_rate": round(candidate_only_rate, 9),

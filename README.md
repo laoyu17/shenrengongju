@@ -37,6 +37,33 @@ rtos-sim run -c examples/at01_single_dag_single_core.yaml \
   --metrics-out artifacts/metrics.json \
   --audit-out artifacts/audit.json
 
+# 离线规划 -> 统一计划工件（含 spec_fingerprint / semantic_fingerprint / runtime_static_windows）
+rtos-sim plan-static -c examples/at06_time_deterministic.yaml \
+  --planner np_edf \
+  --out-json artifacts/plan.json \
+  --out-csv artifacts/plan.csv
+
+# 复用既有计划工件做 WCRT 分析
+rtos-sim analyze-wcrt -c examples/at06_time_deterministic.yaml \
+  --plan-json artifacts/plan.json \
+  --strict-plan-match \
+  --out-json artifacts/wcrt.json \
+  --out-csv artifacts/wcrt.csv
+
+# 复用既有计划工件导出 OS 静态窗口配置
+rtos-sim export-os-config --plan-json artifacts/plan.json \
+  --config examples/at06_time_deterministic.yaml \
+  --strict-plan-match \
+  --out-json artifacts/os_config.json \
+  --out-csv artifacts/os_config.csv
+
+# 直接将计划工件回灌运行时（自动物化为 scheduler.params.static_windows）
+rtos-sim run -c examples/at06_time_deterministic.yaml \
+  --plan-json artifacts/plan.json \
+  --strict-plan-match \
+  --events-out artifacts/events.plan.jsonl \
+  --metrics-out artifacts/metrics.plan.json
+
 # 启动 UI（可选）
 rtos-sim ui -c examples/at01_single_dag_single_core.yaml
 
@@ -159,6 +186,18 @@ python -m pytest
 - 需求追踪矩阵：`docs/14-docx需求追踪矩阵.md`（Docx 条目到代码/测试/审计规则映射）
 - 研究闭环验收基线：`docs/15-研究闭环验收基线.md`（`compliance_profiles` 机读判定口径）
 - 研究执行 backlog：`docs/16-研究口径Issue拆解与排期.md`
+
+## 统一计划工件（Planning Artifact）
+
+- `plan-static` 输出统一计划工件：包含 `spec_fingerprint`、`semantic_fingerprint`、`planning_context`、`coverage_summary`、`runtime_static_windows`。
+- `analyze-wcrt` 已将 `resource_blocking`、`dispatch_overhead`、`migration_overhead` 纳入真实分析建模；计划工件中的相关条目仅表示“静态规划表未直接展开”，不再代表 WCRT 未建模。
+- `analyze-wcrt` 已进一步将 `heterogeneous_speed` 与 `etm_scaling` 纳入真实分析输入：任务执行成本以调度核有效速度和 ETM 估算值为准，而不再固定使用原始 `wcet`。
+- `plan-static` / `analyze-wcrt` 现已按 `horizon`（默认 `sim.duration`）展开多次 release：`release_offsets` 会逐次生效，`uniform/poisson/custom` arrival 会按 `sim.seed` 生成可复现 sample-path，而不再塌缩成单次代表性 release。
+- `planning.params.arrival_analysis_mode` 支持 `sample_path`（默认）与 `conservative_envelope`；后者会用最小间隔包络展开到达过程，对 `poisson` / 无法推导下界的 `custom` 生成器可通过 `planning.params.arrival_envelope_min_intervals.{task_id}` 显式提供保守最小间隔。
+- `scheduler.params.static_windows[*].release_index` 现已生效，可将静态窗口显式绑定到某个 release instance；`run --plan-json` 导出的 `runtime_static_windows` 也会携带该字段。
+- `semantic_fingerprint` 基于规范化语义投影计算，用于拦截“同一配置、不同规划范围/语义假设”的误用。
+- `analyze-wcrt` 输出新增 `metadata`，显式列出 `assumptions`、`unsupported_dimensions`、`blocking_bound`、`overhead_bound`、`heterogeneous_speed_mode`。
+- `run --plan-json` 会将 `runtime_static_windows` 物化到运行时静态窗口模式；`--strict-plan-match` 会同时校验 `spec_fingerprint` 与 `semantic_fingerprint`。
 
 ## 调度参数（S3）
 

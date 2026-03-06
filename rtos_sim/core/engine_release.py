@@ -61,6 +61,7 @@ def process_releases(engine: SimEngine, now: float) -> None:
                     absolute_deadline=absolute_deadline,
                     task_period=task.period,
                     release_time=release_time,
+                    release_index=release_idx,
                     predecessor_subtasks=list(sub.predecessors),
                     successor_subtasks=list(sub.successors),
                     segment_index=seg.index,

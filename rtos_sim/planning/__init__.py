@@ -10,6 +10,7 @@ from .heuristics import (
     plan_static,
 )
 from .lp_solver import plan_lp
+from .normalized import NormalizedExecutionModel, build_normalized_execution_model
 from .types import (
     ConstraintViolation,
     DEFAULT_TASK_SCOPE,
@@ -35,6 +36,8 @@ __all__ = [
     "plan_precautious_rm",
     "plan_static",
     "plan_lp",
+    "NormalizedExecutionModel",
+    "build_normalized_execution_model",
     "analyze_wcrt",
     "ConstraintViolation",
     "DEFAULT_TASK_SCOPE",

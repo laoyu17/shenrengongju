@@ -5,7 +5,7 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
 - 日期：2026-03-01
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=6b240e985bf45bf741df38ea83324257bef92599`
+- 实现快照：`git_sha=f7587429e344e1c75dc50ce5894970a62105e909`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -44,10 +44,18 @@
 - 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
-- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model/migrate-config` 命令：`rtos_sim/cli/main.py:95`
+- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model/migrate-config/plan-static/analyze-wcrt/export-os-config` 命令：`rtos_sim/cli/main.py:95`
 - `validate` 新增 `--strict-id-tokens`（将内部保留分隔符告警升级为失败，便于脚本门禁）：`rtos_sim/cli/main.py:415`
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`rtos_sim/cli/main.py:81`、`rtos_sim/analysis/audit.py:14`
+- `run` 新增 `--plan-json/--strict-plan-match`，可直接消费统一计划工件并物化 `runtime_static_windows`：`rtos_sim/cli/main.py`
+- `plan-static` 统一输出 `spec_fingerprint + semantic_fingerprint + planning_context + runtime_static_windows`：`rtos_sim/api.py`、`rtos_sim/cli/handlers_planning.py`
+- `analyze-wcrt` 输出新增 `metadata.assumptions/unsupported_dimensions/blocking_bound/overhead_bound/heterogeneous_speed_mode`：`rtos_sim/api.py`、`rtos_sim/planning/wcrt.py`
+- WCRT 已将 `resource_blocking` 与 `dispatch/migration overhead` 纳入真实分析项，`unsupported_dimensions` 中对应条目仅保留“static plan 未直接展开”的提示：`rtos_sim/planning/wcrt.py`、`rtos_sim/planning/normalized.py`
+- 离线规划与 WCRT 已进一步切换到“按核心执行成本”口径：异构核有效速度与 ETM 缩放会直接改变 `plan-static` 窗口长度与 WCRT 结果：`rtos_sim/planning/normalized.py`、`rtos_sim/planning/heuristics.py`、`rtos_sim/planning/lp_solver.py`、`rtos_sim/planning/wcrt.py`
+- `release_offsets` 与 stochastic arrival 已从“单次代表性投影”升级为“按 horizon 的多次 release 展开”：时间确定性窗口按 release index 应用 offset，随机到达按 `sim.seed` 生成可复现 sample-path：`rtos_sim/planning/normalized.py`
+- 已新增 arrival 分析模式切换：`planning.params.arrival_analysis_mode=sample_path|conservative_envelope`；保守包络对 `poisson/custom` 可通过 `arrival_envelope_min_intervals` 提供下界。
+- `scheduler.params.static_windows[*].release_index` 已接入 runtime 匹配，可显式约束特定 release instance：`rtos_sim/core/engine_static_window.py`、`tests/test_engine_static_window_mode.py`
 - `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`rtos_sim/cli/main.py:151`
 - 审计报告新增 `rule_version` 与 `evidence`，支持跨批次追溯：`rtos_sim/analysis/audit.py:7`
 - 审计报告新增 `protocol_proof_assets`，沉淀 PIP/PCP 证明辅助轨迹：`rtos_sim/analysis/audit.py:79`
@@ -75,8 +83,8 @@
 - 已提供 10 个样例（新增 `at10_arrival_process`）：`examples/at06_time_deterministic.yaml:1`、`examples/at09_table_based_etm.yaml:1`、`examples/at10_arrival_process.yaml:1`
 - 已实现模型/引擎/CLI 自动化测试：`tests/test_model_validation.py:41`、`tests/test_engine_scenarios.py:22`、`tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`tests/test_audit.py:1`、`tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-03-04）：`python -m pytest --maxfail=1` 通过，`386 passed`
-- 当前覆盖率快照（2026-03-04）：总覆盖率 89.73%（`coverage.line_rate=89.7307960083546`，来源：`artifacts/quality/quality-snapshot.json`）
+- 当前本地测试状态（2026-03-04）：`python -m pytest --maxfail=1` 通过，`404 passed`
+- 当前覆盖率快照（2026-03-04）：总覆盖率 89.05%（`coverage.line_rate=89.04797521102682`，来源：`artifacts/quality/quality-snapshot.json`）
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
@@ -310,7 +318,7 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `386 passed / 89.73%`）。
+- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `404 passed / 89.05%`）。
 - 历史首轮审查文档新增醒目提示，避免误读历史测试统计为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
@@ -359,5 +367,5 @@
 - 防回退门禁：
   - 新增 `tests/test_ci_strict_plan_match_gate.py`，静态校验 CI 脚本中 WCRT/导出命令必须携带 `--strict-plan-match`。
 - 本轮回归结果：
-  - `python -m pytest --maxfail=1`：`386 passed`
+  - `python -m pytest --maxfail=1`：`404 passed`
   - 主链路命令（`validate` / `inspect-model --strict-on-fail` / `benchmark-sched-rate`）均通过。

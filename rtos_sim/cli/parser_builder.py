@@ -16,6 +16,19 @@ def _handler(command_handlers: Mapping[str, CommandHandler], name: str) -> Comma
     return handler
 
 
+def _add_arrival_analysis_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--arrival-analysis-mode",
+        default=None,
+        help="arrival analysis mode override: sample_path|conservative_envelope",
+    )
+    parser.add_argument(
+        "--arrival-envelope-min-intervals",
+        default=None,
+        help="comma-separated conservative minimum intervals, e.g. task_a=0.25,task_b=1.0",
+    )
+
+
 def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rtos-sim", description="RTOS simulation CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -36,6 +49,12 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
     run_parser.add_argument("--events-csv-out", default=None, help="path to write CSV events")
     run_parser.add_argument("--metrics-out", default=None, help="path to write metric JSON")
     run_parser.add_argument("--audit-out", default=None, help="path to write audit report JSON")
+    run_parser.add_argument("--plan-json", default=None, help="existing plan-static result JSON path")
+    run_parser.add_argument(
+        "--strict-plan-match",
+        action="store_true",
+        help="strictly require --plan-json spec/semantic fingerprints match --config",
+    )
     run_parser.add_argument("--step", action="store_true", help="execute simulation by step loop")
     run_parser.add_argument("--delta", type=float, default=None, help="delta for --step mode")
     run_parser.add_argument(
@@ -124,6 +143,7 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
         default=30.0,
         help="LP solver time limit in seconds",
     )
+    _add_arrival_analysis_args(plan_static_parser)
     plan_static_parser.add_argument("--out-json", default=None, help="planning result JSON path")
     plan_static_parser.add_argument("--out-csv", default=None, help="schedule windows CSV path")
     plan_static_parser.add_argument(
@@ -165,6 +185,7 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
     )
     wcrt_parser.add_argument("--max-iterations", type=int, default=64, help="max fixed-point iterations")
     wcrt_parser.add_argument("--epsilon", type=float, default=1e-9, help="fixed-point convergence epsilon")
+    _add_arrival_analysis_args(wcrt_parser)
     wcrt_parser.add_argument("--out-json", default=None, help="WCRT report JSON path")
     wcrt_parser.add_argument("--out-csv", default=None, help="WCRT rows CSV path")
     wcrt_parser.add_argument(
@@ -232,6 +253,7 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
         default=None,
         help="optional strict gate: require uplift >= target",
     )
+    _add_arrival_analysis_args(benchmark_parser)
     benchmark_parser.add_argument("--out-json", default=None, help="benchmark report JSON path")
     benchmark_parser.add_argument("--out-csv", default=None, help="benchmark rows CSV path")
     benchmark_parser.set_defaults(func=_handler(command_handlers, "benchmark-sched-rate"))
@@ -271,6 +293,7 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
         default="deadline_then_wcet",
         help="priority policy for thread config export",
     )
+    _add_arrival_analysis_args(export_parser)
     export_parser.add_argument("--out-json", default=None, help="OS config JSON path")
     export_parser.add_argument("--out-csv", default=None, help="OS windows CSV path")
     export_parser.set_defaults(func=_handler(command_handlers, "export-os-config"))

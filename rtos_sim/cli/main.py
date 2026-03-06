@@ -22,6 +22,7 @@ from rtos_sim.cli.handlers_planning import (
     cmd_analyze_wcrt,
     cmd_export_os_config,
     cmd_plan_static,
+    parse_arrival_envelope_min_intervals,
 )
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
@@ -141,6 +142,47 @@ def _read_json(path: str) -> dict[str, Any]:
     return payload
 
 
+def _validate_plan_fingerprint_match(
+    *,
+    command: str,
+    spec: ModelSpec,
+    plan_payload: dict[str, Any],
+    strict: bool,
+) -> bool:
+    expectations = sim_api.plan_fingerprint_expectations(spec, plan_payload)
+    expected_spec = str(expectations["expected_spec_fingerprint"])
+    actual_spec = expectations["actual_spec_fingerprint"]
+    if not isinstance(actual_spec, str) or not actual_spec.strip():
+        level = "[ERROR]" if strict else "[WARN]"
+        print(f"{level} {command}: plan-json missing spec_fingerprint, 期望指纹#{expected_spec}")
+        return not strict
+    if actual_spec != expected_spec:
+        level = "[ERROR]" if strict else "[WARN]"
+        print(
+            f"{level} {command}: plan/config mismatch, "
+            f"期望指纹#{expected_spec}, 实际指纹#{actual_spec}"
+        )
+        return not strict
+
+    expected_semantic = str(expectations["expected_semantic_fingerprint"])
+    actual_semantic = expectations["actual_semantic_fingerprint"]
+    if not isinstance(actual_semantic, str) or not actual_semantic.strip():
+        level = "[ERROR]" if strict else "[WARN]"
+        print(
+            f"{level} {command}: plan-json missing semantic_fingerprint, "
+            f"期望语义指纹#{expected_semantic}"
+        )
+        return not strict
+    if actual_semantic != expected_semantic:
+        level = "[ERROR]" if strict else "[WARN]"
+        print(
+            f"{level} {command}: plan semantic mismatch, "
+            f"期望语义指纹#{expected_semantic}, 实际语义指纹#{actual_semantic}"
+        )
+        return not strict
+    return True
+
+
 def _read_config_payload(path: str) -> dict[str, Any]:
     input_path = Path(path)
     if not input_path.exists():
@@ -210,6 +252,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"[ERROR] {exc}")
         return 1
+
+    if args.plan_json:
+        try:
+            plan_payload = _read_json(args.plan_json)
+            if not isinstance(plan_payload.get("schedule_table"), dict):
+                raise ConfigError(f"planning result missing schedule_table: {args.plan_json}")
+        except ConfigError as exc:
+            print(f"[ERROR] {exc}")
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ERROR] failed to read plan-json: {exc}")
+            return 1
+
+        if not _validate_plan_fingerprint_match(
+            command="run",
+            spec=spec,
+            plan_payload=plan_payload,
+            strict=bool(args.strict_plan_match),
+        ):
+            return 2
+        try:
+            spec = sim_api.materialize_runtime_spec_from_plan(spec, plan_payload)
+        except (ConfigError, ValueError) as exc:
+            print(f"[ERROR] run: failed to materialize plan-json into runtime static windows: {exc}")
+            return 1
 
     if args.step and args.delta is not None and args.delta <= 0:
         print("[ERROR] --delta must be > 0 when provided")
@@ -468,6 +535,8 @@ def cmd_benchmark_sched_rate(args: argparse.Namespace) -> int:
             lp_time_limit_seconds=args.lp_time_limit,
             wcrt_max_iterations=args.wcrt_max_iterations,
             wcrt_epsilon=args.wcrt_epsilon,
+            arrival_analysis_mode=args.arrival_analysis_mode,
+            arrival_envelope_min_intervals=parse_arrival_envelope_min_intervals(args.arrival_envelope_min_intervals),
         )
     except ConfigError as exc:
         print(f"[ERROR] {exc}")

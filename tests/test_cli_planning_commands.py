@@ -8,6 +8,7 @@ import yaml
 
 from rtos_sim import api as sim_api
 from rtos_sim.cli.main import main
+from rtos_sim.io import ConfigLoader
 from rtos_sim.legacy import report_api
 
 
@@ -39,7 +40,14 @@ def test_cli_plan_static_outputs_json_and_csv(tmp_path: Path) -> None:
     assert payload["planner"] == "np_edf"
     assert isinstance(payload["schedule_table"]["windows"], list)
     assert isinstance(payload.get("spec_fingerprint"), str) and payload["spec_fingerprint"]
+    assert isinstance(payload.get("semantic_fingerprint"), str) and payload["semantic_fingerprint"]
     assert payload["metadata"]["spec_fingerprint"] == payload["spec_fingerprint"]
+    assert payload["metadata"]["semantic_fingerprint"] == payload["semantic_fingerprint"]
+    assert payload["planning_context"]["task_scope"] == "sync_only"
+    assert isinstance(payload["runtime_static_windows"], list)
+    assert isinstance(payload["assumptions"], list) and payload["assumptions"]
+    assert isinstance(payload["unsupported_dimensions"], list)
+    assert isinstance(payload["coverage_summary"], dict)
 
 
 def test_cli_plan_static_supports_np_rm_planner(tmp_path: Path) -> None:
@@ -60,6 +68,49 @@ def test_cli_plan_static_supports_np_rm_planner(tmp_path: Path) -> None:
     assert code == 0
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     assert payload["planner"] == "np_rm"
+
+
+def test_cli_plan_static_models_heterogeneous_core_speed(tmp_path: Path) -> None:
+    out_json = tmp_path / "plan-hetero.json"
+
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at07_heterogeneous_multicore.yaml"),
+            "--task-scope",
+            "sync_and_dynamic_rt",
+            "--out-json",
+            str(out_json),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    windows = {row["task_id"]: row for row in payload["schedule_table"]["windows"]}
+    assert windows["slow"]["end_time"] - windows["slow"]["start_time"] == pytest.approx(4.0)
+    assert windows["fast"]["end_time"] - windows["fast"]["start_time"] == pytest.approx(2.0)
+
+
+def test_cli_plan_static_models_table_based_etm(tmp_path: Path) -> None:
+    out_json = tmp_path / "plan-etm.json"
+
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at09_table_based_etm.yaml"),
+            "--task-scope",
+            "sync_and_dynamic_rt",
+            "--out-json",
+            str(out_json),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    window = payload["schedule_table"]["windows"][0]
+    assert window["end_time"] - window["start_time"] == pytest.approx(2.0)
 
 
 def test_cli_analyze_wcrt_can_reuse_plan_json(tmp_path: Path) -> None:
@@ -93,6 +144,78 @@ def test_cli_analyze_wcrt_can_reuse_plan_json(tmp_path: Path) -> None:
     payload = json.loads(report_json.read_text(encoding="utf-8"))
     assert "items" in payload
     assert isinstance(payload["items"], list)
+    assert payload["metadata"]["planning_context"]["task_scope"] == "sync_only"
+    assert isinstance(payload["metadata"]["assumptions"], list)
+    assert isinstance(payload["metadata"]["unsupported_dimensions"], list)
+    assert isinstance(payload["metadata"]["semantic_fingerprint"], str)
+
+
+def test_cli_run_can_consume_plan_json(tmp_path: Path) -> None:
+    plan_json = tmp_path / "plan.json"
+    events_jsonl = tmp_path / "events.jsonl"
+    metrics_json = tmp_path / "metrics.json"
+
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--plan-json",
+            str(plan_json),
+            "--strict-plan-match",
+            "--events-out",
+            str(events_jsonl),
+            "--metrics-out",
+            str(metrics_json),
+        ]
+    )
+
+    assert code == 0
+    assert events_jsonl.exists()
+    assert metrics_json.exists()
+    events = [json.loads(line) for line in events_jsonl.read_text(encoding="utf-8").splitlines()]
+    metrics = json.loads(metrics_json.read_text(encoding="utf-8"))
+    assert events
+    assert isinstance(metrics.get("jobs_completed"), int)
+
+
+def test_cli_run_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
+    plan_json = tmp_path / "plan_mismatch.json"
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--plan-json",
+            str(plan_json),
+            "--strict-plan-match",
+            "--metrics-out",
+            str(tmp_path / "metrics.json"),
+        ]
+    )
+    assert code == 2
 
 
 def test_cli_analyze_wcrt_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
@@ -261,6 +384,16 @@ def test_schedule_table_to_runtime_windows_keeps_segment_level_fields(tmp_path: 
     assert {"segment_key", "core_id", "task_id", "subtask_id", "segment_id", "start", "end"}.issubset(
         set(windows[0].keys())
     )
+
+
+def test_semantic_fingerprint_changes_with_scope_for_same_spec() -> None:
+    spec = ConfigLoader().load(str(EXAMPLES / "at10_arrival_process.yaml"))
+
+    sync_only = sim_api.semantic_model_fingerprint(spec, task_scope="sync_only")
+    all_tasks = sim_api.semantic_model_fingerprint(spec, task_scope="all", include_non_rt=True)
+
+    assert sim_api.model_spec_fingerprint(spec)
+    assert sync_only != all_tasks
 
 
 def test_cli_benchmark_sched_rate_outputs_report(tmp_path: Path) -> None:
@@ -565,3 +698,94 @@ def test_legacy_report_api_semantic_boundary_is_lightweight_compat_only() -> Non
 
     static_patch = report_api.sched_model_change(mode="static")
     assert static_patch == {"mode": "static", "static_window_mode": True}
+
+
+def test_cli_plan_static_supports_arrival_analysis_mode_override(tmp_path: Path) -> None:
+    out_json = tmp_path / "plan-arrival-mode.json"
+
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at10_arrival_process.yaml"),
+            "--task-scope",
+            "sync_and_dynamic_rt",
+            "--arrival-analysis-mode",
+            "conservative_envelope",
+            "--arrival-envelope-min-intervals",
+            "t_poisson=0.25",
+            "--out-json",
+            str(out_json),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["planning_context"]["arrival_analysis_mode"] == "conservative_envelope"
+    assert payload["planning_context"]["arrival_envelope_min_intervals"] == {"t_poisson": 0.25}
+    assert payload["coverage_summary"]["arrival_analysis_mode"] == "conservative_envelope"
+    assert payload["coverage_summary"]["expanded_release_count"] >= 7
+
+
+def test_cli_analyze_wcrt_strict_plan_match_uses_arrival_context_from_plan_json(tmp_path: Path) -> None:
+    plan_json = tmp_path / "plan-arrival-context.json"
+    report_json = tmp_path / "wcrt-arrival-context.json"
+
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at10_arrival_process.yaml"),
+            "--task-scope",
+            "sync_and_dynamic_rt",
+            "--arrival-analysis-mode",
+            "conservative_envelope",
+            "--arrival-envelope-min-intervals",
+            "t_poisson=0.25",
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    code = main(
+        [
+            "analyze-wcrt",
+            "-c",
+            str(EXAMPLES / "at10_arrival_process.yaml"),
+            "--plan-json",
+            str(plan_json),
+            "--strict-plan-match",
+            "--out-json",
+            str(report_json),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(report_json.read_text(encoding="utf-8"))
+    assert payload["metadata"]["planning_context"]["task_scope"] == "sync_and_dynamic_rt"
+
+
+def test_cli_benchmark_sched_rate_supports_arrival_analysis_overrides(tmp_path: Path) -> None:
+    report_json = tmp_path / "benchmark-arrival.json"
+
+    code = main(
+        [
+            "benchmark-sched-rate",
+            "-c",
+            str(EXAMPLES / "at10_arrival_process.yaml"),
+            "--task-scope",
+            "sync_and_dynamic_rt",
+            "--arrival-analysis-mode",
+            "conservative_envelope",
+            "--arrival-envelope-min-intervals",
+            "t_poisson=0.25",
+            "--out-json",
+            str(report_json),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(report_json.read_text(encoding="utf-8"))
+    assert payload["arrival_analysis_mode"] == "conservative_envelope"
+    assert payload["arrival_envelope_min_intervals"] == {"t_poisson": 0.25}

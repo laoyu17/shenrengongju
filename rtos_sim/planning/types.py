@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
-from rtos_sim.model import ModelSpec, TaskType
+from rtos_sim.model import ModelSpec
 
 
 ScalarValue: TypeAlias = str | int | float | bool | None
@@ -37,6 +37,49 @@ def normalize_task_scope(
     )
 
 
+def eligible_core_ids_for_segment(segment: "PlanningSegment", core_ids: list[str]) -> list[str]:
+    metadata = segment.metadata if isinstance(segment.metadata, dict) else {}
+    metadata_eligible = metadata.get("eligible_core_ids")
+    if isinstance(metadata_eligible, list):
+        eligible = [str(core_id) for core_id in metadata_eligible if str(core_id) in set(core_ids)]
+        if eligible:
+            return eligible
+    if segment.mapping_hint is not None:
+        return [segment.mapping_hint] if segment.mapping_hint in set(core_ids) else []
+    return [str(core_id) for core_id in core_ids]
+
+
+def execution_cost_for_core(segment: "PlanningSegment", core_id: str | None = None) -> float:
+    metadata = segment.metadata if isinstance(segment.metadata, dict) else {}
+    execution_costs = metadata.get("execution_cost_by_core")
+    if isinstance(execution_costs, dict):
+        if core_id is not None:
+            value = execution_costs.get(core_id)
+            if isinstance(value, (int, float)):
+                return float(value)
+        numeric_values = [float(value) for value in execution_costs.values() if isinstance(value, (int, float))]
+        if numeric_values:
+            return min(numeric_values)
+    default_value = metadata.get("default_execution_cost")
+    if isinstance(default_value, (int, float)):
+        return float(default_value)
+    return float(segment.wcet)
+
+
+def min_execution_cost(segment: "PlanningSegment", core_ids: list[str]) -> float:
+    eligible_cores = eligible_core_ids_for_segment(segment, core_ids)
+    if not eligible_cores:
+        return float(segment.wcet)
+    return min(execution_cost_for_core(segment, core_id) for core_id in eligible_cores)
+
+
+def max_execution_cost(segment: "PlanningSegment", core_ids: list[str]) -> float:
+    eligible_cores = eligible_core_ids_for_segment(segment, core_ids)
+    if not eligible_cores:
+        return float(segment.wcet)
+    return max(execution_cost_for_core(segment, core_id) for core_id in eligible_cores)
+
+
 @dataclass(slots=True)
 class PlanningSegment:
     """Schedulable segment unit consumed by static planning heuristics."""
@@ -49,13 +92,20 @@ class PlanningSegment:
     period: float | None
     relative_deadline: float | None
     absolute_deadline: float | None
+    release_index: int | None = None
     mapping_hint: str | None = None
     predecessors: list[str] = field(default_factory=list)
-    metadata: EvidencePayload = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def base_segment_key(self) -> str:
+        return f"{self.task_id}:{self.subtask_id}:{self.segment_id}"
 
     @property
     def key(self) -> str:
-        return f"{self.task_id}:{self.subtask_id}:{self.segment_id}"
+        if self.release_index is None:
+            return self.base_segment_key
+        return f"{self.task_id}@{self.release_index}:{self.subtask_id}:{self.segment_id}"
 
 
 @dataclass(slots=True)
@@ -101,6 +151,7 @@ class ScheduleWindow:
     end_time: float
     release_time: float
     absolute_deadline: float | None
+    release_index: int | None = None
     constraint_evidence: EvidencePayload = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -109,6 +160,7 @@ class ScheduleWindow:
             "task_id": self.task_id,
             "subtask_id": self.subtask_id,
             "segment_id": self.segment_id,
+            "release_index": self.release_index,
             "core_id": self.core_id,
             "start_time": self.start_time,
             "end_time": self.end_time,
@@ -166,87 +218,15 @@ class PlanningProblem:
         include_non_rt: bool = False,
         horizon: float | None = None,
     ) -> "PlanningProblem":
-        resolved_scope = normalize_task_scope(task_scope, include_non_rt=include_non_rt)
-        core_ids = [core.id for core in spec.platform.cores]
-        segments: list[PlanningSegment] = []
-        by_key: dict[str, PlanningSegment] = {}
-        skipped_dynamic_rt = 0
-        skipped_non_rt = 0
+        from .normalized import build_normalized_execution_model
 
-        for task in spec.tasks:
-            if resolved_scope == "sync_only" and task.task_type != TaskType.TIME_DETERMINISTIC:
-                if task.task_type == TaskType.DYNAMIC_RT:
-                    skipped_dynamic_rt += 1
-                elif task.task_type == TaskType.NON_RT:
-                    skipped_non_rt += 1
-                continue
-            if resolved_scope == "sync_and_dynamic_rt" and task.task_type == TaskType.NON_RT:
-                skipped_non_rt += 1
-                continue
-            release_time = float(task.arrival + (task.phase_offset or 0.0))
-            relative_deadline = float(task.deadline) if task.deadline is not None else None
-            absolute_deadline = (
-                release_time + relative_deadline if relative_deadline is not None else None
-            )
-            task_mapping = task.task_mapping_hint
-            subtask_segment_keys: dict[str, list[str]] = {}
-
-            for subtask in task.subtasks:
-                segment_keys: list[str] = []
-                previous_segment_key: str | None = None
-                subtask_mapping = subtask.subtask_mapping_hint or task_mapping
-                ordered_segments = sorted(subtask.segments, key=lambda item: item.index)
-
-                for segment in ordered_segments:
-                    mapping_hint = segment.mapping_hint or subtask_mapping
-                    planning_segment = PlanningSegment(
-                        task_id=task.id,
-                        subtask_id=subtask.id,
-                        segment_id=segment.id,
-                        wcet=float(segment.wcet),
-                        release_time=release_time,
-                        period=float(task.period) if task.period is not None else None,
-                        relative_deadline=relative_deadline,
-                        absolute_deadline=absolute_deadline,
-                        mapping_hint=mapping_hint,
-                        predecessors=[previous_segment_key] if previous_segment_key else [],
-                        metadata={
-                            "task_type": task.task_type.value,
-                            "segment_index": segment.index,
-                        },
-                    )
-                    previous_segment_key = planning_segment.key
-                    segment_keys.append(planning_segment.key)
-                    segments.append(planning_segment)
-                    by_key[planning_segment.key] = planning_segment
-                subtask_segment_keys[subtask.id] = segment_keys
-
-            for subtask in task.subtasks:
-                current_keys = subtask_segment_keys.get(subtask.id, [])
-                if not current_keys:
-                    continue
-                first_segment = by_key[current_keys[0]]
-                for predecessor_subtask in subtask.predecessors:
-                    predecessor_keys = subtask_segment_keys.get(predecessor_subtask, [])
-                    if not predecessor_keys:
-                        continue
-                    predecessor_key = predecessor_keys[-1]
-                    if predecessor_key not in first_segment.predecessors:
-                        first_segment.predecessors.append(predecessor_key)
-
-        return cls(
-            core_ids=core_ids,
-            segments=segments,
+        normalized = build_normalized_execution_model(
+            spec,
+            task_scope=task_scope,
+            include_non_rt=include_non_rt,
             horizon=horizon,
-            metadata={
-                "source": "model_spec",
-                "task_scope": resolved_scope,
-                "total_tasks": len(spec.tasks),
-                "included_segments": len(segments),
-                "skipped_dynamic_rt_tasks": skipped_dynamic_rt,
-                "skipped_non_rt_tasks": skipped_non_rt,
-            },
         )
+        return normalized.to_planning_problem()
 
     def segment_map(self) -> dict[str, PlanningSegment]:
         return {segment.key: segment for segment in self.segments}
@@ -259,7 +239,7 @@ class PlanningResult:
     feasible: bool
     assignments: dict[str, str] = field(default_factory=dict)
     unscheduled_segments: list[str] = field(default_factory=list)
-    metadata: EvidencePayload = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -295,10 +275,12 @@ class WCRTReport:
     items: list[WCRTItem]
     feasible: bool
     evidence: list[PlanningEvidence] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "feasible": self.feasible,
             "items": [item.to_dict() for item in self.items],
             "evidence": [item.to_dict() for item in self.evidence],
+            "metadata": dict(self.metadata),
         }

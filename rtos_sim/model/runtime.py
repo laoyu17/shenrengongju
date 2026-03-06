@@ -29,6 +29,7 @@ class ReadySegment:
     required_resources: list[str]
     preemptible: bool
     release_time: float
+    release_index: Optional[int] = None
     priority_value: float = field(default=0.0)
 
     @property
@@ -81,6 +82,7 @@ class RuntimeSegmentState:
     predecessor_subtasks: list[str]
     successor_subtasks: list[str]
     segment_index: int
+    release_index: Optional[int] = None
     base_priority: float = 0.0
     effective_priority: float = 0.0
 
