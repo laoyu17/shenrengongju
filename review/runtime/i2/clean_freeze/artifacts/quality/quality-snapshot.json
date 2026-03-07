@@ -1,0 +1,25 @@
+{
+  "generated_at_utc": "2026-03-07T10:39:51Z",
+  "status": "pass",
+  "evidence_git_sha": "4ae4daa823c9377474dcb49c68006d46105ae7a9",
+  "git_sha": "4ae4daa823c9377474dcb49c68006d46105ae7a9",
+  "command": "python -m pytest --maxfail=1 && python -m pytest --cov=rtos_sim --cov-report=json:artifacts/quality/clean_freeze_gate/quality/coverage.json -q",
+  "command_exit_code": 0,
+  "pytest": {
+    "passed": 434,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "xfailed": 0,
+    "xpassed": 0,
+    "summary_line": "434 passed in 9.89s",
+    "parse_mode": "summary_line"
+  },
+  "coverage": {
+    "num_statements": 10026,
+    "covered_lines": 8960,
+    "missing_lines": 1066,
+    "line_rate": 89.36764412527428,
+    "line_rate_display": "89"
+  }
+}

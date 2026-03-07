@@ -1,0 +1,896 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Linux Qt runtime deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libxkbcommon-x11-0 \
+            libdbus-1-3 \
+            libxcb-cursor0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev,ui]
+
+      - name: Run unit tests
+        shell: bash
+        run: |
+          mkdir -p artifacts/quality
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          cmd = [
+              sys.executable,
+              "-m",
+              "pytest",
+              "--cov=rtos_sim",
+              "--cov-report=json:artifacts/quality/coverage.json",
+          ]
+          result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+          output = f"{result.stdout}\n{result.stderr}".strip()
+          print(output)
+          pathlib.Path("artifacts/quality/pytest-output.txt").write_text(output + "\n", encoding="utf-8")
+          raise SystemExit(result.returncode)
+          PY
+
+      - name: Upload quality inputs (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-inputs-ubuntu
+          path: |
+            artifacts/quality/coverage.json
+            artifacts/quality/pytest-output.txt
+
+  lint:
+    name: Ruff Lint (hard gate)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run ruff check
+        run: |
+          python -m ruff check .
+
+  package:
+    name: Build Distribution Artifacts
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  sched_rate_gate:
+    name: Sched-Rate Dual Gate (>=30% + non-empty)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run sched-rate benchmark gate
+        run: |
+          python scripts/benchmark_sched_rate.py \
+            --output-dir artifacts/sched-rate \
+            --cases-per-tier 4 \
+            --seed 20260304 \
+            --target-uplift 0.30 \
+            --strict
+
+      - name: Add sched-rate summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("artifacts/sched-rate/sched-rate-benchmark.json")
+          if not path.exists():
+              print("sched-rate benchmark report missing")
+              raise SystemExit(0)
+          report = json.loads(path.read_text(encoding="utf-8"))
+          profiles = report.get("profiles", {})
+          standard = profiles.get("standard_seeded", {})
+          docx = profiles.get("docx_mixed", {})
+          standard_overall = standard.get("overall", {}) if isinstance(standard, dict) else {}
+          docx_overall = docx.get("overall", {}) if isinstance(docx, dict) else {}
+          lines = [
+              "## Sched-Rate Dual Gate",
+              f"- target: {report.get('target_uplift')}",
+              f"- all_gate_pass: {report.get('dual_gate_pass')}",
+              "",
+              "### A. standard_seeded (hard gate)",
+              f"- gate_metric: macro_uplift",
+              f"- macro_uplift: {standard.get('macro_uplift')}",
+              f"- non_empty_case_count: {standard_overall.get('non_empty_case_count')}",
+              f"- gate_pass: {standard.get('gate_pass')}",
+              "",
+              "### B. docx_mixed/frozen (hard gate)",
+              f"- gate_metric: candidate_only_uplift",
+              f"- candidate_only_uplift: {docx.get('gate_value')}",
+              f"- non_empty_case_count: {docx_overall.get('non_empty_case_count')}",
+              f"- gate_pass: {docx.get('gate_pass')}",
+              f"- target: {report.get('target_uplift')}",
+          ]
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload sched-rate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sched-rate-benchmark
+          path: artifacts/sched-rate
+
+  i1_ci_gate:
+    name: I1 Baseline CI Gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Linux Qt runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libxkbcommon-x11-0 \
+            libdbus-1-3 \
+            libxcb-cursor0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev,ui]
+
+      - name: Run I1 baseline gate script
+        run: |
+          bash review/scripts/i1_ci_gate.sh review/runtime/i1/ci_gate
+
+      - name: Add I1 gate summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import csv
+          import io
+          import os
+          from pathlib import Path
+
+          results = Path("review/runtime/i1/ci_gate/results.tsv")
+          lines = [
+              "## I1 Baseline CI Gate",
+              f"- results_tsv: `{results}`",
+          ]
+          if not results.exists():
+              lines.append("- status: results.tsv missing")
+          else:
+              rows = []
+              text = results.read_text(encoding="utf-8").replace("\x00", "")
+              reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+              for row in reader:
+                  rows.append(row)
+              if rows and rows[0].get("id") == "id":
+                  rows = rows[1:]
+              failed = [row for row in rows if row.get("rc") not in {"0", 0}]
+              lines.append(f"- total_steps: {len(rows)}")
+              lines.append(f"- failed_steps: {len(failed)}")
+              if failed:
+                  lines.append("- failed_logs:")
+                  for row in failed[:8]:
+                      lines.append(
+                          f"  - {row.get('id')} {row.get('label')} "
+                          f"rc={row.get('rc')} log={row.get('log')}"
+                      )
+              else:
+                  lines.append("- status: pass")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload I1 gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i1-baseline-ci-gate
+          path: review/runtime/i1/ci_gate
+
+  strict_plan_gate:
+    name: Strict Plan Match Gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run strict plan pipeline gate
+        run: |
+          bash review/scripts/strict_plan_pipeline.sh \
+            examples/at06_time_deterministic.yaml \
+            review/runtime/i2/strict_plan_pipeline_ci
+
+      - name: Add strict plan gate summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import csv
+          import io
+          import os
+          from pathlib import Path
+
+          results = Path("review/runtime/i2/strict_plan_pipeline_ci/results.tsv")
+          lines = [
+              "## Strict Plan Match Gate",
+              f"- results_tsv: `{results}`",
+          ]
+          if not results.exists():
+              lines.append("- status: results.tsv missing")
+          else:
+              rows = []
+              text = results.read_text(encoding="utf-8").replace("\x00", "")
+              reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+              for row in reader:
+                  rows.append(row)
+              failed = [row for row in rows if row.get("rc") not in {"0", 0}]
+              lines.append(f"- total_steps: {len(rows)}")
+              lines.append(f"- failed_steps: {len(failed)}")
+              if failed:
+                  lines.append("- failed_logs:")
+                  for row in failed[:8]:
+                      lines.append(
+                          f"  - {row.get('id')} {row.get('label')} "
+                          f"rc={row.get('rc')} log={row.get('log')}"
+                      )
+              else:
+                  lines.append("- status: pass")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload strict plan gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strict-plan-gate
+          path: review/runtime/i2/strict_plan_pipeline_ci
+
+  doc_baseline_consistency_gate:
+    name: Docs Baseline Consistency Gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download quality inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: quality-inputs-ubuntu
+          path: artifacts/quality
+
+      - name: Generate quality snapshot
+        run: |
+          python scripts/quality_snapshot.py \
+            --output artifacts/quality/quality-snapshot.json \
+            --coverage-json artifacts/quality/coverage.json \
+            --pytest-output-file artifacts/quality/pytest-output.txt \
+            --reuse-existing-artifacts
+
+      - name: Run docs baseline consistency check
+        run: |
+          python scripts/check_doc_baseline_consistency.py \
+            --snapshot artifacts/quality/quality-snapshot.json \
+            --docs-root docs
+
+      - name: Run docs reference integrity check
+        run: |
+          python scripts/check_doc_reference_integrity.py --repo-root .
+
+  perf:
+    name: Perf Report (PR/Push, 100/300)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run performance baseline
+        run: |
+          python scripts/perf_baseline.py \
+            --tasks 100,300 \
+            --max-wall-ms 1500,4000 \
+            --threshold-version ci-soft-v2-pr \
+            --output artifacts/perf/perf-baseline.json
+
+      - name: Add perf summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path("artifacts/perf/perf-baseline.json")
+          if not path.exists():
+              print("Perf report missing")
+              raise SystemExit(0)
+          report = json.loads(path.read_text(encoding="utf-8"))
+          lines = ["## Perf Report (PR/Push soft gate)", f"- git_sha: {report.get('git_sha', 'unknown')}"]
+          for case in report.get("cases", []):
+              lines.append(
+                  f"- {case.get('case_name', case.get('task_count'))}: "
+                  f"wall_ms={case.get('wall_time_ms')} events={case.get('event_count')} "
+                  f"reason={case.get('pass_reason')}"
+              )
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-pr
+          path: artifacts/perf/perf-baseline.json
+
+  research_audit:
+    name: Research Audit (non-blocking)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Linux Qt runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libxkbcommon-x11-0 \
+            libdbus-1-3 \
+            libxcb-cursor0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev,ui]
+
+      - name: Run research counterexample suite
+        run: |
+          python scripts/research_case_suite.py \
+            --cases examples/research_counterexamples.json \
+            --out-json artifacts/research/research-case-summary.json \
+            --out-csv artifacts/research/research-case-summary.csv \
+            --audit-dir artifacts/research/case-audits
+
+      - name: Build research review artifacts
+        if: always()
+        run: |
+          python scripts/quality_snapshot.py \
+            --output artifacts/research/quality-snapshot.json \
+            --coverage-json artifacts/research/coverage.json \
+            --allow-fail
+          python -m rtos_sim.cli.main run \
+            -c examples/at02_resource_mutex.yaml \
+            --events-out artifacts/research/events.jsonl \
+            --metrics-out artifacts/research/metrics.json \
+            --audit-out artifacts/research/audit.json
+          python -m rtos_sim.cli.main inspect-model \
+            -c examples/at02_resource_mutex.yaml \
+            --out-json artifacts/research/model_relations.json
+          python scripts/research_report.py \
+            --audit artifacts/research/audit.json \
+            --relations artifacts/research/model_relations.json \
+            --quality artifacts/research/quality-snapshot.json \
+            --out-markdown artifacts/research/research-report.md \
+            --out-csv artifacts/research/research-summary.csv \
+            --out-json artifacts/research/research-report.json
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          configs = [
+              "examples/at01_single_dag_single_core.yaml",
+              "examples/at02_resource_mutex.yaml",
+              "examples/at06_time_deterministic.yaml",
+              "examples/at10_arrival_process.yaml",
+          ]
+          matrix_dir = Path("artifacts/research/matrix")
+          matrix_dir.mkdir(parents=True, exist_ok=True)
+          quality_path = Path("artifacts/research/quality-snapshot.json")
+
+          rows = []
+          for config in configs:
+              case_name = Path(config).stem
+              audit_path = matrix_dir / f"{case_name}.audit.json"
+              metrics_path = matrix_dir / f"{case_name}.metrics.json"
+              events_path = matrix_dir / f"{case_name}.events.jsonl"
+              relations_path = matrix_dir / f"{case_name}.model_relations.json"
+              report_md_path = matrix_dir / f"{case_name}.research-report.md"
+              report_csv_path = matrix_dir / f"{case_name}.research-summary.csv"
+              report_json_path = matrix_dir / f"{case_name}.research-report.json"
+
+              run_rc = subprocess.run(
+                  [
+                      "python",
+                      "-m",
+                      "rtos_sim.cli.main",
+                      "run",
+                      "-c",
+                      config,
+                      "--events-out",
+                      str(events_path),
+                      "--metrics-out",
+                      str(metrics_path),
+                      "--audit-out",
+                      str(audit_path),
+                  ],
+                  check=False,
+              ).returncode
+              inspect_rc = subprocess.run(
+                  [
+                      "python",
+                      "-m",
+                      "rtos_sim.cli.main",
+                      "inspect-model",
+                      "-c",
+                      config,
+                      "--out-json",
+                      str(relations_path),
+                  ],
+                  check=False,
+              ).returncode
+              report_rc = -1
+              if run_rc == 0 and inspect_rc == 0:
+                  report_rc = subprocess.run(
+                      [
+                          "python",
+                          "scripts/research_report.py",
+                          "--audit",
+                          str(audit_path),
+                          "--relations",
+                          str(relations_path),
+                          "--quality",
+                          str(quality_path),
+                          "--out-markdown",
+                          str(report_md_path),
+                          "--out-csv",
+                          str(report_csv_path),
+                          "--out-json",
+                          str(report_json_path),
+                      ],
+                      check=False,
+                  ).returncode
+
+              row = {
+                  "config": config,
+                  "case": case_name,
+                  "run_rc": run_rc,
+                  "inspect_rc": inspect_rc,
+                  "report_rc": report_rc,
+              }
+
+              if report_json_path.exists():
+                  payload = json.loads(report_json_path.read_text(encoding="utf-8"))
+                  statuses = payload.get("statuses", {})
+                  if not isinstance(statuses, dict):
+                      statuses = {}
+                  row.update(
+                      {
+                          "report_status": payload.get("status"),
+                          "research_v1": statuses.get("research_v1"),
+                          "engineering_v1": statuses.get("engineering_v1"),
+                          "model_relations": statuses.get("model_relations"),
+                          "audit": statuses.get("audit"),
+                          "quality": statuses.get("quality"),
+                          "failed_check_count": len(payload.get("failed_check_details", [])),
+                          "non_audit_fail_count": len(payload.get("non_audit_fail_details", [])),
+                      }
+                  )
+              rows.append(row)
+
+          passed = sum(1 for row in rows if row.get("report_status") == "pass")
+          status = "pass" if passed == len(rows) and all(
+              row.get("run_rc") == 0 and row.get("inspect_rc") == 0 and row.get("report_rc") == 0
+              for row in rows
+          ) else "fail"
+          summary = {
+              "status": status,
+              "total_cases": len(rows),
+              "passed_cases": passed,
+              "failed_cases": len(rows) - passed,
+              "cases": rows,
+          }
+          summary_path = matrix_dir / "matrix-summary.json"
+          summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(
+              "[INFO] research matrix summary "
+              f"status={summary['status']} passed={summary['passed_cases']}/{summary['total_cases']} "
+              f"path={summary_path}"
+          )
+          PY
+
+      - name: Add research summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_lines = ["## Research Audit (non-blocking)"]
+          case_path = Path("artifacts/research/research-case-summary.json")
+          report_path = Path("artifacts/research/research-report.json")
+          matrix_path = Path("artifacts/research/matrix/matrix-summary.json")
+
+          if case_path.exists():
+              case_summary = json.loads(case_path.read_text(encoding="utf-8"))
+              summary_lines.append(
+                  f"- counterexamples: {case_summary.get('matched_cases')}/{case_summary.get('total_cases')} matched"
+              )
+              summary_lines.append(f"- counterexample.status: {case_summary.get('status')}")
+          else:
+              summary_lines.append("- counterexamples: missing")
+
+          if report_path.exists():
+              report = json.loads(report_path.read_text(encoding="utf-8"))
+              statuses = report.get("statuses", {})
+              research_status = statuses.get("research_v1")
+              engineering_status = statuses.get("engineering_v1")
+              summary_lines.append(f"- report.status: {report.get('status')}")
+              summary_lines.append(f"- research_v1: {research_status}")
+              summary_lines.append(f"- engineering_v1: {engineering_status}")
+              failed = report.get("failed_check_details", [])
+              summary_lines.append(f"- failed_checks: {len(failed)}")
+              failed_rules = [
+                  str(item.get("rule"))
+                  for item in failed
+                  if isinstance(item, dict) and item.get("rule")
+              ]
+              if failed_rules:
+                  summary_lines.append(f"- failed_rules: {', '.join(failed_rules[:8])}")
+              if research_status != "pass":
+                  summary_lines.append(
+                      "- ❌ research_v1 is not pass (non-blocking job). Please investigate before merge."
+                  )
+              elif engineering_status != "pass":
+                  summary_lines.append(
+                      "- ⚠️ engineering_v1 is not pass (non-blocking job). Please investigate before merge."
+                  )
+          else:
+              summary_lines.append("- report: missing")
+
+          if matrix_path.exists():
+              matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+              summary_lines.append(
+                  f"- matrix.status: {matrix.get('status')} "
+                  f"({matrix.get('passed_cases')}/{matrix.get('total_cases')} pass)"
+              )
+              failed_cases = [
+                  item.get("case")
+                  for item in matrix.get("cases", [])
+                  if isinstance(item, dict) and item.get("report_status") != "pass"
+              ]
+              if failed_cases:
+                  summary_lines.append(f"- matrix.failed_cases: {', '.join(str(item) for item in failed_cases[:8])}")
+              if matrix.get("status") != "pass":
+                  summary_lines.append(
+                      "- ⚠️ multi-case research matrix is not pass (non-blocking job)."
+                  )
+          else:
+              summary_lines.append("- matrix: missing")
+
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload research audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-audit-report
+          path: |
+            artifacts/research/research-report.md
+            artifacts/research/research-report.json
+            artifacts/research/research-summary.csv
+
+      - name: Upload research audit summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-audit-summary
+          path: |
+            artifacts/research/research-case-summary.json
+            artifacts/research/research-case-summary.csv
+            artifacts/research/case-audits/
+            artifacts/research/audit.json
+            artifacts/research/model_relations.json
+            artifacts/research/quality-snapshot.json
+            artifacts/research/matrix/
+
+  perf_nightly:
+    name: Perf Nightly Trend (1000, non-blocking)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run nightly 1000-task performance baseline
+        run: |
+          python scripts/perf_baseline.py \
+            --tasks 1000 \
+            --max-wall-ms 2500 \
+            --threshold-version ci-nightly-v1 \
+            --output artifacts/perf/perf-nightly-1000.json
+
+      - name: Resolve previous nightly artifact
+        id: prev_nightly
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = (context.ref || "").replace("refs/heads/", "");
+            const workflowId = "ci.yml";
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: workflowId,
+              event: "schedule",
+              branch: branch || undefined,
+              per_page: 30,
+            });
+            const previous = runs.data.workflow_runs.find(
+              (run) => run.id !== context.runId && run.conclusion === "success"
+            );
+            if (!previous) {
+              core.info("No previous successful scheduled run found.");
+              return;
+            }
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner,
+              repo,
+              run_id: previous.id,
+              per_page: 100,
+            });
+            const artifact = artifacts.data.artifacts.find(
+              (item) => item.name === "perf-nightly-1000" && !item.expired
+            );
+            if (!artifact) {
+              core.info(`Run ${previous.id} has no perf-nightly-1000 artifact.`);
+              return;
+            }
+            core.setOutput("run_id", String(previous.id));
+            core.setOutput("download_url", artifact.archive_download_url);
+
+      - name: Download previous nightly artifact
+        if: steps.prev_nightly.outputs.download_url != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_URL: ${{ steps.prev_nightly.outputs.download_url }}
+        run: |
+          mkdir -p artifacts/perf/prev
+          curl -sSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${ARTIFACT_URL}" \
+            -o artifacts/perf/prev/previous-nightly.zip
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          zip_path = Path("artifacts/perf/prev/previous-nightly.zip")
+          out = Path("artifacts/perf/prev")
+          if not zip_path.exists():
+              raise SystemExit(0)
+          with zipfile.ZipFile(zip_path) as zf:
+              candidates = [
+                  name for name in zf.namelist()
+                  if Path(name).name == "perf-nightly-1000.json"
+              ]
+              if not candidates:
+                  print("No perf-nightly-1000.json found in previous artifact; skip baseline restore.")
+                  raise SystemExit(0)
+              (out / "perf-nightly-1000.base.json").write_bytes(zf.read(candidates[0]))
+          PY
+
+      - name: Build nightly delta summary
+        if: always()
+        run: |
+          python scripts/perf_delta.py \
+            --current artifacts/perf/perf-nightly-1000.json \
+            --base artifacts/perf/prev/perf-nightly-1000.base.json \
+            --task-count 1000 \
+            --highlight-pct 5 \
+            --current-run-id "${{ github.run_id }}" \
+            --base-run-id "${{ steps.prev_nightly.outputs.run_id }}" \
+            --out artifacts/perf/perf-delta-summary.json
+
+      - name: Add nightly perf summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path("artifacts/perf/perf-nightly-1000.json")
+          if not path.exists():
+              print("Nightly perf report missing")
+              raise SystemExit(0)
+          report = json.loads(path.read_text(encoding="utf-8"))
+          lines = ["## Perf Nightly (1000 tasks, non-blocking)", f"- git_sha: {report.get('git_sha', 'unknown')}"]
+          for case in report.get("cases", []):
+              lines.append(
+                  f"- {case.get('case_name', case.get('task_count'))}: "
+                  f"wall_ms={case.get('wall_time_ms')} events={case.get('event_count')} "
+                  f"reason={case.get('pass_reason')}"
+              )
+          delta_path = Path("artifacts/perf/perf-delta-summary.json")
+          if delta_path.exists():
+              delta = json.loads(delta_path.read_text(encoding="utf-8"))
+              lines.append(f"- delta.status: {delta.get('status')}")
+              lines.append(
+                  f"- delta.base_run_id: {delta.get('base_run_id') or 'none'}"
+              )
+              wall = delta.get("wall_time_ms", {})
+              lines.append(
+                  f"- delta.wall_ms: base={wall.get('base')} current={wall.get('current')} "
+                  f"delta={wall.get('delta')} pct={wall.get('delta_pct')}"
+              )
+              lines.append(f"- delta.highlight: {delta.get('highlight')}")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload nightly perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-nightly-1000
+          path: artifacts/perf/perf-nightly-1000.json
+
+      - name: Upload nightly delta summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-nightly-delta
+          path: artifacts/perf/perf-delta-summary.json

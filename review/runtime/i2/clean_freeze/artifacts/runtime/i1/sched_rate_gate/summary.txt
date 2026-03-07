@@ -1,0 +1,8 @@
+config_list=review/frozen/sched_rate/config-list.txt
+gate_metric=candidate_only_uplift
+target=0.3
+actual=1.75
+baseline_schedulable_rate=0.333333333
+candidate_only_schedulable_rate=0.916666667
+total_cases=12
+gate_pass=true

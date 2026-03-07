@@ -1,0 +1,17 @@
+{
+  "snapshot_id": "baseline-freeze-20260307-103952",
+  "generated_at_utc": "2026-03-07T10:39:52Z",
+  "head_commit": "4ae4daa823c9377474dcb49c68006d46105ae7a9",
+  "tag_name": "delivery-baseline-20260307-103952",
+  "tag_status": "created",
+  "freeze_kind": "clean_formal",
+  "formal_freeze": true,
+  "allow_dirty_freeze": false,
+  "changed_file_count": 0,
+  "dirty_workspace": false,
+  "paths": {
+    "change_list": "review/runtime/i2/clean_freeze/change_list",
+    "artifacts": "review/runtime/i2/clean_freeze/artifacts",
+    "reproduce_commands": "review/runtime/i2/clean_freeze/reproduce_commands.txt"
+  }
+}
