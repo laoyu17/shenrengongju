@@ -27,6 +27,17 @@ resolve_python_cmd() {
     exit 127
   fi
 
+  if [[ -n "${pythonLocation:-}" ]]; then
+    local candidate="${pythonLocation}/python"
+    if [[ -f "${candidate}.exe" ]]; then
+      candidate="${candidate}.exe"
+    fi
+    if [[ -f "$candidate" ]] && "$candidate" -c "import sys" >/dev/null 2>&1; then
+      PYTHON_CMD=("$candidate")
+      return 0
+    fi
+  fi
+
   if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
     PYTHON_CMD=(python3)
     return 0

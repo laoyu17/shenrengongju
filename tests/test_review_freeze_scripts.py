@@ -4,13 +4,18 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, env=env, check=False, capture_output=True, text=True)
+    run_env = dict(os.environ)
+    run_env.setdefault("PYTHON_BIN", sys.executable)
+    if env is not None:
+        run_env.update(env)
+    return subprocess.run(cmd, cwd=cwd, env=run_env, check=False, capture_output=True, text=True)
 
 
 def _setup_repo(tmp_path: Path) -> Path:
@@ -109,11 +114,17 @@ def test_i2_freeze_creates_clean_formal_snapshot_and_tag(tmp_path: Path) -> None
     assert _run(["git", "tag"], cwd=repo).stdout.strip()
 
 
-def test_i2_freeze_falls_back_to_py_launcher_when_python_alias_is_unusable(tmp_path: Path) -> None:
+def test_i2_freeze_resolves_alternate_python_when_python_alias_is_unusable(tmp_path: Path) -> None:
     repo = _setup_repo(tmp_path)
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
 
+    (fake_bin / "python3").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'Python3 was not found' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
     (fake_bin / "python").write_text(
         "#!/usr/bin/env bash\n"
         "echo 'Python was not found' >&2\n"
@@ -126,10 +137,13 @@ def test_i2_freeze_falls_back_to_py_launcher_when_python_alias_is_unusable(tmp_p
         f"exec {os.fsdecode(os.fsencode(os.sys.executable))!r} \"$@\"\n",
         encoding="utf-8",
     )
+    (fake_bin / "python3").chmod(0o755)
     (fake_bin / "python").chmod(0o755)
     (fake_bin / "py").chmod(0o755)
 
     env = dict(**os.environ)
+    env["PYTHON_BIN"] = ""
+    env["pythonLocation"] = ""
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
     result = _run(
