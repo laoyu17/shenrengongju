@@ -80,6 +80,15 @@ class _DummyWorker:
         self.running = False
 
 
+class _DummyScheduler:
+    name = "np_edf"
+
+
+@dataclass
+class _DummySpec:
+    scheduler: _DummyScheduler
+
+
 class _DummyEngine:
     def build(self, _spec: object) -> None:
         return None
@@ -89,10 +98,10 @@ class _Loader:
     def __init__(self) -> None:
         self.raise_exc: Exception | None = None
 
-    def load_data(self, payload: dict) -> dict:
+    def load_data(self, payload: dict) -> _DummySpec:
         if self.raise_exc is not None:
             raise self.raise_exc
-        return {"loaded": payload}
+        return _DummySpec(scheduler=_DummyScheduler())
 
 
 class _Owner:
@@ -109,6 +118,13 @@ class _Owner:
         self._worker: _DummyWorker | None = None
         self._metrics: list[str] = []
         self._latest_metrics_report: dict = {}
+        self._latest_run_payload: dict | None = None
+        self._latest_run_spec: object | None = None
+        self._latest_run_events: list[dict] | None = None
+        self._latest_audit_report: dict | None = {"stale": True}
+        self._latest_model_relations_report: dict | None = {"stale": True}
+        self._latest_research_report: dict | None = {"stale": True}
+        self._latest_quality_snapshot: dict | None = {"status": "pass"}
         self._reset_calls = 0
         self._event_batches: list[list[dict]] = []
 
@@ -150,6 +166,13 @@ def test_on_run_starts_worker_and_updates_controls(monkeypatch: pytest.MonkeyPat
     assert owner._resume_button.enabled is False
     assert owner._step_button.enabled is True
     assert owner._reset_calls == 1
+    assert owner._latest_run_payload == {"version": "0.2", "tasks": []}
+    assert owner._latest_run_spec is not None
+    assert owner._latest_run_events is None
+    assert owner._latest_audit_report is None
+    assert owner._latest_model_relations_report is None
+    assert owner._latest_research_report is None
+    assert owner._latest_quality_snapshot == {"status": "pass"}
 
 
 def test_on_run_invalid_config_sets_blocked_status(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -182,15 +205,59 @@ def test_on_step_pauses_worker_and_requests_delta() -> None:
     assert owner._resume_button.enabled is True
 
 
-def test_on_finished_appends_metrics_and_clears_worker() -> None:
+def test_on_finished_appends_metrics_caches_events_and_clears_worker() -> None:
     owner = _Owner()
     controller = RunController(owner, lambda *_args, **_kwargs: None)
     owner._worker = _DummyWorker("config")
 
-    controller.on_finished({"jobs_completed": 1}, tail_events=[{"event_id": "e1"}])
+    controller.on_event_batch([{"event_id": "e1"}])
+    controller.on_finished(
+        {"jobs_completed": 2},
+        all_events=[{"event_id": "e1"}, {"event_id": "e2"}],
+    )
 
-    assert owner._latest_metrics_report["jobs_completed"] == 1
+    assert owner._latest_metrics_report["jobs_completed"] == 2
+    assert owner._latest_run_events == [{"event_id": "e1"}, {"event_id": "e2"}]
     assert any(line.startswith("\n=== Metrics ===") for line in owner._metrics)
     assert owner._status_label.text == "Completed"
     assert owner._worker is None
-    assert owner._event_batches == [[{"event_id": "e1"}]]
+    assert owner._event_batches == [[{"event_id": "e1"}], [{"event_id": "e2"}]]
+
+
+def test_on_reset_and_failed_clear_research_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = _Owner()
+    controller = RunController(owner, lambda *_args, **_kwargs: None)
+    owner._worker = _DummyWorker("config")
+    owner._worker.running = True
+    monkeypatch.setattr(
+        "rtos_sim.ui.controllers.run_controller.QMessageBox.critical",
+        lambda *_args: None,
+    )
+
+    controller.on_reset()
+
+    assert owner._latest_run_payload is None
+    assert owner._latest_run_spec is None
+    assert owner._latest_run_events is None
+    assert owner._latest_audit_report is None
+    assert owner._latest_model_relations_report is None
+    assert owner._latest_research_report is None
+    assert owner._latest_quality_snapshot == {"status": "pass"}
+    assert owner._status_label.text == "Reset"
+
+    owner._latest_run_payload = {"version": "0.2"}
+    owner._latest_run_spec = _DummySpec(scheduler=_DummyScheduler())
+    owner._latest_run_events = [{"event_id": "e2"}]
+    owner._latest_audit_report = {"status": "pass"}
+    owner._latest_model_relations_report = {"status": "pass"}
+    owner._latest_research_report = {"status": "pass"}
+
+    controller.on_failed("boom")
+
+    assert owner._latest_run_payload is None
+    assert owner._latest_run_spec is None
+    assert owner._latest_run_events is None
+    assert owner._latest_audit_report is None
+    assert owner._latest_model_relations_report is None
+    assert owner._latest_research_report is None
+    assert owner._status_label.text == "Failed"

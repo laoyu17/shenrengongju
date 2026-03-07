@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from rtos_sim.api import analyze_wcrt as analyze_wcrt_api, plan_static as plan_static_api
+from rtos_sim.model import ModelSpec
 from rtos_sim.planning import (
     PlanningProblem,
     PlanningSegment,
@@ -275,3 +277,54 @@ def test_wcrt_uses_execution_cost_of_scheduled_core() -> None:
 
     assert report.feasible
     assert report.items[0].wcrt == pytest.approx(2.0)
+
+
+def test_api_wcrt_metadata_includes_arrival_assumption_trace() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "p",
+                    "name": "poisson",
+                    "task_type": "dynamic_rt",
+                    "deadline": 10.0,
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "poisson",
+                        "params": {"rate": 2.0},
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 31},
+            "planning": {
+                "enabled": True,
+                "params": {
+                    "arrival_analysis_mode": "conservative_envelope",
+                    "arrival_envelope_min_intervals": {"p": 0.25},
+                },
+            },
+        }
+    )
+
+    plan = plan_static_api(spec, task_scope="sync_and_dynamic_rt")
+    report = analyze_wcrt_api(spec, plan.schedule_table, task_scope="sync_and_dynamic_rt")
+
+    trace = report.metadata["arrival_assumption_trace"]
+    assert trace["arrival_analysis_mode"] == "conservative_envelope"
+    task_trace = trace["tasks"][0]
+    assert task_trace["generator"] == "poisson"
+    assert task_trace["seed_source"] == "not_used(conservative_envelope)"
+    assert task_trace["resolved_min_interval"] == pytest.approx(0.25)
+    assert task_trace["envelope_source"] == "planning.params.arrival_envelope_min_intervals.p"
+    assert report.metadata["planning_context"]["arrival_analysis_mode"] == "conservative_envelope"

@@ -1,8 +1,8 @@
 # 研究口径执行 Issue 拆解与排期（S7）
 
 ## 0. 文档控制
-- 版本：v0.4
-- 日期：2026-02-23
+- 版本：v0.6
+- 日期：2026-03-07
 - 适用范围：`project/` 当前主干实现
 - 输入基线：`docs/11-实施现状问题与Sprint规划.md`、`docs/14-docx需求追踪矩阵.md`、`docs/15-研究闭环验收基线.md`
 - 非目标：**性能优化**（按当前评审口径不纳入达标条件）
@@ -15,18 +15,19 @@
 ### 1.2 完成定义（DoD）
 以下条件全部满足即视为 S7 完成：
 1. 研究反例集（PIP/PCP/混合到达）可一键运行并产出审计证据。
-2. `research_v1` 的失败样例与修复样例均有自动化测试覆盖。
-3. 审计报告可自动生成“评审可读”模板（Markdown/CSV），无需手工拼接。
+2. `research_v1` 的失败样例与修复样例均有自动化测试覆盖，`research_v2` 额外证明资产具备机读断言。
+3. 审计报告可自动生成“评审可读”模板（Markdown/CSV/JSON），并可被 UI 导出入口直接复用。
 4. CI 新增研究口径非阻断任务，稳定输出趋势报告。
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
 ## 2. 当前基线快照（2026-03-05）
-- 代码快照：`git_sha=472319138a4e578579d646f5aef2f116a236d8c2`
-- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `404 passed`）。
-- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.05%`，`line_rate=89.04797521102682`）。
-- 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`
-- 主要差距：证明资产“可判定”已具备，但“反例深度 + 报告模板化 + CI 稳定化”尚未形成闭环产线。
-- 门禁升级建议：维持 `research_audit` 非阻断；当连续 7 天 `research_v1=pass` 且 `unexpected_actual_checks=0` 后，再评估升级为阻断。
+- 证据基线：`evidence_git_sha=01ae133080cb9dc405545fc61654c6acd26410c7`
+- 工作区基线：`workspace_git_sha=01ae133080cb9dc405545fc61654c6acd26410c7`
+- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `421 passed`）。
+- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.29%`，`line_rate=89.29225137278829`）。
+- 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`（兼容） + `compliance_profiles.profiles.research_v2.status`（当前主口径）
+- 当前结论：证明资产、报告模板化、CI 稳定化与 UI 研究报告出口已形成最小闭环；剩余差距集中在 Compare 的 N-way 场景装载 UI 与 DAG 多选/批量编辑。
+- 门禁升级建议：维持 `research_audit` 非阻断；当连续 7 天 `research_v2=pass` 且 `unexpected_actual_checks=0` 后，再评估升级为阻断。
 
 ## 3. Issue Backlog（按优先级）
 
@@ -34,7 +35,7 @@
 |---|---|---|---|---:|---|
 | R-001 | P0 | 建立研究反例基准集 | 新增反例配置与对应回归测试 | 2.0 人天 | 无 |
 | R-002 | P0 | 强化协议证明资产深度 | `protocol_proof_assets` 扩展字段 + 规则解释 | 2.5 人天 | R-001 |
-| R-003 | P1 | 输出模板化研究报告 | 新增报告脚本 + Markdown 模板 + CSV 摘要 | 2.0 人天 | R-002 |
+| R-003 | P1 | 输出模板化研究报告 | 新增报告脚本 + Markdown/CSV/JSON 摘要 + UI 复用出口 | 2.0 人天 | R-002 |
 | R-004 | P1 | 接入 CI 研究画像非阻断任务 | workflow job + artifacts + step summary | 1.5 人天 | R-003 |
 | R-005 | P1 | 收紧模型关系研究判定规则 | `inspect-model` 新增研究向 checks | 2.0 人天 | R-001 |
 | R-006 | P2 | 文档与追踪矩阵收敛 | `11/14/15/16` 同步 + 发布前复核清单 | 1.0 人天 | R-002,R-003,R-005 |
@@ -118,7 +119,7 @@
 **交付项**：
 1. 新增 `research_audit` job（非阻断，`continue-on-error: true`）。
 2. 固定产物：`research-audit-report`、`research-audit-summary`。
-3. Step Summary 显示：`research_v1.status`、`failed_checks`、关键样例计数。
+3. Step Summary 显示：`research_v1.status`、`research_v2.status`、`failed_checks`、关键样例计数。
 
 **验收命令**：
 - GitHub Actions 手动触发 `workflow_dispatch` 并检查 artifact。
@@ -169,7 +170,7 @@
 ### Sprint S7-1（建议 1 周）
 - 必做：R-001、R-002
 - 目标：先把研究闭环“证据深度”做扎实
-- 出口标准：研究反例集稳定，`research_v1` 失败链路可解释
+- 出口标准：研究反例集稳定，`research_v2` 失败链路可解释，且 `research_v1` 保持兼容通过。
 
 ### Sprint S7-2（建议 1 周）
 - 必做：R-003、R-004、R-005、R-006
@@ -189,26 +190,35 @@
   - 变更文件清单
   - 验证命令与输出摘要
   - 风险与回滚说明
-  - 对 `research_v1` 的影响说明（新增/收紧/无影响）
+  - 对 `research_v1/research_v2` 的影响说明（新增/收紧/无影响）
 
 ## 8. 执行状态（2026-02-23）
 
 | Issue | 状态 | 完成证据 |
 |---|---|---|
 | R-001 | ✅ 已完成 | `examples/research_counterexamples.json`、`scripts/research_case_suite.py`、`tests/test_research_case_suite.py` |
-| R-002 | ✅ 已完成 | `rtos_sim/analysis/audit.py`、`tests/test_audit.py`（`rule_version=0.4`、`check_catalog@0.2`、证明资产增强） |
-| R-003 | ✅ 已完成 | `rtos_sim/analysis/research_report.py`、`scripts/research_report.py`、`tests/test_research_report.py` |
+| R-002 | ✅ 已完成 | `rtos_sim/analysis/audit.py`、`tests/test_audit.py`（`rule_version=0.4`、`check_catalog@0.2`、`research_v2`、证明资产增强） |
+| R-003 | ✅ 已完成 | `rtos_sim/analysis/research_report.py`、`scripts/research_report.py`、`rtos_sim/ui/controllers/research_report_controller.py`、`tests/test_research_report.py`、`tests/ui/test_research_report_controller.py` |
 | R-004 | ✅ 已完成 | `.github/workflows/ci.yml`（`research_audit` job + artifacts） |
 | R-005 | ✅ 已完成 | `rtos_sim/analysis/model_relations.py`、`tests/test_model_relations.py`（研究向 checks + profiles） |
-| R-006 | ✅ 已完成 | `README.md`、`docs/11`、`docs/14`、`docs/15`、`docs/16` 同步 |
+| R-006 | ✅ 已完成 | `README.md`、`docs/11`、`docs/14`、`docs/15`、`docs/16`，并扩展同步至 `docs/18/19/22/25/26` 与 `review/02/06` |
 
 ## 9. 稳健性补强记录（2026-02-23）
 
 - R-001 补强：`scripts/research_case_suite.py` 的匹配规则改为严格一致（新增 `unexpected_actual_checks`）；回归：`tests/test_research_case_suite.py`。
 - R-003 补强：`rtos_sim/analysis/research_report.py` 对同规则多 issue 做聚合统计，新增 `issue_count` 并修正 `sample_count/sample_event_ids` 聚合口径；回归：`tests/test_research_report.py`。
-- R-004 补强：`research_audit` CI Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与 `failed_rules` 摘要，确保非阻断策略下风险可见：`.github/workflows/ci.yml`。
+- R-004 补强：`research_audit` CI Step Summary 增加 `research_v1`/`research_v2`/`engineering_v1` 显式告警与 `failed_rules` 摘要，确保非阻断策略下风险可见：`.github/workflows/ci.yml`。
 - R-003 补强（第二轮）：`research_report` 新增 `non_audit_fail_details`，覆盖 `model_relations/quality` 非审计失败解释；回归：`tests/test_research_report.py`。
 - R-004 补强（第二轮）：`research_audit` 新增多样例矩阵（`at01/at02/at06/at10`）与 `matrix-summary.json`，Step Summary 增加 matrix 状态与失败样例提示：`.github/workflows/ci.yml`。
 - R-005 补强：`model_relations` profile 状态升级为 `pass/warn/fail`，并输出 `failed_warn_checks/failed_error_checks`；回归：`tests/test_model_relations.py`。
 - R-006 补强：CLI 新增 `inspect-model --strict-on-fail`，支持关系语义严格门禁；回归：`tests/test_cli.py`，文档同步：`README.md`、`docs/11`、`docs/15`。
 - R-002 补强（第三轮）：新增 `time_deterministic_ready_consistency` 与 `time_deterministic_proof_assets`，补齐 M-09 超周期相位稳定性机读证据；回归：`tests/test_audit.py`。
+- R-002 补强（第四轮）：新增 `research_v2` 与 `protocol_proof_asset_completeness`，统一 `rule_version/chain_depth_stats/unclosed_category_counts/sample_event_refs/failure_samples` 的研究证明资产口径；回归：`tests/test_audit.py`、`tests/analysis/test_audit_protocol_checks.py`。
+
+
+
+### Phase K（Phase 4 最终口径收敛）已完成（2026-03-07）
+- Compare 已完成“报告结构与导出层 N-way-ready”收口：JSON 新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`，并支持 `JSON / CSV / Markdown` 导出。
+- UI 已新增 `Export Research Report`，直接复用 `build_model_relations_report`、`build_audit_report`、`build_research_report_payload` 与 `render_research_report_markdown`，输出 `.md + .json + -summary.csv`。
+- 文档口径已扩展同步到 `docs/18/19/22/25/26` 与 `review/02/06`，保证 30% 门禁、Compare 边界、Research Report 复用链、DAG backlog 四项表述一致。
+- 当前未完成边界继续保留：Compare UI 仍是 left/right 双路装载与构建；DAG 多选 / 批量移动 / 批量删除不纳入本轮完成项。

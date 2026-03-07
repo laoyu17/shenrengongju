@@ -725,6 +725,11 @@ def test_cli_plan_static_supports_arrival_analysis_mode_override(tmp_path: Path)
     assert payload["planning_context"]["arrival_envelope_min_intervals"] == {"t_poisson": 0.25}
     assert payload["coverage_summary"]["arrival_analysis_mode"] == "conservative_envelope"
     assert payload["coverage_summary"]["expanded_release_count"] >= 7
+    assert payload["arrival_assumption_trace"]["arrival_analysis_mode"] == "conservative_envelope"
+    task_trace = next(item for item in payload["arrival_assumption_trace"]["tasks"] if item["task_id"] == "t_poisson")
+    assert task_trace["generator"] == "poisson"
+    assert task_trace["resolved_min_interval"] == pytest.approx(0.25)
+    assert task_trace["envelope_source"] == "planning.params.arrival_envelope_min_intervals.t_poisson"
 
 
 def test_cli_analyze_wcrt_strict_plan_match_uses_arrival_context_from_plan_json(tmp_path: Path) -> None:
@@ -764,6 +769,10 @@ def test_cli_analyze_wcrt_strict_plan_match_uses_arrival_context_from_plan_json(
     assert code == 0
     payload = json.loads(report_json.read_text(encoding="utf-8"))
     assert payload["metadata"]["planning_context"]["task_scope"] == "sync_and_dynamic_rt"
+    trace = payload["metadata"]["arrival_assumption_trace"]
+    assert trace["arrival_analysis_mode"] == "conservative_envelope"
+    task_trace = next(item for item in trace["tasks"] if item["task_id"] == "t_poisson")
+    assert task_trace["resolved_min_interval"] == pytest.approx(0.25)
 
 
 def test_cli_benchmark_sched_rate_supports_arrival_analysis_overrides(tmp_path: Path) -> None:
@@ -789,3 +798,8 @@ def test_cli_benchmark_sched_rate_supports_arrival_analysis_overrides(tmp_path: 
     payload = json.loads(report_json.read_text(encoding="utf-8"))
     assert payload["arrival_analysis_mode"] == "conservative_envelope"
     assert payload["arrival_envelope_min_intervals"] == {"t_poisson": 0.25}
+    assert payload["arrival_assumption_trace"]["detail_field"] == "cases[*].arrival_assumption_trace"
+    case_trace = payload["cases"][0]["arrival_assumption_trace"]
+    assert case_trace["arrival_analysis_mode"] == "conservative_envelope"
+    task_trace = next(item for item in case_trace["tasks"] if item["task_id"] == "t_poisson")
+    assert task_trace["resolved_min_interval"] == pytest.approx(0.25)

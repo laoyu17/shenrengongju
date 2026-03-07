@@ -17,6 +17,8 @@ def _safe_dict(value: Any) -> dict[str, Any]:
 def _profile_status(audit_report: dict[str, Any], profile_name: str) -> dict[str, Any]:
     profiles = _safe_dict(_safe_dict(audit_report.get("compliance_profiles")).get("profiles"))
     profile = _safe_dict(profiles.get(profile_name))
+    if not profile and profile_name == "research_v2":
+        profile = _safe_dict(profiles.get("research_v1"))
     return {
         "status": str(profile.get("status") or "unknown"),
         "failed_checks": sorted(
@@ -178,6 +180,7 @@ def build_research_report_payload(
 
     engineering_profile = _profile_status(audit, "engineering_v1")
     research_profile = _profile_status(audit, "research_v1")
+    research_v2_profile = _profile_status(audit, "research_v2")
 
     audit_status = str(audit.get("status") or "unknown") if audit else "missing"
     model_status = str(relations.get("status") or "unknown") if relations else "missing"
@@ -194,6 +197,8 @@ def build_research_report_payload(
     overall_status = "incomplete"
     if not warnings:
         if (
+            research_v2_profile["status"] == "pass"
+            and
             research_profile["status"] == "pass"
             and engineering_profile["status"] == "pass"
             and model_status == "pass"
@@ -203,7 +208,13 @@ def build_research_report_payload(
         else:
             overall_status = "fail"
 
-    failed_checks = sorted(set(research_profile["failed_checks"] + engineering_profile["failed_checks"]))
+    failed_checks = sorted(
+        set(
+            research_v2_profile["failed_checks"]
+            + research_profile["failed_checks"]
+            + engineering_profile["failed_checks"]
+        )
+    )
     failed_check_details = _failed_check_details(audit, failed_checks)
     non_audit_fail_details = _non_audit_fail_details(
         audit_report=audit,
@@ -218,6 +229,10 @@ def build_research_report_payload(
     quality_pytest = _safe_dict(quality.get("pytest"))
     quality_coverage = _safe_dict(quality.get("coverage"))
     proof_assets = _safe_dict(audit.get("protocol_proof_assets"))
+    chain_depth_stats = _safe_dict(proof_assets.get("chain_depth_stats"))
+    sample_event_refs = _safe_dict(proof_assets.get("sample_event_refs"))
+    failure_samples = _safe_dict(proof_assets.get("failure_samples"))
+    unclosed_category_counts = _safe_dict(proof_assets.get("unclosed_category_counts"))
 
     return {
         "report_version": "0.1",
@@ -230,10 +245,12 @@ def build_research_report_payload(
             "quality": quality_status,
             "engineering_v1": engineering_profile["status"],
             "research_v1": research_profile["status"],
+            "research_v2": research_v2_profile["status"],
         },
         "profiles": {
             "engineering_v1": engineering_profile,
             "research_v1": research_profile,
+            "research_v2": research_v2_profile,
         },
         "failed_check_details": failed_check_details,
         "non_audit_fail_details": non_audit_fail_details,
@@ -252,6 +269,12 @@ def build_research_report_payload(
             "pcp_ceiling_resolution_count": proof_assets.get("pcp_ceiling_resolution_count"),
             "pcp_ceiling_unresolved_count": proof_assets.get("pcp_ceiling_unresolved_count"),
             "pcp_ceiling_unresolved_ratio": proof_assets.get("pcp_ceiling_unresolved_ratio"),
+            "rule_version": proof_assets.get("rule_version"),
+            "chain_depth_max": chain_depth_stats.get("max_depth"),
+            "chain_depth_bucket_count": len(_safe_dict(chain_depth_stats.get("by_depth"))),
+            "unclosed_category_bucket_count": len(unclosed_category_counts),
+            "sample_event_ref_count": sum(len(value) for value in sample_event_refs.values() if isinstance(value, list)),
+            "failure_sample_count": sum(len(value) for value in failure_samples.values() if isinstance(value, list)),
         },
     }
 
@@ -332,7 +355,7 @@ def render_research_report_markdown(report: dict[str, Any]) -> str:
     lines.append("## 状态总览")
     lines.append("| 维度 | 状态 |")
     lines.append("|---|---|")
-    for name in ["engineering_v1", "research_v1", "audit", "model_relations", "quality"]:
+    for name in ["engineering_v1", "research_v1", "research_v2", "audit", "model_relations", "quality"]:
         lines.append(f"| {name} | {statuses.get(name, 'unknown')} |")
 
     lines.append("")

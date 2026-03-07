@@ -4,6 +4,7 @@ from rtos_sim.analysis.audit_checks.protocol_checks import (
     build_protocol_proof_assets,
     evaluate_pcp_ceiling_transition_consistency,
     evaluate_pcp_priority_domain_alignment,
+    evaluate_protocol_proof_asset_completeness,
     evaluate_pip_owner_hold_consistency,
 )
 
@@ -33,9 +34,29 @@ def test_protocol_proof_assets_track_preempt_abort_resolution() -> None:
     )
 
     assert assets["proof_asset_version"] == "0.2"
+    assert assets["rule_version"] == "0.4"
     assert assets["pcp_ceiling_block_count"] == 1
     assert assets["pcp_ceiling_resolution_count"] == 1
     assert assets["pcp_ceiling_resolution_reason_counts"]["preempt_abort"] == 1
+    assert assets["chain_depth_stats"]["max_depth"] == 0
+    assert assets["sample_event_refs"]["pcp_ceiling_blocks"] == ["b1"]
+
+
+def test_protocol_proof_asset_completeness_detects_missing_failure_refs() -> None:
+    outcome = evaluate_protocol_proof_asset_completeness(
+        {
+            "chain_depth_stats": {"max_depth": 1, "by_depth": {"1": 1}},
+            "unclosed_category_counts": {},
+            "sample_event_refs": {"pip_owner_mismatch": []},
+            "failure_samples": {"pip_owner_mismatch": []},
+            "rule_version": "0.4",
+            "pip_owner_mismatch_count": 1,
+            "pcp_ceiling_unresolved_count": 0,
+        }
+    )
+
+    assert outcome["passed"] is False
+    assert outcome["issues"][0]["rule"] == "protocol_proof_asset_completeness"
 
 
 def test_pcp_priority_domain_alignment_fails_for_non_absolute_deadline() -> None:

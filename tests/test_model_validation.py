@@ -271,6 +271,37 @@ def test_arrival_process_custom_allows_generator_and_scalar_params() -> None:
     assert process.params["generator"] == "constant_interval"
 
 
+def test_arrival_process_custom_periodic_jitter_accepts_scalar_params() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["arrival_process"] = {
+        "type": "custom",
+        "params": {"generator": "periodic_jitter", "period": 1.0, "jitter": 0.2, "label": "research"},
+    }
+    spec = ConfigLoader().load_data(payload)
+    process = spec.tasks[0].arrival_process
+    assert process is not None
+    assert process.params["generator"] == "periodic_jitter"
+    assert process.params["jitter"] == 0.2
+
+
+def test_arrival_process_custom_burst_sequence_accepts_string_pattern() -> None:
+    payload = _base_payload()
+    payload["tasks"][0]["arrival_process"] = {
+        "type": "custom",
+        "params": {
+            "generator": "burst_sequence",
+            "burst_intervals": "0.3,0.3",
+            "recovery_interval": 1.5,
+            "repeat": True,
+        },
+    }
+    spec = ConfigLoader().load_data(payload)
+    process = spec.tasks[0].arrival_process
+    assert process is not None
+    assert process.params["generator"] == "burst_sequence"
+    assert process.params["burst_intervals"] == "0.3,0.3"
+
+
 def test_arrival_process_custom_rejects_nested_params() -> None:
     payload = _base_payload()
     payload["tasks"][0]["arrival_process"] = {

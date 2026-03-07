@@ -44,7 +44,7 @@
 - `archive/2026-02/22-全量深审执行报告-2026-02-24.md`
 
 ## 3. 事实源与更新规则
-- 主线文档涉及测试数、覆盖率、`git_sha` 时，统一以 `artifacts/quality/quality-snapshot.json` 为事实源。
+- 主线文档涉及测试数、覆盖率、`evidence_git_sha/workspace_git_sha` 时，统一以 `artifacts/quality/quality-snapshot.json` 与当前 `git rev-parse HEAD` 为事实源。
 - 历史阶段数字仅保留在归档文档，避免主线文档口径混杂。
 - 文档中的代码引用优先使用稳定锚点（文件路径 + 函数/模块名）；对于频繁变动文件，避免依赖高风险行号。
 

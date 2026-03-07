@@ -392,6 +392,7 @@ def test_audit_includes_rule_version_and_evidence() -> None:
     assert report["rule_version"] == "0.4"
     assert report["check_catalog"]["catalog_version"] == "0.2"
     assert "resource_release_balance" in report["check_catalog"]["checks"]
+    assert "protocol_proof_asset_completeness" in report["check_catalog"]["checks"]
     assert report["evidence"]["scheduler_name"] == "edf"
     assert report["evidence"]["event_count"] == 0
     assert report["evidence"]["checks_evaluated"] >= 1
@@ -442,6 +443,7 @@ def test_audit_protocol_proof_assets_include_pip_and_pcp_traces() -> None:
 
     assets = report["protocol_proof_assets"]
     assert assets["proof_asset_version"] == "0.2"
+    assert assets["rule_version"] == "0.4"
     assert assets["pip_wait_edge_count"] == 1
     assert assets["pip_wait_chain_max_depth"] == 1
     assert assets["pip_wait_owner_coverage"] == 1.0
@@ -450,7 +452,11 @@ def test_audit_protocol_proof_assets_include_pip_and_pcp_traces() -> None:
     assert assets["pcp_ceiling_resolution_reason_counts"]["segment_unblocked"] == 1
     assert assets["pcp_ceiling_unresolved_count"] == 0
     assert assets["pcp_ceiling_unresolved_ratio"] == 0.0
+    assert assets["chain_depth_stats"]["max_depth"] == 1
+    assert assets["sample_event_refs"]["pip_wait_edges"] == ["e2"]
+    assert assets["failure_samples"]["pip_owner_mismatch"] == []
     assert report["checks"]["pip_owner_hold_consistency"]["passed"] is True
+    assert report["checks"]["protocol_proof_asset_completeness"]["passed"] is True
 
 
 def test_audit_detects_pip_owner_hold_mismatch() -> None:
@@ -488,6 +494,7 @@ def test_audit_includes_compliance_profiles() -> None:
     assert profiles["default_profile"] == "research_v1"
     assert profiles["profiles"]["engineering_v1"]["status"] == "pass"
     assert profiles["profiles"]["research_v1"]["status"] == "pass"
+    assert profiles["profiles"]["research_v2"]["status"] == "pass"
 
 
 def test_audit_compliance_profile_tracks_check_failures() -> None:
@@ -506,10 +513,13 @@ def test_audit_compliance_profile_tracks_check_failures() -> None:
 
     report = build_audit_report(events, scheduler_name="edf")
     research_profile = report["compliance_profiles"]["profiles"]["research_v1"]
+    research_v2_profile = report["compliance_profiles"]["profiles"]["research_v2"]
     engineering_profile = report["compliance_profiles"]["profiles"]["engineering_v1"]
 
     assert research_profile["status"] == "fail"
     assert "pip_priority_chain_consistency" in research_profile["failed_checks"]
+    assert research_v2_profile["status"] == "fail"
+    assert "pip_priority_chain_consistency" in research_v2_profile["failed_checks"]
     assert engineering_profile["status"] == "pass"
 
 

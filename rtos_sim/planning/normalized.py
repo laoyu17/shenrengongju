@@ -10,6 +10,7 @@ from random import Random
 from typing import Any
 
 from rtos_sim.arrival import create_arrival_generator
+from rtos_sim.arrival.builtins import generator_uses_rng, resolve_generator_min_interval
 from rtos_sim.etm import create_etm
 from rtos_sim.model import (
     ArrivalProcessType,
@@ -117,14 +118,9 @@ def _conservative_interval(
         )
     if process_type == "custom":
         generator_name = str(params.get("generator") or "").strip().lower()
-        if generator_name == "constant_interval":
-            return _resolve_positive_interval(params.get("interval"))
-        if generator_name == "uniform_interval":
-            return _resolve_positive_interval(params.get("min_interval"))
-        if generator_name == "sequence":
-            generator = ctx.generators.setdefault(generator_name, create_arrival_generator(generator_name))
-            values = generator._parse_sequence(params.get("sequence"))  # type: ignore[attr-defined]
-            return min(values)
+        resolved_interval, _ = resolve_generator_min_interval(generator_name, params)
+        if resolved_interval is not None:
+            return resolved_interval
         if override is not None:
             return override
         raise ValueError(
@@ -162,6 +158,148 @@ def _resolve_positive_interval(value: Any, *, fallback: float | None = None) -> 
     if interval <= 0:
         raise ValueError("computed dynamic release interval must be > 0")
     return interval
+
+def _arrival_generator_name(task: TaskGraphSpec) -> str:
+    if task.task_type == TaskType.TIME_DETERMINISTIC:
+        return "time_deterministic"
+    process = task.arrival_process
+    if process is not None:
+        if process.type == ArrivalProcessType.CUSTOM:
+            raw = process.params.get("generator")
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip().lower()
+            return "custom"
+        return process.type.value
+    if task.task_type == TaskType.DYNAMIC_RT:
+        if task.arrival_model is not None:
+            return task.arrival_model.value
+        return "uniform_interval" if task.max_inter_arrival is not None else "fixed_interval"
+    return "legacy_arrival"
+
+
+def _arrival_trace_seed_source(task: TaskGraphSpec, *, arrival_analysis_mode: str) -> str:
+    if task.task_type == TaskType.TIME_DETERMINISTIC:
+        return "not_applicable"
+    if arrival_analysis_mode != "sample_path":
+        return "not_used(conservative_envelope)"
+    process = task.arrival_process
+    if process is not None:
+        if process.type in {ArrivalProcessType.UNIFORM, ArrivalProcessType.POISSON}:
+            return "sim.seed"
+        if process.type == ArrivalProcessType.CUSTOM:
+            return "sim.seed" if generator_uses_rng(_arrival_generator_name(task)) else "not_required"
+        return "not_required"
+    if task.task_type == TaskType.DYNAMIC_RT:
+        return "sim.seed" if _arrival_generator_name(task) == "uniform_interval" else "not_required"
+    return "not_applicable"
+
+
+def _arrival_min_interval_and_source(
+    task: TaskGraphSpec,
+    *,
+    arrival_analysis_mode: str,
+    conservative_min_intervals: dict[str, float],
+) -> tuple[float | None, str]:
+    override = conservative_min_intervals.get(task.id)
+    if task.task_type == TaskType.TIME_DETERMINISTIC:
+        return (
+            float(task.period) if task.period is not None else None,
+            "task.period" if task.period is not None else "not_available",
+        )
+
+    process = task.arrival_process
+    if process is not None:
+        params = dict(process.params)
+        if process.type == ArrivalProcessType.ONE_SHOT:
+            return None, "one_shot"
+        if process.type == ArrivalProcessType.FIXED:
+            if params.get("interval") is not None:
+                return _resolve_positive_interval(params.get("interval")), "arrival_process.params.interval"
+            source = "task.min_inter_arrival" if task.min_inter_arrival is not None else "task.period"
+            return _resolve_positive_interval(task.min_inter_arrival, fallback=task.period), source
+        if process.type == ArrivalProcessType.UNIFORM:
+            if params.get("min_interval") is not None:
+                return _resolve_positive_interval(params.get("min_interval")), "arrival_process.params.min_interval"
+            source = "task.min_inter_arrival" if task.min_inter_arrival is not None else "task.period"
+            return _resolve_positive_interval(task.min_inter_arrival, fallback=task.period), source
+        if process.type == ArrivalProcessType.POISSON:
+            if arrival_analysis_mode == "conservative_envelope" and override is not None:
+                return float(override), f"planning.params.arrival_envelope_min_intervals.{task.id}"
+            return None, (
+                "planning.params.arrival_envelope_min_intervals.available_not_used"
+                if override is not None
+                else "not_available_in_sample_path"
+            )
+        if process.type == ArrivalProcessType.CUSTOM:
+            generator_name = _arrival_generator_name(task)
+            builtin_interval, builtin_source = resolve_generator_min_interval(generator_name, params)
+            if builtin_interval is not None and builtin_source is not None:
+                return builtin_interval, builtin_source
+            if arrival_analysis_mode == "conservative_envelope" and override is not None:
+                return float(override), f"planning.params.arrival_envelope_min_intervals.{task.id}"
+            return None, (
+                "planning.params.arrival_envelope_min_intervals.available_not_used"
+                if override is not None
+                else f"custom_generator:{generator_name}(no_builtin_lower_bound)"
+            )
+
+    if task.task_type == TaskType.DYNAMIC_RT:
+        arrival_model = _arrival_generator_name(task)
+        if arrival_model in {"fixed_interval", "uniform_interval"}:
+            source = "task.min_inter_arrival" if task.min_inter_arrival is not None else "task.period"
+            return _resolve_positive_interval(task.min_inter_arrival, fallback=task.period), source
+
+    if arrival_analysis_mode == "conservative_envelope" and override is not None:
+        return float(override), f"planning.params.arrival_envelope_min_intervals.{task.id}"
+    return None, "not_available"
+
+
+def _build_arrival_assumption_trace(
+    spec: ModelSpec,
+    *,
+    included_task_ids: set[str],
+    arrival_analysis_mode: str,
+    conservative_min_intervals: dict[str, float],
+) -> dict[str, Any]:
+    tasks: list[dict[str, Any]] = []
+    any_seeded = False
+    for task in spec.tasks:
+        if task.id not in included_task_ids:
+            continue
+        generator = _arrival_generator_name(task)
+        seed_source = _arrival_trace_seed_source(task, arrival_analysis_mode=arrival_analysis_mode)
+        resolved_min_interval, envelope_source = _arrival_min_interval_and_source(
+            task,
+            arrival_analysis_mode=arrival_analysis_mode,
+            conservative_min_intervals=conservative_min_intervals,
+        )
+        any_seeded = any_seeded or seed_source == "sim.seed"
+        tasks.append(
+            {
+                "task_id": task.id,
+                "task_type": task.task_type.value,
+                "arrival_mode": _task_arrival_mode(task),
+                "generator": generator,
+                "seed_source": seed_source,
+                "resolved_min_interval": resolved_min_interval,
+                "envelope_source": envelope_source,
+            }
+        )
+    return {
+        "arrival_analysis_mode": arrival_analysis_mode,
+        "seed_source": (
+            "sim.seed"
+            if any_seeded and arrival_analysis_mode == "sample_path"
+            else (
+                "not_used(conservative_envelope)"
+                if arrival_analysis_mode == "conservative_envelope"
+                else "not_required"
+            )
+        ),
+        "seed_value": int(spec.sim.seed) if any_seeded and arrival_analysis_mode == "sample_path" else None,
+        "task_count": len(tasks),
+        "tasks": tasks,
+    }
 
 
 def _next_release_time(
@@ -358,6 +496,7 @@ class NormalizedExecutionModel:
     coverage_summary: dict[str, Any]
     assumptions: list[dict[str, Any]] = field(default_factory=list)
     unsupported_dimensions: list[dict[str, Any]] = field(default_factory=list)
+    arrival_assumption_trace: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_model_spec(
@@ -633,6 +772,13 @@ class NormalizedExecutionModel:
             "etm_name": etm_name,
         }
 
+        arrival_assumption_trace = _build_arrival_assumption_trace(
+            spec,
+            included_task_ids=included_task_ids,
+            arrival_analysis_mode=arrival_analysis_mode,
+            conservative_min_intervals=conservative_min_intervals,
+        )
+
         scheduler_context = {
             "scheduler_name": spec.scheduler.name,
             "resource_acquire_policy": scheduler_params.get("resource_acquire_policy", "legacy_sequential"),
@@ -655,6 +801,7 @@ class NormalizedExecutionModel:
             coverage_summary=coverage_summary,
             assumptions=assumptions,
             unsupported_dimensions=unsupported_dimensions,
+            arrival_assumption_trace=arrival_assumption_trace,
         )
 
     def fingerprint_payload(self) -> dict[str, Any]:
@@ -723,6 +870,7 @@ class NormalizedExecutionModel:
                 },
                 "assumptions": [dict(item) for item in self.assumptions],
                 "unsupported_dimensions": [dict(item) for item in self.unsupported_dimensions],
+                "arrival_assumption_trace": dict(self.arrival_assumption_trace),
             },
         )
 

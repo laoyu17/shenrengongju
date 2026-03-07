@@ -390,8 +390,10 @@ def analyze_wcrt(
                     "task_scope": resolved_scope,
                     "include_non_rt": resolved_include_non_rt,
                     "horizon": resolved_horizon,
+                    "arrival_analysis_mode": normalized.coverage_summary.get("arrival_analysis_mode"),
                 },
                 "coverage_summary": dict(normalized.coverage_summary),
+                "arrival_assumption_trace": dict(normalized.arrival_assumption_trace),
                 "assumptions": [dict(item) for item in normalized.assumptions],
                 "unsupported_dimensions": filtered_unsupported,
                 "blocking_bound": report.metadata.get(
@@ -413,6 +415,20 @@ def analyze_wcrt(
                 ),
             }
         )
+    else:
+        arrival_trace = problem.metadata.get("arrival_assumption_trace")
+        if isinstance(arrival_trace, Mapping):
+            report.metadata.setdefault(
+                "planning_context",
+                {
+                    "task_scope": resolved_scope,
+                    "include_non_rt": resolved_include_non_rt,
+                    "horizon": resolved_horizon,
+                    "arrival_analysis_mode": problem.metadata.get("arrival_analysis_mode"),
+                },
+            )
+            report.metadata.setdefault("coverage_summary", dict(problem.metadata))
+            report.metadata["arrival_assumption_trace"] = dict(arrival_trace)
     return report
 
 
@@ -504,6 +520,9 @@ def planning_result_from_dict(payload: Mapping[str, Any]) -> PlanningResult:
     coverage_summary = payload.get("coverage_summary")
     if isinstance(coverage_summary, Mapping) and "coverage_summary" not in metadata:
         metadata["coverage_summary"] = dict(coverage_summary)
+    arrival_assumption_trace = payload.get("arrival_assumption_trace")
+    if isinstance(arrival_assumption_trace, Mapping) and "arrival_assumption_trace" not in metadata:
+        metadata["arrival_assumption_trace"] = dict(arrival_assumption_trace)
     return PlanningResult(
         planner=str(payload.get("planner", schedule_table.planner)),
         schedule_table=schedule_table,
@@ -566,6 +585,7 @@ def serialize_planning_result(
                 "arrival_envelope_min_intervals": arrival_envelope_min_intervals,
             },
             "coverage_summary": dict(normalized.coverage_summary),
+            "arrival_assumption_trace": dict(normalized.arrival_assumption_trace),
             "assumptions": [dict(item) for item in normalized.assumptions],
             "unsupported_dimensions": [dict(item) for item in normalized.unsupported_dimensions],
             "runtime_static_windows": schedule_table_to_runtime_windows(result.schedule_table),
@@ -580,6 +600,7 @@ def serialize_planning_result(
             "semantic_fingerprint": semantic_fingerprint,
             "planning_context": dict(payload["planning_context"]),
             "coverage_summary": dict(normalized.coverage_summary),
+            "arrival_assumption_trace": dict(normalized.arrival_assumption_trace),
             "assumption_count": len(normalized.assumptions),
             "unsupported_dimension_count": len(normalized.unsupported_dimensions),
         }
@@ -767,7 +788,7 @@ def plan_and_analyze_schedulability(
     )
     planning_feasible = bool(planning_result.feasible)
     wcrt_report = (
-        _analyze_wcrt(
+        analyze_wcrt(
             problem,
             planning_result.schedule_table,
             max_iterations=max_iterations,
@@ -891,6 +912,7 @@ def benchmark_sched_rate(
                 "candidates": candidate_results,
                 "best_candidate_feasible": best_candidate_feasible,
                 "candidate_only_feasible": candidate_only_feasible,
+                "arrival_assumption_trace": dict(problem.metadata.get("arrival_assumption_trace", {})),
             }
         )
 
@@ -939,6 +961,12 @@ def benchmark_sched_rate(
         "wcrt_max_iterations": wcrt_max_iterations,
         "wcrt_epsilon": wcrt_epsilon,
         "arrival_analysis_mode": arrival_analysis_mode or "sample_path",
+        "arrival_assumption_trace": {
+            "arrival_analysis_mode": arrival_analysis_mode or "sample_path",
+            "task_scope": resolved_scope,
+            "detail_field": "cases[*].arrival_assumption_trace",
+            "case_count": total,
+        },
         "arrival_envelope_min_intervals": {
             str(task_id): float(value)
             for task_id, value in (arrival_envelope_min_intervals or {}).items()

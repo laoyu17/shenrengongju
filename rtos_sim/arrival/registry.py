@@ -6,7 +6,9 @@ from collections.abc import Callable
 
 from .base import IArrivalGenerator
 from .builtins import (
+    BurstSequenceArrivalGenerator,
     ConstantIntervalArrivalGenerator,
+    PeriodicJitterArrivalGenerator,
     PoissonRateArrivalGenerator,
     SequenceArrivalGenerator,
     UniformIntervalArrivalGenerator,
@@ -21,6 +23,8 @@ _REGISTRY: dict[str, ArrivalGeneratorFactory] = {
     "uniform_interval": UniformIntervalArrivalGenerator,
     "poisson_rate": PoissonRateArrivalGenerator,
     "sequence": SequenceArrivalGenerator,
+    "periodic_jitter": PeriodicJitterArrivalGenerator,
+    "burst_sequence": BurstSequenceArrivalGenerator,
 }
 
 

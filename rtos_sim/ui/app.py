@@ -55,6 +55,7 @@ from .controllers import (
     FormController,
     GanttStyleController,
     PlanningController,
+    ResearchReportController,
     RunController,
     TelemetryController,
     TimelineController,
@@ -210,6 +211,13 @@ class MainWindow(QMainWindow):
         self._compare_panel_state = ComparePanelState()
         self._telemetry_panel_state = TelemetryPanelState()
         self._latest_metrics_report: dict[str, Any] = {}
+        self._latest_run_payload: dict[str, Any] | None = None
+        self._latest_run_spec: Any | None = None
+        self._latest_run_events: list[dict[str, Any]] | None = None
+        self._latest_audit_report: dict[str, Any] | None = None
+        self._latest_model_relations_report: dict[str, Any] | None = None
+        self._latest_quality_snapshot: dict[str, Any] | None = None
+        self._latest_research_report: dict[str, Any] | None = None
         self._latest_plan_result: Any | None = None
         self._latest_plan_payload: dict[str, Any] | None = None
         self._latest_plan_spec_fingerprint: str | None = None
@@ -407,6 +415,7 @@ class MainWindow(QMainWindow):
         self._resume_button = QPushButton("Resume")
         self._step_button = QPushButton("Step")
         self._reset_button = QPushButton("Reset")
+        self._research_export_button = QPushButton("Export Research Report")
         self._step_delta_spin = QDoubleSpinBox()
         self._step_delta_spin.setRange(0.0, 1_000_000.0)
         self._step_delta_spin.setDecimals(3)
@@ -458,6 +467,7 @@ class MainWindow(QMainWindow):
         self._compare_build_button = QPushButton("Build Compare")
         self._compare_export_json_button = QPushButton("Export Compare JSON")
         self._compare_export_csv_button = QPushButton("Export Compare CSV")
+        self._compare_export_markdown_button = QPushButton("Export Compare Markdown")
         self._compare_output = QPlainTextEdit()
         self._compare_output.setReadOnly(True)
         self._compare_output.setMinimumHeight(120)
@@ -472,6 +482,7 @@ class MainWindow(QMainWindow):
         self._dag_controller = DagController(self)
         self._gantt_style_controller = GanttStyleController(self)
         self._planning_controller = PlanningController(self, _log_ui_error)
+        self._research_report_controller = ResearchReportController(self, _log_ui_error)
         self._run_controller = RunController(self, _log_ui_error)
         self._telemetry_controller = TelemetryController(self)
         self._timeline_controller = TimelineController(self)
@@ -548,6 +559,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(QLabel("Step Δ"))
         toolbar.addWidget(self._step_delta_spin)
         toolbar.addWidget(self._reset_button)
+        toolbar.addWidget(self._research_export_button)
         toolbar.addStretch(1)
         toolbar.addWidget(self._status_label)
         root_layout.addLayout(toolbar)
@@ -751,6 +763,7 @@ class MainWindow(QMainWindow):
         self._resume_button.clicked.connect(self._on_resume)
         self._step_button.clicked.connect(self._on_step)
         self._reset_button.clicked.connect(self._on_reset)
+        self._research_export_button.clicked.connect(self._on_research_export)
         self._sync_text_to_form_button.clicked.connect(self._on_sync_text_to_form)
         self._sync_form_to_text_button.clicked.connect(self._on_sync_form_to_text)
         self._legend_toggle_subtask.toggled.connect(self._refresh_legend_details)
@@ -778,6 +791,7 @@ class MainWindow(QMainWindow):
         self._compare_build_button.clicked.connect(self._on_compare_build)
         self._compare_export_json_button.clicked.connect(self._on_compare_export_json)
         self._compare_export_csv_button.clicked.connect(self._on_compare_export_csv)
+        self._compare_export_markdown_button.clicked.connect(self._on_compare_export_markdown)
         self._planning_plan_button.clicked.connect(self._on_plan_static)
         self._planning_wcrt_button.clicked.connect(self._on_plan_analyze_wcrt)
         self._planning_export_button.clicked.connect(self._on_plan_export_os_config)
@@ -1962,6 +1976,9 @@ class MainWindow(QMainWindow):
     def _on_compare_export_csv(self) -> None:
         self._compare_controller.on_compare_export_csv()
 
+    def _on_compare_export_markdown(self) -> None:
+        self._compare_controller.on_compare_export_markdown()
+
     def _on_plan_static(self) -> None:
         self._planning_controller.on_plan_static()
 
@@ -2016,6 +2033,9 @@ class MainWindow(QMainWindow):
     def _on_reset(self) -> None:
         self._run_controller.on_reset()
 
+    def _on_research_export(self) -> None:
+        self._research_report_controller.on_research_export()
+
     def _on_event_batch(self, events: list[dict[str, Any]]) -> None:
         self._timeline_controller.on_event_batch(events)
 
@@ -2065,8 +2085,8 @@ class MainWindow(QMainWindow):
     def _format_segment_details(self, meta: SegmentVisualMeta) -> str:
         return format_segment_details(meta)
 
-    def _on_finished(self, report: dict[str, Any], tail_events: list[dict[str, Any]]) -> None:
-        self._run_controller.on_finished(report, tail_events)
+    def _on_finished(self, report: dict[str, Any], all_events: list[dict[str, Any]]) -> None:
+        self._run_controller.on_finished(report, all_events)
 
     def _on_failed(self, error_message: str) -> None:
         self._run_controller.on_failed(error_message)

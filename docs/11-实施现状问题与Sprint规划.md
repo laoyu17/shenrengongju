@@ -2,10 +2,11 @@
 
 ## 0. 文档控制
 - 版本：v1.0
-- 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环）
-- 日期：2026-03-01
+- 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环 + Phase 4 最小工作台闭环）
+- 日期：2026-03-07
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 实现快照：`git_sha=472319138a4e578579d646f5aef2f116a236d8c2`
+- 证据基线：`evidence_git_sha=01ae133080cb9dc405545fc61654c6acd26410c7`
+- 工作区基线：`workspace_git_sha=01ae133080cb9dc405545fc61654c6acd26410c7`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -40,26 +41,26 @@
 - 资源协议：Mutex + PIP + PCP（优先级更新语义）：`rtos_sim/protocols/mutex.py:10`、`rtos_sim/protocols/pip.py:9`、`rtos_sim/protocols/pcp.py:9`
 - ETM：`Constant + table_based`（段/核查表缩放）：`rtos_sim/etm/registry.py:14`
 - 开销模型：Simple 常量开销：`rtos_sim/overheads/registry.py:22`
-- 到达过程生成器：`arrival.custom` 注册机制（内置 `constant_interval/uniform_interval/poisson_rate/sequence`）：`rtos_sim/arrival/registry.py:1`
+- 到达过程生成器：`arrival.custom` 注册机制（内置 `constant_interval/uniform_interval/poisson_rate/sequence/periodic_jitter/burst_sequence`）：`rtos_sim/arrival/registry.py:1`
 - 指标聚合：响应时间、超期率、抢占（调度/强制拆分）、迁移、利用率：`rtos_sim/metrics/core.py:63`
 
 ### 1.5 CLI 与 PyQt6 UI
-- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model/migrate-config/plan-static/analyze-wcrt/export-os-config` 命令：`rtos_sim/cli/main.py:95`
+- CLI 支持 `validate/run/ui/batch-run/compare/inspect-model/migrate-config/plan-static/analyze-wcrt/benchmark-sched-rate/export-os-config` 命令：`rtos_sim/cli/main.py:95`
 - `validate` 新增 `--strict-id-tokens`（将内部保留分隔符告警升级为失败，便于脚本门禁）：`rtos_sim/cli/main.py:415`
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`rtos_sim/cli/main.py:81`、`rtos_sim/analysis/audit.py:14`
 - `run` 新增 `--plan-json/--strict-plan-match`，可直接消费统一计划工件并物化 `runtime_static_windows`：`rtos_sim/cli/main.py`
 - `plan-static` 统一输出 `spec_fingerprint + semantic_fingerprint + planning_context + runtime_static_windows`：`rtos_sim/api.py`、`rtos_sim/cli/handlers_planning.py`
-- `analyze-wcrt` 输出新增 `metadata.assumptions/unsupported_dimensions/blocking_bound/overhead_bound/heterogeneous_speed_mode`：`rtos_sim/api.py`、`rtos_sim/planning/wcrt.py`
+- `analyze-wcrt` 输出新增 `metadata.assumptions/unsupported_dimensions/blocking_bound/overhead_bound/heterogeneous_speed_mode/arrival_assumption_trace`：`rtos_sim/api.py`、`rtos_sim/planning/wcrt.py`
 - WCRT 已将 `resource_blocking` 与 `dispatch/migration overhead` 纳入真实分析项，`unsupported_dimensions` 中对应条目仅保留“static plan 未直接展开”的提示：`rtos_sim/planning/wcrt.py`、`rtos_sim/planning/normalized.py`
 - 离线规划与 WCRT 已进一步切换到“按核心执行成本”口径：异构核有效速度与 ETM 缩放会直接改变 `plan-static` 窗口长度与 WCRT 结果：`rtos_sim/planning/normalized.py`、`rtos_sim/planning/heuristics.py`、`rtos_sim/planning/lp_solver.py`、`rtos_sim/planning/wcrt.py`
 - `release_offsets` 与 stochastic arrival 已从“单次代表性投影”升级为“按 horizon 的多次 release 展开”：时间确定性窗口按 release index 应用 offset，随机到达按 `sim.seed` 生成可复现 sample-path：`rtos_sim/planning/normalized.py`
-- 已新增 arrival 分析模式切换：`planning.params.arrival_analysis_mode=sample_path|conservative_envelope`；保守包络对 `poisson/custom` 可通过 `arrival_envelope_min_intervals` 提供下界。
+- 已新增 arrival 分析模式切换：`planning.params.arrival_analysis_mode=sample_path|conservative_envelope`；保守包络对 `poisson/custom` 可通过 `arrival_envelope_min_intervals` 提供下界。`plan-static` / `analyze-wcrt.metadata` / `benchmark-sched-rate.cases[*]` 会同步输出 `arrival_assumption_trace`。
 - `scheduler.params.static_windows[*].release_index` 已接入 runtime 匹配，可显式约束特定 release instance：`rtos_sim/core/engine_static_window.py`、`tests/test_engine_static_window_mode.py`
 - `run --audit-out` 已附带 `model_relation_summary`（模型语义摘要计数），便于报告联审：`rtos_sim/cli/main.py:151`
 - 审计报告新增 `rule_version` 与 `evidence`，支持跨批次追溯：`rtos_sim/analysis/audit.py:7`
 - 审计报告新增 `protocol_proof_assets`，沉淀 PIP/PCP 证明辅助轨迹：`rtos_sim/analysis/audit.py:79`
-- 审计报告新增 `compliance_profiles`（`engineering_v1/research_v1`），支持研究闭环机读判定：`rtos_sim/analysis/audit.py:264`
+- 审计报告新增 `compliance_profiles`（`engineering_v1/research_v1/research_v2`），支持研究闭环机读判定：`rtos_sim/analysis/audit.py:264`
 - `inspect-model` 新增 `--strict-on-fail`，可将 `status!=pass` 转为非 0 退出码（便于 CI/脚本门禁）：`rtos_sim/cli/main.py:294`
 - 事件与指标导出（JSONL/JSON）已打通：`rtos_sim/cli/main.py:51`
 - 事件 ID 策略支持 `deterministic/random/seeded_random`，默认 deterministic：`rtos_sim/events/bus.py:14`
@@ -78,16 +79,19 @@
 - UI 已支持稳定悬停与点击锁定详情面板（专家字段）：`rtos_sim/ui/app.py:532`
 - UI 事件增量批推送（64条或150ms）：`rtos_sim/ui/worker.py:53`
 - UI 右侧采用“Gantt 上区 + 日志/详情/对比下区”分栏，Compare 默认折叠：`rtos_sim/ui/app.py:580`
+- Compare 报告结构与导出层已升级为 N-way-ready，UI 导出支持 `JSON / CSV / Markdown`：`rtos_sim/analysis/compare.py`、`rtos_sim/ui/compare_io.py`
+- UI 已新增 `Export Research Report`，复用最近一次运行缓存的 `spec/events` 与既有 `research_report` 产物链：`rtos_sim/ui/controllers/run_controller.py`、`rtos_sim/ui/controllers/research_report_controller.py`
+- 运行控制层现按流式批次缓存完整事件，并在完成态只补未刷新的尾批事件，避免 Gantt/状态流在结束时重复回放：`rtos_sim/ui/controllers/run_controller.py`
 
 ### 1.6 测试与样例
-- 已提供 10 个样例（新增 `at10_arrival_process`）：`examples/at06_time_deterministic.yaml:1`、`examples/at09_table_based_etm.yaml:1`、`examples/at10_arrival_process.yaml:1`
+- 已提供 10 个主样例（新增 `at10_arrival_process`），并补充 3 个研究到达样例：`examples/research_arrival_periodic_jitter.yaml:1`、`examples/research_arrival_burst_sequence.yaml:1`、`examples/research_arrival_envelope.yaml:1`。
 - 已实现模型/引擎/CLI 自动化测试：`tests/test_model_validation.py:41`、`tests/test_engine_scenarios.py:22`、`tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`tests/test_audit.py:1`、`tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-03-04）：`python -m pytest --maxfail=1` 通过，`404 passed`
-- 当前覆盖率快照（2026-03-04）：总覆盖率 89.05%（`coverage.line_rate=89.04797521102682`，来源：`artifacts/quality/quality-snapshot.json`）
+- 当前本地测试状态（2026-03-07）：`python -m pytest --maxfail=1` 通过，`421 passed`
+- 当前覆盖率快照（2026-03-07）：总覆盖率 89.29%（`coverage.line_rate=89.29225137278829`，来源：`artifacts/quality/quality-snapshot.json`）
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
-  - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`git_sha`、`generated_at_utc`
+  - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`evidence_git_sha`、`git_sha`（兼容别名）、`generated_at_utc`
   - 新增复用模式：`--reuse-existing-artifacts --pytest-output-file <path>`；当复用摘要解析为失败且未开启 `--allow-fail` 时，脚本返回非 0：`scripts/quality_snapshot.py:102`
   - 兼容性修复（2026-03-05）：脚本改为按文件直载 `rtos_sim/analysis/quality_snapshot.py`，避免经过 `rtos_sim.analysis.__init__` 引发额外依赖导入；CI 最小环境可直接执行：`scripts/quality_snapshot.py:15`
   - 回归测试：新增 `python -S scripts/quality_snapshot.py --help` 场景，验证无 site-packages 时入口可用：`tests/test_quality_snapshot_script.py:100`
@@ -120,10 +124,10 @@
    - 影响：研究级可证明性仍需补充。
 
 ### 2.2 P1（近期应补齐）
-1. **统一到达过程已落地并接入自定义生成器，但生态仍需扩展**
-   - 现状：`arrival_process` 已支持 `fixed/uniform/poisson/one_shot/custom`，`custom` 通过 `params.generator` 调用注册生成器（内置 `constant_interval/uniform_interval/poisson_rate/sequence`）。
-   - 证据：`rtos_sim/model/spec.py:76`、`rtos_sim/core/engine.py:686`、`rtos_sim/arrival/registry.py:1`
-   - 影响：可满足插件化扩展入口；后续需补充更多分布模板与文档示例。
+1. **统一到达过程已落地并进入研究可追踪阶段**
+   - 现状：`arrival_process` 已支持 `fixed/uniform/poisson/one_shot/custom`，`custom` 通过 `params.generator` 调用注册生成器（内置 `constant_interval/uniform_interval/poisson_rate/sequence/periodic_jitter/burst_sequence`）。
+   - 证据：`rtos_sim/model/spec.py:76`、`rtos_sim/core/engine.py:686`、`rtos_sim/arrival/registry.py:1`、`rtos_sim/api.py`
+   - 影响：本轮已覆盖周期抖动、突发序列、Poisson+conservative envelope 三类研究样例；后续仅需继续补候选模板，而非重新设计配置结构。
 
 1. **调度器参数已从“透传”进入“基础生效”，但参数域仍需继续扩展**
    - 现状：`tie_breaker/allow_preempt` 已在 EDF/RM 生效，尚未覆盖更多算法级业务开关。
@@ -135,12 +139,17 @@
    - 证据：`rtos_sim/ui/app.py:209`
    - 影响：基础建模效率明显提升，但复杂图编辑体验仍有提升空间。
 
-3. **FR-13 对比视图已落地 MVP，仍需扩展**
-   - 现状：已支持双方案指标对比与 JSON/CSV 差分导出，但尚未接入多方案聚合报告与论文模板。
-   - 证据：`docs/04-详细版SRS.md:83`、`rtos_sim/ui/app.py:591`、`rtos_sim/cli/main.py:190`
-   - 影响：基础对比能力可用，研究级批量分析产物仍需增强。
+3. **FR-13 对比视图已完成最小研究化收口，UI 仍保留双路构建边界**
+   - 现状：CLI / UI 的 compare JSON 已新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`，报告结构对 N-way 聚合已就绪；UI 侧已支持 JSON / CSV / Markdown 导出，但交互入口仍是 left/right 双路装载与构建。
+   - 证据：`rtos_sim/analysis/compare.py`、`rtos_sim/ui/compare_io.py`、`rtos_sim/ui/controllers/compare_controller.py`
+   - 影响：本轮已打通研究级报告导出底座，后续可在不破坏现有交互的前提下继续扩展 N-way 场景选择器。
 
-4. **模型关系导出已进入“基础自动判定”阶段，仍需向研究模板扩展**
+4. **研究报告已接入 UI 导出入口，底层复用既有研究闭环产物链**
+   - 现状：UI 工具栏新增 `Export Research Report`，会复用最近一次运行缓存的 `spec/events`，调用 `build_model_relations_report`、`build_audit_report`、`build_research_report_payload` 输出 `.md + .json + -summary.csv`；quality 优先复用缓存，缺失时回退读取 `artifacts/quality/quality-snapshot.json`。
+   - 证据：`rtos_sim/ui/controllers/run_controller.py`、`rtos_sim/ui/controllers/research_report_controller.py`、`rtos_sim/analysis/research_report.py`
+   - 影响：UI 已具备研究报告工作台的最小闭环，后续重点转向 DAG 多选/批量编辑而非重复造报告引擎。
+
+5. **模型关系导出已进入“基础自动判定”阶段，仍需向研究模板扩展**
    - 现状：`inspect-model` 已可导出任务/子任务/分段与核/资源双向关系表，并附带 `status/checks` 自动判定摘要。
    - 证据：`rtos_sim/analysis/model_relations.py:1`、`rtos_sim/cli/main.py:237`
    - 影响：语义闭环证据链已打通第一步，后续仍需接入更高层实验模板与自动判定规则。
@@ -305,7 +314,7 @@
   - artifacts：`research-audit-report`、`research-audit-summary`
 - R-005：`inspect-model` 研究语义判定增强：
   - 新增 `resource_bound_core_consistency`、`time_deterministic_segment_binding_strict`
-  - 新增 `compliance_profiles`（engineering_v1/research_v1）：`rtos_sim/analysis/model_relations.py`
+  - 新增 `compliance_profiles`（当前已扩展为 `engineering_v1/research_v1/research_v2`）：`rtos_sim/analysis/model_relations.py`
   - 回归：`tests/test_model_relations.py`
 - R-006：文档与追踪矩阵已同步至 S7：
   - `README.md`
@@ -318,9 +327,9 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `404 passed / 89.05%`）。
+- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `421 passed / 89.29%`）。
 - 历史首轮审查文档新增醒目提示，避免误读历史测试统计为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
-- `research_audit` Step Summary 增加 `research_v1`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
+- `research_audit` Step Summary 已从 `research_v1`/`engineering_v1` 扩展为 `research_v1`/`research_v2`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
   - `rtos_sim/ui/dag_layout.py`
   - `rtos_sim/ui/table_validation.py`
@@ -367,5 +376,5 @@
 - 防回退门禁：
   - 新增 `tests/test_ci_strict_plan_match_gate.py`，静态校验 CI 脚本中 WCRT/导出命令必须携带 `--strict-plan-match`。
 - 本轮回归结果：
-  - `python -m pytest --maxfail=1`：`404 passed`
+  - `python -m pytest --maxfail=1`：`421 passed`
   - 主链路命令（`validate` / `inspect-model --strict-on-fail` / `benchmark-sched-rate`）均通过。

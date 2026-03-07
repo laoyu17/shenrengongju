@@ -27,6 +27,37 @@ class RunController:
     def __init__(self, owner: MainWindow, error_logger: UiErrorLogger) -> None:
         self._owner = owner
         self._error_logger = error_logger
+        self._streamed_run_events: list[dict[str, Any]] = []
+
+    def _clear_latest_research_state(self) -> None:
+        self._owner._latest_run_payload = None
+        self._owner._latest_run_spec = None
+        self._owner._latest_run_events = None
+        self._owner._latest_audit_report = None
+        self._owner._latest_model_relations_report = None
+        self._owner._latest_research_report = None
+        self._streamed_run_events = []
+
+    def _remaining_events(self, all_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not self._streamed_run_events:
+            return list(all_events)
+        streamed_count = len(self._streamed_run_events)
+        if streamed_count > len(all_events):
+            return []
+
+        streamed_ids = [event.get("event_id") for event in self._streamed_run_events]
+        prefix_ids = [event.get("event_id") for event in all_events[:streamed_count]]
+        if streamed_ids == prefix_ids:
+            return list(all_events[streamed_count:])
+
+        streamed_id_set = {
+            event_id
+            for event_id in streamed_ids
+            if isinstance(event_id, str) and event_id
+        }
+        if not streamed_id_set:
+            return list(all_events)
+        return [event for event in all_events if event.get("event_id") not in streamed_id_set]
 
     def set_worker_controls(self, *, running: bool, paused: bool) -> None:
         self._owner._run_button.setEnabled(not running)
@@ -56,12 +87,19 @@ class RunController:
             self._owner._status_label.setText("Run blocked by invalid config")
             return
 
+        self._owner._latest_run_payload = dict(payload)
+        self._owner._latest_run_spec = spec
+        self._owner._latest_run_events = None
+        self._owner._latest_audit_report = None
+        self._owner._latest_model_relations_report = None
+        self._owner._latest_research_report = None
+        self._streamed_run_events = []
         self._owner._reset_viz()
         self._owner._metrics.clear()
 
         config_text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
         self._owner._worker = SimulationWorker(config_text, step_delta=self.step_delta_value())
-        self._owner._worker.events_batch.connect(self._owner._on_event_batch)
+        self._owner._worker.events_batch.connect(self.on_event_batch)
         self._owner._worker.finished_report.connect(self._owner._on_finished)
         self._owner._worker.failed.connect(self._owner._on_failed)
         self._owner._worker.start()
@@ -96,20 +134,29 @@ class RunController:
         self.set_worker_controls(running=True, paused=True)
         self._owner._status_label.setText("Paused (step)")
 
+    def on_event_batch(self, rows: list[dict[str, Any]]) -> None:
+        if rows:
+            self._streamed_run_events.extend(list(rows))
+        self._owner._on_event_batch(rows)
+
     def on_reset(self) -> None:
         if self._owner._worker and self._owner._worker.isRunning():
             self._owner._worker.stop()
             self._owner._worker.wait(1000)
         self._owner._worker = None
+        self._clear_latest_research_state()
         self._owner._reset_viz()
         self._owner._metrics.clear()
         self.set_worker_controls(running=False, paused=False)
         self._owner._status_label.setText("Reset")
 
-    def on_finished(self, report: dict[str, Any], tail_events: list[dict[str, Any]]) -> None:
-        if tail_events:
-            self._owner._on_event_batch(tail_events)
+    def on_finished(self, report: dict[str, Any], all_events: list[dict[str, Any]]) -> None:
+        remaining_events = self._remaining_events(all_events)
+        if remaining_events:
+            self._owner._on_event_batch(remaining_events)
         self._owner._latest_metrics_report = dict(report)
+        self._owner._latest_run_events = list(all_events)
+        self._streamed_run_events = []
         self._owner._metrics.append("\n=== Metrics ===")
         self._owner._metrics.append(json.dumps(report, ensure_ascii=False, indent=2))
         self._owner._status_label.setText("Completed")
@@ -117,6 +164,7 @@ class RunController:
         self._owner._worker = None
 
     def on_failed(self, error_message: str) -> None:
+        self._clear_latest_research_state()
         self._owner._metrics.append(f"[Error] {error_message}")
         QMessageBox.critical(self._owner, "Simulation failed", error_message)
         self._owner._status_label.setText("Failed")

@@ -173,7 +173,8 @@ def build_quality_snapshot(
     pytest_output: str,
     coverage_payload: dict[str, Any],
     command: str,
-    git_sha: str | None,
+    evidence_git_sha: str | None = None,
+    git_sha: str | None = None,
     command_exit_code: int,
 ) -> dict[str, Any]:
     """Build a single quality snapshot from pytest and coverage outputs."""
@@ -203,10 +204,13 @@ def build_quality_snapshot(
     ):
         status = "fail"
 
+    resolved_evidence_git_sha = evidence_git_sha or git_sha
+
     snapshot = {
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "status": status,
-        "git_sha": git_sha,
+        "evidence_git_sha": resolved_evidence_git_sha,
+        "git_sha": resolved_evidence_git_sha,
         "command": command,
         "command_exit_code": command_exit_code,
         "pytest": pytest_summary,

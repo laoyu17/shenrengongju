@@ -693,6 +693,97 @@ def test_arrival_process_custom_sequence_repeat_rejects_ambiguous_string() -> No
         _run_payload(payload)
 
 
+def test_arrival_process_custom_periodic_jitter_is_seeded_and_bounded() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "custom-jitter",
+                "name": "custom-periodic-jitter-task",
+                "task_type": "dynamic_rt",
+                "deadline": 30.0,
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "custom",
+                    "params": {"generator": "periodic_jitter", "period": 1.0, "jitter": 0.2},
+                    "max_releases": 6,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 20.0, "seed": 46},
+    }
+
+    events_a, _ = _run_payload(payload)
+    events_b, _ = _run_payload(deepcopy(payload))
+    release_times_a = [event["time"] for event in events_a if event["type"] == "JobReleased"]
+    release_times_b = [event["time"] for event in events_b if event["type"] == "JobReleased"]
+    assert release_times_a == pytest.approx(release_times_b)
+    assert len(release_times_a) == 6
+    deltas = [release_times_a[idx + 1] - release_times_a[idx] for idx in range(len(release_times_a) - 1)]
+    assert all(0.8 - 1e-9 <= delta <= 1.2 + 1e-9 for delta in deltas)
+
+
+def test_arrival_process_custom_burst_sequence_repeats_burst_pattern() -> None:
+    payload = {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [
+                {"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0},
+            ],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "custom-burst",
+                "name": "custom-burst-sequence-task",
+                "task_type": "non_rt",
+                "arrival": 0.0,
+                "arrival_process": {
+                    "type": "custom",
+                    "params": {
+                        "generator": "burst_sequence",
+                        "burst_intervals": "0.3,0.3",
+                        "recovery_interval": 1.5,
+                        "repeat": True,
+                    },
+                    "max_releases": 6,
+                },
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": [],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}],
+                    }
+                ],
+            }
+        ],
+        "scheduler": {"name": "edf", "params": {"event_id_mode": "deterministic"}},
+        "sim": {"duration": 15.0, "seed": 47},
+    }
+
+    events, _ = _run_payload(payload)
+    release_times = [event["time"] for event in events if event["type"] == "JobReleased"]
+    assert release_times == pytest.approx([0.0, 0.3, 0.6, 2.1, 2.4, 2.7])
+
+
 def test_task_mapping_hint_controls_dispatch_core_without_segment_hint() -> None:
     payload = {
         "version": "0.2",

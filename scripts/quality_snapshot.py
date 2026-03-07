@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         pytest_output=pytest_output,
         coverage_payload=coverage_payload,
         command=command,
-        git_sha=_resolve_git_sha(),
+        evidence_git_sha=_resolve_git_sha(),
         command_exit_code=max(summary_exit_code, coverage_exit_code),
     )
     if not args.reuse_existing_artifacts and not coverage_path.exists():

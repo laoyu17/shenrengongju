@@ -12,6 +12,7 @@ from .audit_checks import (
     evaluate_pcp_ceiling_numeric_domain,
     evaluate_pcp_ceiling_transition_consistency,
     evaluate_pcp_priority_domain_alignment,
+    evaluate_protocol_proof_asset_completeness,
     evaluate_pip_owner_hold_consistency,
     evaluate_pip_priority_chain_consistency,
     evaluate_resource_partial_hold_on_block,
@@ -48,51 +49,56 @@ RESEARCH_REQUIRED_CHECKS: tuple[str, ...] = (
     "time_deterministic_ready_consistency",
 )
 
+RESEARCH_V2_REQUIRED_CHECKS: tuple[str, ...] = (
+    *RESEARCH_REQUIRED_CHECKS,
+    "protocol_proof_asset_completeness",
+)
+
 CHECK_CATALOG: dict[str, dict[str, Any]] = {
     "resource_release_balance": {
         "severity": "error",
         "description": "ResourceAcquire/ResourceRelease must remain balanced per segment-resource hold key.",
-        "profiles": ["engineering_v1", "research_v1"],
+        "profiles": ["engineering_v1", "research_v1", "research_v2"],
     },
     "abort_cancel_release_visibility": {
         "severity": "error",
         "description": "Aborted jobs that held resources must emit cancel-segment ResourceRelease records.",
-        "profiles": ["engineering_v1", "research_v1"],
+        "profiles": ["engineering_v1", "research_v1", "research_v2"],
     },
     "pcp_priority_domain_alignment": {
         "severity": "error",
         "description": "EDF+PCP blocked events must use absolute_deadline priority domain.",
-        "profiles": ["research_v1"],
+        "profiles": ["research_v1", "research_v2"],
     },
     "pcp_ceiling_numeric_domain": {
         "severity": "error",
         "description": "EDF+PCP system ceiling should stay in negative numeric domain.",
-        "profiles": ["research_v1"],
+        "profiles": ["research_v1", "research_v2"],
     },
     "resource_partial_hold_on_block": {
         "severity": "error",
         "description": "atomic_rollback blocked segments must not keep partially acquired resources.",
-        "profiles": ["engineering_v1", "research_v1"],
+        "profiles": ["engineering_v1", "research_v1", "research_v2"],
     },
     "pip_priority_chain_consistency": {
         "severity": "error",
         "description": "resource_busy events must expose a valid non-self owner_segment chain.",
-        "profiles": ["research_v1"],
+        "profiles": ["research_v1", "research_v2"],
     },
     "pcp_ceiling_transition_consistency": {
         "severity": "error",
         "description": "system_ceiling_block segments must be unblocked or terminally cleared.",
-        "profiles": ["research_v1"],
+        "profiles": ["research_v1", "research_v2"],
     },
     "wait_for_deadlock": {
         "severity": "error",
         "description": "wait-for graph must remain acyclic among blocked segments.",
-        "profiles": ["engineering_v1", "research_v1"],
+        "profiles": ["engineering_v1", "research_v1", "research_v2"],
     },
     "pip_owner_hold_consistency": {
         "severity": "error",
         "description": "resource_busy owner_segment must match the active runtime owner of the same resource.",
-        "profiles": ["research_v1"],
+        "profiles": ["research_v1", "research_v2"],
     },
     "time_deterministic_ready_consistency": {
         "severity": "error",
@@ -100,7 +106,12 @@ CHECK_CATALOG: dict[str, dict[str, Any]] = {
             "time_deterministic SegmentReady events must align with deterministic_ready_time "
             "and remain phase-stable across hyper-period windows."
         ),
-        "profiles": ["research_v1"],
+        "profiles": ["research_v1", "research_v2"],
+    },
+    "protocol_proof_asset_completeness": {
+        "severity": "error",
+        "description": "research_v2 requires categorized protocol proof assets with event refs and failure samples.",
+        "profiles": ["research_v2"],
     },
 }
 
@@ -217,6 +228,10 @@ def _build_compliance_profiles(checks: dict[str, Any]) -> dict[str, Any]:
                 "description": "研究复现基线，覆盖协议域一致性与证明辅助链路",
                 **_build_profile_status(checks, RESEARCH_REQUIRED_CHECKS),
             },
+            "research_v2": {
+                "description": "研究增强基线，额外要求协议证明资产具备分类统计、事件引用与失败样本。",
+                **_build_profile_status(checks, RESEARCH_V2_REQUIRED_CHECKS),
+            },
         },
     }
 
@@ -244,6 +259,7 @@ def build_audit_report(
         evaluate_wait_for_deadlock(events),
         evaluate_pip_owner_hold_consistency(protocol_proof_assets),
         evaluate_time_deterministic_ready_consistency(time_deterministic_proof_assets),
+        evaluate_protocol_proof_asset_completeness(protocol_proof_assets),
     ]
 
     for outcome in outcomes:

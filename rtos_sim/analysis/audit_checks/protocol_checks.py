@@ -8,6 +8,7 @@ from typing import Any
 from rtos_sim.analysis.audit_report_builder import CheckOutcome, make_check_outcome
 
 AUDIT_PROOF_ASSET_VERSION = "0.2"
+PROTOCOL_PROOF_RULE_VERSION = "0.4"
 
 
 def _is_edf_scheduler(name: str | None) -> bool:
@@ -27,6 +28,10 @@ def _event_segment_key(event: dict[str, Any]) -> str | None:
 
 
 def _compute_wait_chain_max_depth(wait_edges: list[dict[str, Any]]) -> int:
+    return max(_compute_wait_chain_depths(wait_edges), default=0)
+
+
+def _compute_wait_chain_depths(wait_edges: list[dict[str, Any]]) -> list[int]:
     graph: dict[str, str] = {}
     for edge in wait_edges:
         segment_key = edge.get("segment_key")
@@ -34,7 +39,7 @@ def _compute_wait_chain_max_depth(wait_edges: list[dict[str, Any]]) -> int:
         if isinstance(segment_key, str) and segment_key and isinstance(owner_segment, str) and owner_segment:
             graph[segment_key] = owner_segment
 
-    max_depth = 0
+    depths: list[int] = []
     for start in graph:
         seen: set[str] = set()
         depth = 0
@@ -43,8 +48,30 @@ def _compute_wait_chain_max_depth(wait_edges: list[dict[str, Any]]) -> int:
             seen.add(cursor)
             depth += 1
             cursor = graph[cursor]
-        max_depth = max(max_depth, depth)
-    return max_depth
+        depths.append(depth)
+    return depths
+
+
+def _build_event_ref_list(rows: list[dict[str, Any]], *, keys: tuple[str, ...] = ("event_id",)) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in keys:
+            value = row.get(key)
+            if isinstance(value, str) and value and value not in seen:
+                refs.append(value)
+                seen.add(value)
+    return refs[:20]
+
+
+def _categorize_unresolved_block(row: dict[str, Any]) -> str:
+    priority_domain = row.get("priority_domain")
+    resource_id = row.get("resource_id")
+    if isinstance(priority_domain, str) and priority_domain and priority_domain != "absolute_deadline":
+        return "priority_domain_mismatch"
+    if not isinstance(resource_id, str) or not resource_id:
+        return "missing_resource_id"
+    return "missing_terminal_resolution"
 
 
 def build_protocol_proof_assets(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -214,11 +241,15 @@ def build_protocol_proof_assets(events: list[dict[str, Any]]) -> dict[str, Any]:
     pcp_ceiling_unresolved_ratio = (
         0.0 if pcp_ceiling_block_count == 0 else pcp_ceiling_unresolved_count / pcp_ceiling_block_count
     )
+    wait_chain_depths = _compute_wait_chain_depths(pip_wait_edges)
+    wait_chain_depth_counts = Counter(wait_chain_depths)
+    unresolved_category_counts = Counter(_categorize_unresolved_block(item) for item in unresolved)
     return {
         "proof_asset_version": AUDIT_PROOF_ASSET_VERSION,
+        "rule_version": PROTOCOL_PROOF_RULE_VERSION,
         "pip_wait_edge_count": pip_wait_edge_count,
         "pip_wait_edges": pip_wait_edges[:50],
-        "pip_wait_chain_max_depth": _compute_wait_chain_max_depth(pip_wait_edges),
+        "pip_wait_chain_max_depth": max(wait_chain_depths, default=0),
         "pip_wait_owner_coverage": pip_wait_owner_coverage,
         "pip_owner_mismatch_count": len(pip_owner_mismatch),
         "pip_owner_mismatch_samples": pip_owner_mismatch[:20],
@@ -230,7 +261,98 @@ def build_protocol_proof_assets(events: list[dict[str, Any]]) -> dict[str, Any]:
         "pcp_ceiling_unresolved_count": pcp_ceiling_unresolved_count,
         "pcp_ceiling_unresolved_samples": unresolved[:20],
         "pcp_ceiling_unresolved_ratio": pcp_ceiling_unresolved_ratio,
+        "chain_depth_stats": {
+            "max_depth": max(wait_chain_depths, default=0),
+            "by_depth": {
+                str(depth): count
+                for depth, count in sorted(wait_chain_depth_counts.items())
+            },
+        },
+        "unclosed_category_counts": {
+            str(category): count
+            for category, count in sorted(unresolved_category_counts.items())
+        },
+        "sample_event_refs": {
+            "pip_wait_edges": _build_event_ref_list(pip_wait_edges),
+            "pip_owner_mismatch": _build_event_ref_list(pip_owner_mismatch),
+            "pcp_ceiling_blocks": _build_event_ref_list(pcp_ceiling_blocks),
+            "pcp_ceiling_resolutions": _build_event_ref_list(
+                pcp_ceiling_resolutions,
+                keys=("blocked_event_id", "resolved_event_id"),
+            ),
+            "pcp_ceiling_unresolved": _build_event_ref_list(unresolved),
+        },
+        "failure_samples": {
+            "pip_owner_mismatch": pip_owner_mismatch[:10],
+            "pcp_ceiling_unresolved": unresolved[:10],
+        },
     }
+
+
+def evaluate_protocol_proof_asset_completeness(protocol_proof_assets: dict[str, Any]) -> CheckOutcome:
+    issues_samples: list[dict[str, Any]] = []
+
+    chain_depth_stats = protocol_proof_assets.get("chain_depth_stats")
+    if not isinstance(chain_depth_stats, dict) or not isinstance(chain_depth_stats.get("by_depth"), dict):
+        issues_samples.append({"field": "chain_depth_stats", "reason": "missing_or_invalid"})
+
+    unclosed_category_counts = protocol_proof_assets.get("unclosed_category_counts")
+    if not isinstance(unclosed_category_counts, dict):
+        issues_samples.append({"field": "unclosed_category_counts", "reason": "missing_or_invalid"})
+
+    sample_event_refs = protocol_proof_assets.get("sample_event_refs")
+    if not isinstance(sample_event_refs, dict):
+        issues_samples.append({"field": "sample_event_refs", "reason": "missing_or_invalid"})
+
+    failure_samples = protocol_proof_assets.get("failure_samples")
+    if not isinstance(failure_samples, dict):
+        issues_samples.append({"field": "failure_samples", "reason": "missing_or_invalid"})
+
+    rule_version = protocol_proof_assets.get("rule_version")
+    if not isinstance(rule_version, str) or not rule_version:
+        issues_samples.append({"field": "rule_version", "reason": "missing_or_invalid"})
+
+    pip_owner_mismatch_count = int(protocol_proof_assets.get("pip_owner_mismatch_count", 0))
+    if pip_owner_mismatch_count > 0:
+        refs = sample_event_refs.get("pip_owner_mismatch") if isinstance(sample_event_refs, dict) else None
+        samples = failure_samples.get("pip_owner_mismatch") if isinstance(failure_samples, dict) else None
+        if not isinstance(refs, list) or not refs:
+            issues_samples.append({"field": "sample_event_refs.pip_owner_mismatch", "reason": "expected_non_empty"})
+        if not isinstance(samples, list) or not samples:
+            issues_samples.append({"field": "failure_samples.pip_owner_mismatch", "reason": "expected_non_empty"})
+
+    pcp_ceiling_unresolved_count = int(protocol_proof_assets.get("pcp_ceiling_unresolved_count", 0))
+    if pcp_ceiling_unresolved_count > 0:
+        refs = sample_event_refs.get("pcp_ceiling_unresolved") if isinstance(sample_event_refs, dict) else None
+        samples = failure_samples.get("pcp_ceiling_unresolved") if isinstance(failure_samples, dict) else None
+        if not isinstance(refs, list) or not refs:
+            issues_samples.append({"field": "sample_event_refs.pcp_ceiling_unresolved", "reason": "expected_non_empty"})
+        if not isinstance(samples, list) or not samples:
+            issues_samples.append({"field": "failure_samples.pcp_ceiling_unresolved", "reason": "expected_non_empty"})
+        if not isinstance(unclosed_category_counts, dict) or not unclosed_category_counts:
+            issues_samples.append({"field": "unclosed_category_counts", "reason": "expected_non_empty"})
+
+    issues: list[dict[str, Any]] = []
+    if issues_samples:
+        issues.append(
+            {
+                "rule": "protocol_proof_asset_completeness",
+                "severity": "error",
+                "message": "research_v2 requires complete protocol proof assets with refs and failure samples",
+                "samples": issues_samples[:20],
+            }
+        )
+
+    return make_check_outcome(
+        rule="protocol_proof_asset_completeness",
+        passed=not issues_samples,
+        issues=issues,
+        check_payload={
+            "proof_asset_rule_version": rule_version,
+            "pip_owner_mismatch_count": pip_owner_mismatch_count,
+            "pcp_ceiling_unresolved_count": pcp_ceiling_unresolved_count,
+        },
+    )
 
 
 def evaluate_pcp_priority_domain_alignment(

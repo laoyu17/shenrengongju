@@ -6,6 +6,7 @@ from .protocol_checks import (
     evaluate_pcp_ceiling_numeric_domain,
     evaluate_pcp_ceiling_transition_consistency,
     evaluate_pcp_priority_domain_alignment,
+    evaluate_protocol_proof_asset_completeness,
     evaluate_pip_owner_hold_consistency,
     evaluate_pip_priority_chain_consistency,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "evaluate_abort_cancel_release_visibility",
     "evaluate_pcp_priority_domain_alignment",
     "evaluate_pcp_ceiling_numeric_domain",
+    "evaluate_protocol_proof_asset_completeness",
     "evaluate_resource_partial_hold_on_block",
     "evaluate_pip_priority_chain_consistency",
     "evaluate_pcp_ceiling_transition_consistency",

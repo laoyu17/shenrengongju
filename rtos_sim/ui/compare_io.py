@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from rtos_sim.analysis import compare_report_to_rows
+from rtos_sim.analysis import compare_report_to_rows, render_compare_report_markdown
 
 
 def read_metrics_json(path: str | Path) -> dict[str, Any]:
@@ -33,3 +33,7 @@ def write_compare_report_csv(path: str | Path, report: dict[str, Any]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def write_compare_report_markdown(path: str | Path, report: dict[str, Any]) -> None:
+    Path(path).write_text(render_compare_report_markdown(report), encoding="utf-8")

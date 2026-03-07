@@ -509,3 +509,91 @@ def test_planning_problem_conservative_envelope_poisson_requires_override() -> N
 
     with pytest.raises(ValueError, match="arrival_envelope_min_intervals"):
         PlanningProblem.from_model_spec(spec, task_scope="sync_and_dynamic_rt")
+
+
+def test_planning_problem_conservative_envelope_supports_periodic_jitter_builtin_lower_bound() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "j",
+                    "name": "jitter",
+                    "task_type": "dynamic_rt",
+                    "deadline": 10.0,
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "custom",
+                        "params": {"generator": "periodic_jitter", "period": 1.0, "jitter": 0.25},
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 31},
+            "planning": {"enabled": True, "params": {"arrival_analysis_mode": "conservative_envelope"}},
+        }
+    )
+
+    problem = PlanningProblem.from_model_spec(spec, task_scope="sync_and_dynamic_rt")
+
+    assert [segment.release_time for segment in problem.segments] == pytest.approx([0.0, 0.75, 1.5, 2.25, 3.0])
+    trace = problem.metadata["arrival_assumption_trace"]
+    task_trace = trace["tasks"][0]
+    assert task_trace["generator"] == "periodic_jitter"
+    assert task_trace["resolved_min_interval"] == pytest.approx(0.75)
+    assert task_trace["envelope_source"] == "arrival_process.params.period-jitter(lower_bound)"
+
+
+def test_planning_problem_conservative_envelope_supports_burst_sequence_builtin_lower_bound() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "b",
+                    "name": "burst",
+                    "task_type": "non_rt",
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "custom",
+                        "params": {
+                            "generator": "burst_sequence",
+                            "burst_intervals": "0.3,0.4",
+                            "recovery_interval": 1.5,
+                            "repeat": True,
+                        },
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 31},
+            "planning": {"enabled": True, "params": {"arrival_analysis_mode": "conservative_envelope"}},
+        }
+    )
+
+    problem = PlanningProblem.from_model_spec(spec, task_scope="all")
+
+    assert [segment.release_time for segment in problem.segments] == pytest.approx([0.0, 0.3, 0.6, 0.9, 1.2])
+    trace = problem.metadata["arrival_assumption_trace"]
+    task_trace = trace["tasks"][0]
+    assert task_trace["generator"] == "burst_sequence"
+    assert task_trace["resolved_min_interval"] == pytest.approx(0.3)
+    assert task_trace["envelope_source"] == "arrival_process.params.burst_intervals/recovery_interval(min)"

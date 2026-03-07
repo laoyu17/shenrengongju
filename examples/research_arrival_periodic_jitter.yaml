@@ -1,0 +1,46 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu-cluster
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+
+tasks:
+  - id: t_jitter
+    name: periodic_jitter_dynamic
+    task_type: dynamic_rt
+    deadline: 10
+    arrival: 0
+    arrival_process:
+      type: custom
+      params:
+        generator: periodic_jitter
+        period: 1.0
+        jitter: 0.2
+      max_releases: 6
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 0.15
+
+scheduler:
+  name: edf
+  params:
+    event_id_mode: deterministic
+sim:
+  duration: 6.0
+  seed: 17
+planning:
+  enabled: true
+  planner: np_edf
+  task_scope: sync_and_dynamic_rt

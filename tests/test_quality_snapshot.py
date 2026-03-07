@@ -128,10 +128,12 @@ def test_build_quality_snapshot_status_pass_and_fail() -> None:
         pytest_output="10 passed in 0.20s",
         coverage_payload=payload,
         command="python -m pytest --cov=rtos_sim -q",
-        git_sha="abc123",
+        evidence_git_sha="abc123",
         command_exit_code=0,
     )
     assert pass_snapshot["status"] == "pass"
+    assert pass_snapshot["evidence_git_sha"] == "abc123"
+    assert pass_snapshot["git_sha"] == "abc123"
 
     fail_snapshot = build_quality_snapshot(
         pytest_output="1 failed, 9 passed in 0.20s",
@@ -141,6 +143,8 @@ def test_build_quality_snapshot_status_pass_and_fail() -> None:
         command_exit_code=1,
     )
     assert fail_snapshot["status"] == "fail"
+    assert fail_snapshot["evidence_git_sha"] == "abc123"
+    assert fail_snapshot["git_sha"] == "abc123"
 
 
 def test_build_quality_snapshot_graceful_when_summary_missing() -> None:
@@ -163,4 +167,6 @@ def test_build_quality_snapshot_graceful_when_summary_missing() -> None:
     )
     assert snapshot["status"] == "fail"
     assert snapshot["pytest"]["passed"] == 0
+    assert snapshot["evidence_git_sha"] == "abc123"
+    assert snapshot["git_sha"] == "abc123"
     assert "pytest summary parse failed" in str(snapshot.get("warning", ""))

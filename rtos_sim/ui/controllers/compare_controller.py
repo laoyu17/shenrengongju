@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from rtos_sim.analysis import build_compare_report
-from rtos_sim.ui.compare_io import read_metrics_json, write_compare_report_csv, write_compare_report_json
+from rtos_sim.ui.compare_io import (
+    read_metrics_json,
+    write_compare_report_csv,
+    write_compare_report_json,
+    write_compare_report_markdown,
+)
 
 
 class UiErrorLogger(Protocol):
@@ -201,3 +206,23 @@ class CompareController:
             QMessageBox.critical(self._owner, "Export failed", str(exc))
             return
         self._owner._status_label.setText(f"Compare CSV exported: {path}")
+
+    def on_compare_export_markdown(self) -> None:
+        latest_report = self._get_latest_compare_report()
+        if latest_report is None:
+            QMessageBox.information(self._owner, "Compare", "Build compare report first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self._owner,
+            "Save compare report markdown",
+            str(Path.cwd() / "compare_report.md"),
+            "Markdown Files (*.md)",
+        )
+        if not path:
+            return
+        try:
+            write_compare_report_markdown(path, latest_report)
+        except OSError as exc:
+            QMessageBox.critical(self._owner, "Export failed", str(exc))
+            return
+        self._owner._status_label.setText(f"Compare Markdown exported: {path}")

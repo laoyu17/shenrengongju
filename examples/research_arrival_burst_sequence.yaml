@@ -1,0 +1,46 @@
+version: "0.2"
+platform:
+  processor_types:
+    - id: CPU
+      name: cpu-cluster
+      core_count: 1
+      speed_factor: 1.0
+  cores:
+    - id: c0
+      type_id: CPU
+      speed_factor: 1.0
+resources: []
+
+tasks:
+  - id: t_burst
+    name: burst_sequence_non_rt
+    task_type: non_rt
+    arrival: 0
+    arrival_process:
+      type: custom
+      params:
+        generator: burst_sequence
+        burst_intervals: "0.3,0.3"
+        recovery_interval: 1.5
+        repeat: true
+      max_releases: 6
+    subtasks:
+      - id: s0
+        predecessors: []
+        successors: []
+        segments:
+          - id: seg0
+            index: 1
+            wcet: 0.1
+
+scheduler:
+  name: edf
+  params:
+    event_id_mode: deterministic
+sim:
+  duration: 8.0
+  seed: 19
+planning:
+  enabled: true
+  planner: np_edf
+  task_scope: all

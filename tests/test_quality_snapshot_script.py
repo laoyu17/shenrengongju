@@ -52,6 +52,7 @@ def test_main_reuses_existing_artifacts_without_running_pytest(tmp_path: Path) -
     assert payload["pytest"]["passed"] == 90
     assert payload["coverage"]["line_rate"] == 90.0
     assert payload["status"] == "pass"
+    assert payload["evidence_git_sha"] == payload["git_sha"]
     assert "reuse_existing_artifacts" in payload["command"]
 
 
@@ -94,6 +95,7 @@ def test_main_reuse_mode_returns_non_zero_when_summary_has_failures(tmp_path: Pa
     assert code == 1
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["status"] == "fail"
+    assert payload["evidence_git_sha"] == payload["git_sha"]
     assert payload["command_exit_code"] == 0
 
 
@@ -122,6 +124,7 @@ def test_main_reuse_mode_accepts_quiet_progress_only_output(tmp_path: Path) -> N
     assert code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["status"] == "pass"
+    assert payload["evidence_git_sha"] == payload["git_sha"]
     assert payload["pytest"]["passed"] == 36
     assert payload["pytest"]["parse_mode"] == "quiet_progress"
 

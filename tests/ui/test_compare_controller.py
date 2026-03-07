@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from rtos_sim.analysis import build_compare_report
 from rtos_sim.ui.controllers.compare_controller import CompareController
 
 
@@ -226,9 +227,10 @@ def test_use_latest_and_build_report(monkeypatch: pytest.MonkeyPatch) -> None:
     output = owner._compare_output.toPlainText()
     assert '"left_label": "left"' in output
     assert '"right_label": "right"' in output
+    assert '"comparison_mode": "two_way"' in output
 
 
-def test_export_json_and_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_export_json_csv_and_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     owner = _Owner()
     controller = _build_controller(owner, [])
 
@@ -245,18 +247,26 @@ def test_export_json_and_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     controller.on_compare_export_json()
     controller.on_compare_export_csv()
-    assert [title for title, _ in info_calls] == ["Compare", "Compare"]
+    controller.on_compare_export_markdown()
+    assert [title for title, _ in info_calls] == ["Compare", "Compare", "Compare"]
 
-    owner._latest_compare_report = {
-        "left_label": "l",
-        "right_label": "r",
-        "scalar_metrics": [],
-        "core_utilization": [],
-    }
+    owner._latest_compare_report = build_compare_report(
+        {"jobs_completed": 1, "core_utilization": {"c0": 0.2}},
+        {"jobs_completed": 3, "core_utilization": {"c0": 0.6}},
+        left_label="l",
+        right_label="r",
+    )
 
     json_path = tmp_path / "report.json"
     csv_path = tmp_path / "report.csv"
-    chooser = iter([(str(json_path), "JSON Files (*.json)"), (str(csv_path), "CSV Files (*.csv)")])
+    markdown_path = tmp_path / "report.md"
+    chooser = iter(
+        [
+            (str(json_path), "JSON Files (*.json)"),
+            (str(csv_path), "CSV Files (*.csv)"),
+            (str(markdown_path), "Markdown Files (*.md)"),
+        ]
+    )
     monkeypatch.setattr(
         "rtos_sim.ui.controllers.compare_controller.QFileDialog.getSaveFileName",
         lambda *_args, **_kwargs: next(chooser),
@@ -264,10 +274,13 @@ def test_export_json_and_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     controller.on_compare_export_json()
     controller.on_compare_export_csv()
+    controller.on_compare_export_markdown()
 
     assert json_path.exists()
     assert csv_path.exists()
-    assert owner._status_label.value == f"Compare CSV exported: {csv_path}"
+    assert markdown_path.exists()
+    assert "# Compare 报告" in markdown_path.read_text(encoding="utf-8")
+    assert owner._status_label.value == f"Compare Markdown exported: {markdown_path}"
 
     monkeypatch.setattr(
         "rtos_sim.ui.controllers.compare_controller.QFileDialog.getSaveFileName",
@@ -275,6 +288,7 @@ def test_export_json_and_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     )
     controller.on_compare_export_json()
     controller.on_compare_export_csv()
+    controller.on_compare_export_markdown()
 
     monkeypatch.setattr(
         "rtos_sim.ui.controllers.compare_controller.QFileDialog.getSaveFileName",
@@ -296,4 +310,14 @@ def test_export_json_and_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     )
     controller.on_compare_export_csv()
 
-    assert len(critical_calls) >= 2
+    monkeypatch.setattr(
+        "rtos_sim.ui.controllers.compare_controller.QFileDialog.getSaveFileName",
+        lambda *_args, **_kwargs: (str(markdown_path), "Markdown Files (*.md)"),
+    )
+    monkeypatch.setattr(
+        "rtos_sim.ui.controllers.compare_controller.write_compare_report_markdown",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    controller.on_compare_export_markdown()
+
+    assert len(critical_calls) >= 3
