@@ -21,9 +21,9 @@
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
 ## 2. 当前基线快照（2026-03-05）
-- 证据基线：`evidence_git_sha=1918a796983485af563a6358136b0df83b591759`
-- 工作区基线：`workspace_git_sha=1918a796983485af563a6358136b0df83b591759`
-- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `422 passed`）。
+- 证据基线：`evidence_git_sha=2f6e8911c65170af321078bc8e22e7964f67812c`
+- 工作区基线：`workspace_git_sha=2f6e8911c65170af321078bc8e22e7964f67812c`
+- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `424 passed`）。
 - 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.29%`，`line_rate=89.29225137278829`）。
 - 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`（兼容） + `compliance_profiles.profiles.research_v2.status`（当前主口径）
 - 当前结论：证明资产、报告模板化、CI 稳定化与 UI 研究报告出口已形成最小闭环；剩余差距集中在 Compare 的 N-way 场景装载 UI 与 DAG 多选/批量编辑。
