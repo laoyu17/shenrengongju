@@ -200,6 +200,33 @@ def test_i2_freeze_skips_python_alias_that_passes_probe_but_cannot_run_stdin(tmp
     assert meta["dirty_workspace"] is False
 
 
+def test_i2_freeze_prefers_py_launcher_for_windows_repro_commands(tmp_path: Path) -> None:
+    repo = _setup_repo(tmp_path)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+
+    for name in ["python3", "python", "py"]:
+        script = fake_bin / name
+        script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+
+    env = dict(**os.environ)
+    env["PYTHON_BIN"] = ""
+    env["pythonLocation"] = ""
+    env["OSTYPE"] = "msys"
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = _run(
+        ["bash", "review/scripts/i2_freeze_delivery_baseline.sh", "review/runtime/i2/test_freeze"],
+        cwd=repo,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    reproduce = (repo / "review/runtime/i2/test_freeze/reproduce_commands.txt").read_text(encoding="utf-8")
+    assert reproduce.splitlines()[0] == "py -3 -m pytest -q"
+
+
 
 def test_i2_clean_freeze_gate_orders_required_steps() -> None:
     script = (ROOT / "review/scripts/i2_clean_freeze_gate.sh").read_text(encoding="utf-8")

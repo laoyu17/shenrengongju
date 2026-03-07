@@ -23,6 +23,30 @@ normalize_bash_path() {
   printf '%s\n' "$path_value"
 }
 
+is_windows_bash() {
+  case "${OSTYPE:-}" in
+    msys*|cygwin*|win32*)
+      return 0
+      ;;
+  esac
+
+  if [[ -n "${MSYSTEM:-}" ]]; then
+    return 0
+  fi
+
+  if command -v cygpath >/dev/null 2>&1; then
+    return 0
+  fi
+
+  case "$(uname -s 2>/dev/null || true)" in
+    MSYS*|MINGW*|CYGWIN*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 resolve_python_repro_cmd() {
   local candidate=""
   local base_dir=""
@@ -43,6 +67,11 @@ resolve_python_repro_cmd() {
       printf '%s\n' "$candidate"
       return 0
     fi
+  fi
+
+  if is_windows_bash && command -v py >/dev/null 2>&1; then
+    printf 'py -3\n'
+    return 0
   fi
 
   if command -v python3 >/dev/null 2>&1; then
