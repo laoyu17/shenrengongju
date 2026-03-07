@@ -41,7 +41,7 @@ jobs:
 
       - name: Run ruff check
         run: |
-          ruff check .
+          python -m ruff check .
 
       - name: Validate tag matches pyproject version
         env:

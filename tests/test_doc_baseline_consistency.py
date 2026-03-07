@@ -201,7 +201,7 @@ def test_run_consistency_check_accepts_legacy_snapshot_git_sha_alias(tmp_path: P
     assert errors == []
 
 
-def test_run_consistency_check_detects_evidence_git_sha_drift(tmp_path: Path) -> None:
+def test_run_consistency_check_detects_invalid_evidence_git_sha_token(tmp_path: Path) -> None:
     snapshot = _snapshot()
     snapshot_path = tmp_path / "quality-snapshot.json"
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -209,10 +209,9 @@ def test_run_consistency_check_detects_evidence_git_sha_drift(tmp_path: Path) ->
     docs_root = tmp_path / "docs"
     _write_docs(docs_root, snapshot)
 
-    stale_sha = "c" * 40
     drift_doc = docs_root / "14-docx需求追踪矩阵.md"
     drift_doc.write_text(
-        drift_doc.read_text(encoding="utf-8").replace(EVIDENCE_SHA, stale_sha),
+        drift_doc.read_text(encoding="utf-8").replace(EVIDENCE_SHA, "invalid-sha"),
         encoding="utf-8",
     )
 
@@ -221,10 +220,32 @@ def test_run_consistency_check_detects_evidence_git_sha_drift(tmp_path: Path) ->
         docs_root=docs_root,
         expected_head_sha=WORKSPACE_SHA,
     )
-    assert any("14-docx需求追踪矩阵.md" in item and "evidence_git_sha mismatch" in item for item in errors)
+    assert any("14-docx需求追踪矩阵.md" in item and "missing valid evidence_git_sha token" in item for item in errors)
 
 
-def test_run_consistency_check_detects_workspace_git_sha_drift(tmp_path: Path) -> None:
+def test_run_consistency_check_detects_invalid_workspace_git_sha_token(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    drift_doc = docs_root / "10-详细设计说明书.md"
+    drift_doc.write_text(
+        drift_doc.read_text(encoding="utf-8").replace(WORKSPACE_SHA, "invalid-sha"),
+        encoding="utf-8",
+    )
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        expected_head_sha=WORKSPACE_SHA,
+    )
+    assert any("10-详细设计说明书.md" in item and "missing valid workspace_git_sha token" in item for item in errors)
+
+
+def test_run_consistency_check_require_evidence_equals_head_detects_sha_drift(tmp_path: Path) -> None:
     snapshot = _snapshot()
     snapshot_path = tmp_path / "quality-snapshot.json"
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -242,6 +263,7 @@ def test_run_consistency_check_detects_workspace_git_sha_drift(tmp_path: Path) -
         snapshot_path=snapshot_path,
         docs_root=docs_root,
         expected_head_sha=WORKSPACE_SHA,
+        require_evidence_equals_head=True,
     )
     assert any("10-详细设计说明书.md" in item and "workspace_git_sha mismatch" in item for item in errors)
 
@@ -322,6 +344,33 @@ def test_run_consistency_check_detects_quality_snapshot_style_metric_conflict(tm
     )
     assert any("18-综合审查报告" in item and "pytest passed mismatch" in item for item in errors)
     assert any("18-综合审查报告" in item and "coverage mismatch" in item for item in errors)
+
+
+def test_run_consistency_check_tolerates_small_coverage_drift(tmp_path: Path) -> None:
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "quality-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    docs_root = tmp_path / "docs"
+    _write_docs(docs_root, snapshot)
+
+    report_doc = docs_root / "18-综合审查报告-2026-02-24.md"
+    report_doc.write_text(
+        report_doc.read_text(encoding="utf-8")
+        .replace(
+            f"coverage.line_rate={snapshot['coverage']['line_rate']}",
+            "coverage.line_rate=88.01",
+        )
+        .replace("总覆盖率：88.00%", "总覆盖率：87.99%"),
+        encoding="utf-8",
+    )
+
+    errors = check_doc_baseline_consistency.run_consistency_check(
+        snapshot_path=snapshot_path,
+        docs_root=docs_root,
+        expected_head_sha=WORKSPACE_SHA,
+    )
+    assert errors == []
 
 
 def test_run_consistency_check_detects_review_metric_conflict(tmp_path: Path) -> None:

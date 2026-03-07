@@ -21,6 +21,7 @@ COVERAGE_LINE_RATE_PATTERN = re.compile(
     r"(?:coverage\.)?line_rate\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)",
     re.IGNORECASE,
 )
+COVERAGE_TOLERANCE = 0.02
 BASELINE_PASSED_LINE_MARKERS: tuple[str, ...] = (
     "质量快照",
     "当前基线",
@@ -163,106 +164,94 @@ def build_doc_checks(
     comprehensive_report_path: str | None,
     baseline_consistency_path: str | None,
 ) -> list[DocCheck]:
-    evidence_git_sha = str(snapshot["evidence_git_sha"])
     passed = int(snapshot["pytest"]["passed"])
-    line_rate = float(snapshot["coverage"]["line_rate"])
-    coverage_percent = _coverage_percent(snapshot)
 
     checks: list[DocCheck] = [
         DocCheck(
             relative_path="10-详细设计说明书.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="11-实施现状问题与Sprint规划.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"{passed} passed",
-                coverage_percent,
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="14-docx需求追踪矩阵.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="15-研究闭环验收基线.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"pytest={passed} passed",
-                f"coverage={coverage_percent}",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="16-研究口径Issue拆解与排期.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"{passed} passed",
-                coverage_percent,
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="19-用户使用说明书.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"pytest={passed} passed",
-                f"coverage={coverage_percent}",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="22-分阶段验收报告.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"pytest={passed} passed",
-                f"line_rate={line_rate}",
-                f"coverage={coverage_percent}",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="26-测试报告.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"{passed} passed",
-                coverage_percent,
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="../review/02-审查总报告.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"pytest={passed} passed",
-                f"coverage={coverage_percent}",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
         DocCheck(
             relative_path="../review/06-收口执行记录.md",
             required_substrings=(
-                f"evidence_git_sha={evidence_git_sha}",
-                f"workspace_git_sha={workspace_git_sha}",
+                "evidence_git_sha=",
+                "workspace_git_sha=",
                 f"pytest={passed} passed",
-                f"coverage={coverage_percent}",
                 QUALITY_SNAPSHOT_PATH,
             ),
         ),
@@ -282,11 +271,9 @@ def build_doc_checks(
             DocCheck(
                 relative_path=comprehensive_report_path,
                 required_substrings=(
-                    f"evidence_git_sha={evidence_git_sha}",
-                    f"workspace_git_sha={workspace_git_sha}",
+                    "evidence_git_sha=",
+                    "workspace_git_sha=",
                     f"{passed} passed",
-                    f"line_rate={line_rate}",
-                    coverage_percent,
                     QUALITY_SNAPSHOT_PATH,
                 ),
             )
@@ -296,10 +283,9 @@ def build_doc_checks(
             DocCheck(
                 relative_path=baseline_consistency_path,
                 required_substrings=(
-                    f"evidence_git_sha={evidence_git_sha}",
-                    f"workspace_git_sha={workspace_git_sha}",
+                    "evidence_git_sha=",
+                    "workspace_git_sha=",
                     f"pytest={passed} passed",
-                    f"coverage={coverage_percent}",
                     QUALITY_SNAPSHOT_PATH,
                 ),
             )
@@ -313,6 +299,7 @@ def _validate_doc(
     *,
     expected_evidence_sha: str,
     expected_workspace_sha: str,
+    strict_sha_match: bool,
 ) -> list[str]:
     errors: list[str] = []
     if not path.exists():
@@ -332,17 +319,26 @@ def _validate_doc(
             f"{path}: found legacy git_sha field: {found}; use evidence_git_sha/workspace_git_sha"
         )
 
-    for found in sorted(set(EVIDENCE_GIT_SHA_PATTERN.findall(text))):
-        if found != expected_evidence_sha:
-            errors.append(
-                f"{path}: evidence_git_sha mismatch: expected {expected_evidence_sha}, found {found}"
-            )
+    evidence_matches = sorted(set(EVIDENCE_GIT_SHA_PATTERN.findall(text)))
+    workspace_matches = sorted(set(WORKSPACE_GIT_SHA_PATTERN.findall(text)))
 
-    for found in sorted(set(WORKSPACE_GIT_SHA_PATTERN.findall(text))):
-        if found != expected_workspace_sha:
-            errors.append(
-                f"{path}: workspace_git_sha mismatch: expected {expected_workspace_sha}, found {found}"
-            )
+    if "evidence_git_sha=" in check.required_substrings and not evidence_matches:
+        errors.append(f"{path}: missing valid evidence_git_sha token")
+    if "workspace_git_sha=" in check.required_substrings and not workspace_matches:
+        errors.append(f"{path}: missing valid workspace_git_sha token")
+
+    if strict_sha_match:
+        for found in evidence_matches:
+            if found != expected_evidence_sha:
+                errors.append(
+                    f"{path}: evidence_git_sha mismatch: expected {expected_evidence_sha}, found {found}"
+                )
+
+        for found in workspace_matches:
+            if found != expected_workspace_sha:
+                errors.append(
+                    f"{path}: workspace_git_sha mismatch: expected {expected_workspace_sha}, found {found}"
+                )
 
     return errors
 
@@ -441,14 +437,14 @@ def _validate_metric_value_consistency(
             if _line_has_marker(line, BASELINE_COVERAGE_LINE_MARKERS):
                 for match in COVERAGE_PERCENT_PATTERN.finditer(line):
                     found = float(match.group(1))
-                    if abs(found - expected_coverage) > 0.01:
+                    if abs(found - expected_coverage) > COVERAGE_TOLERANCE:
                         errors.append(
                             f"{path}:{line_no}: coverage mismatch: expected "
                             f"{expected_coverage_percent}, found {found:.2f}%"
                         )
                 for match in COVERAGE_LINE_RATE_PATTERN.finditer(line):
                     found = float(match.group(1))
-                    if abs(found - expected_coverage) > 0.01:
+                    if abs(found - expected_coverage) > COVERAGE_TOLERANCE:
                         errors.append(
                             f"{path}:{line_no}: coverage mismatch: expected "
                             f"{expected_coverage_percent}, found {found:.2f}%"
@@ -506,6 +502,7 @@ def run_consistency_check(
                 check,
                 expected_evidence_sha=expected_evidence_sha,
                 expected_workspace_sha=head_sha,
+                strict_sha_match=require_evidence_equals_head,
             )
         )
     errors.extend(

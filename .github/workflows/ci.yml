@@ -97,7 +97,7 @@ jobs:
 
       - name: Run ruff check
         run: |
-          ruff check .
+          python -m ruff check .
 
   package:
     name: Build Distribution Artifacts
