@@ -17,6 +17,18 @@ printf 'id\tlabel\trc\tlog\n' > "$RESULT_TSV"
 
 declare -a PYTHON_CMD=()
 
+normalize_bash_path() {
+  local path_value="$1"
+  if [[ -z "$path_value" ]]; then
+    return 1
+  fi
+  if command -v cygpath >/dev/null 2>&1 && [[ "$path_value" =~ ^[A-Za-z]:[\\/].* ]]; then
+    cygpath -u "$path_value"
+    return 0
+  fi
+  printf '%s\n' "$path_value"
+}
+
 python_cmd_supports_stdin() {
   local output
   if ! output="$("$@" - <<'PY' 2>/dev/null
@@ -30,9 +42,12 @@ PY
 }
 
 resolve_python_cmd() {
+  local candidate=""
+  local base_dir=""
+
   if [[ -n "${PYTHON_BIN:-}" ]]; then
-    if python_cmd_supports_stdin "$PYTHON_BIN"; then
-      PYTHON_CMD=("$PYTHON_BIN")
+    if candidate="$(normalize_bash_path "$PYTHON_BIN" 2>/dev/null)" && python_cmd_supports_stdin "$candidate"; then
+      PYTHON_CMD=("$candidate")
       return 0
     fi
     echo "[ERROR] PYTHON_BIN is not executable: ${PYTHON_BIN}" >&2
@@ -40,13 +55,15 @@ resolve_python_cmd() {
   fi
 
   if [[ -n "${pythonLocation:-}" ]]; then
-    local candidate="${pythonLocation}/python"
-    if [[ -f "${candidate}.exe" ]]; then
-      candidate="${candidate}.exe"
-    fi
-    if [[ -f "$candidate" ]] && python_cmd_supports_stdin "$candidate"; then
-      PYTHON_CMD=("$candidate")
-      return 0
+    if base_dir="$(normalize_bash_path "$pythonLocation" 2>/dev/null)"; then
+      candidate="${base_dir%/}/python"
+      if [[ -f "${candidate}.exe" ]]; then
+        candidate="${candidate}.exe"
+      fi
+      if [[ -f "$candidate" ]] && python_cmd_supports_stdin "$candidate"; then
+        PYTHON_CMD=("$candidate")
+        return 0
+      fi
     fi
   fi
 
