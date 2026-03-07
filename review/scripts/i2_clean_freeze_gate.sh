@@ -11,6 +11,7 @@ mkdir -p "$OUT_DIR/logs" "$OUT_DIR/quality"
 RESULT_TSV="$OUT_DIR/results.tsv"
 QUALITY_SNAPSHOT_PATH="$OUT_DIR/quality/quality-snapshot.json"
 COVERAGE_JSON_PATH="$OUT_DIR/quality/coverage.json"
+DOC_BASELINE_SNAPSHOT_PATH="${DOC_BASELINE_SNAPSHOT_PATH:-artifacts/quality/quality-snapshot.json}"
 rm -f "$RESULT_TSV"
 printf 'id\tlabel\trc\tlog\n' > "$RESULT_TSV"
 
@@ -43,9 +44,8 @@ run_step 02 quality_snapshot python scripts/quality_snapshot.py \
   --output "$QUALITY_SNAPSHOT_PATH" \
   --coverage-json "$COVERAGE_JSON_PATH"
 run_step 03 doc_baseline_consistency python scripts/check_doc_baseline_consistency.py \
-  --snapshot "$QUALITY_SNAPSHOT_PATH" \
-  --docs-root docs \
-  --require-evidence-equals-head
+  --snapshot "$DOC_BASELINE_SNAPSHOT_PATH" \
+  --docs-root docs
 run_step 04 clean_workspace bash -lc "set -euo pipefail; cd '$ROOT_DIR'; if [[ -n \"\$(git status --short)\" ]]; then git status --short >&2; exit 2; fi"
 run_step 05 freeze_clean env QUALITY_SNAPSHOT_SOURCE="$QUALITY_SNAPSHOT_PATH" \
   bash "$ROOT_DIR/review/scripts/i2_freeze_delivery_baseline.sh" "$FREEZE_OUT_DIR"

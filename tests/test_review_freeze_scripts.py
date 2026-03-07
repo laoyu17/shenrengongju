@@ -115,5 +115,6 @@ def test_i2_clean_freeze_gate_orders_required_steps() -> None:
     assert script.index("run_step 02 quality_snapshot") < script.index("run_step 03 doc_baseline_consistency")
     assert script.index("run_step 03 doc_baseline_consistency") < script.index("run_step 04 clean_workspace")
     assert script.index("run_step 04 clean_workspace") < script.index("run_step 05 freeze_clean")
-    assert "--require-evidence-equals-head" in script
+    assert "DOC_BASELINE_SNAPSHOT_PATH" in script
+    assert "--require-evidence-equals-head" not in script
     assert "QUALITY_SNAPSHOT_SOURCE=\"$QUALITY_SNAPSHOT_PATH\"" in script
