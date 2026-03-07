@@ -11,6 +11,50 @@ TAG_NAME="${BASELINE_TAG:-delivery-baseline-${STAMP}}"
 ALLOW_DIRTY_FREEZE="${ALLOW_DIRTY_FREEZE:-0}"
 QUALITY_SNAPSHOT_SOURCE="${QUALITY_SNAPSHOT_SOURCE:-artifacts/quality/quality-snapshot.json}"
 
+declare -a PYTHON_CMD=()
+PYTHON_REPRO_CMD="python"
+
+resolve_python_cmd() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    if "$PYTHON_BIN" -c "import sys" >/dev/null 2>&1; then
+      PYTHON_CMD=("$PYTHON_BIN")
+      PYTHON_REPRO_CMD="$PYTHON_BIN"
+      return 0
+    fi
+    echo "[ERROR] PYTHON_BIN is not executable: ${PYTHON_BIN}" >&2
+    exit 127
+  fi
+
+  if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(python3)
+    PYTHON_REPRO_CMD="python3"
+    return 0
+  fi
+
+  if command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(py -3)
+    PYTHON_REPRO_CMD="py -3"
+    return 0
+  fi
+
+  if command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(python)
+    PYTHON_REPRO_CMD="python"
+    return 0
+  fi
+
+  if command -v py >/dev/null 2>&1 && py -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(py)
+    PYTHON_REPRO_CMD="py"
+    return 0
+  fi
+
+  echo "[ERROR] no usable Python interpreter found; set PYTHON_BIN explicitly" >&2
+  exit 127
+}
+
+resolve_python_cmd
+
 CHANGE_DIR="${OUT_DIR}/change_list"
 ARTIFACT_DIR="${OUT_DIR}/artifacts"
 
@@ -80,22 +124,22 @@ copy_artifact "review/scripts/i2_freeze_delivery_baseline.sh" "scripts/i2_freeze
 copy_artifact "review/scripts/strict_plan_pipeline.sh" "scripts/strict_plan_pipeline.sh"
 copy_artifact ".github/workflows/ci.yml" "ci/ci.yml"
 
-cat > "${OUT_DIR}/reproduce_commands.txt" <<EOF
-python -m pytest -q
+cat > "${OUT_DIR}/reproduce_commands.txt" <<EOF2
+${PYTHON_REPRO_CMD} -m pytest -q
 bash review/scripts/i1_freeze_sched_rate_gate.sh
 bash review/scripts/i1_ci_gate.sh
 QUALITY_SNAPSHOT_SOURCE=${QUALITY_SNAPSHOT_SOURCE} bash review/scripts/i2_freeze_delivery_baseline.sh ${OUT_DIR}
-EOF
+EOF2
 
-cat > "${OUT_DIR}/tag.txt" <<EOF
+cat > "${OUT_DIR}/tag.txt" <<EOF2
 freeze_kind=${FREEZE_KIND}
 tag_name=${TAG_NAME}
 tag_status=${TAG_STATUS}
 head_commit=${HEAD_COMMIT}
 snapshot_id=${SNAPSHOT_ID}
-EOF
+EOF2
 
-python - <<'PY' "${OUT_DIR}" "${TIMESTAMP_UTC}" "${SNAPSHOT_ID}" "${HEAD_COMMIT}" "${TAG_NAME}" "${TAG_STATUS}" "${CHANGED_COUNT}" "${FREEZE_KIND}" "${ALLOW_DIRTY_FREEZE}"
+"${PYTHON_CMD[@]}" - "${OUT_DIR}" "${TIMESTAMP_UTC}" "${SNAPSHOT_ID}" "${HEAD_COMMIT}" "${TAG_NAME}" "${TAG_STATUS}" "${CHANGED_COUNT}" "${FREEZE_KIND}" "${ALLOW_DIRTY_FREEZE}" <<'PY'
 from __future__ import annotations
 
 import hashlib

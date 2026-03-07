@@ -15,6 +15,44 @@ DOC_BASELINE_SNAPSHOT_PATH="${DOC_BASELINE_SNAPSHOT_PATH:-artifacts/quality/qual
 rm -f "$RESULT_TSV"
 printf 'id\tlabel\trc\tlog\n' > "$RESULT_TSV"
 
+declare -a PYTHON_CMD=()
+
+resolve_python_cmd() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    if "$PYTHON_BIN" -c "import sys" >/dev/null 2>&1; then
+      PYTHON_CMD=("$PYTHON_BIN")
+      return 0
+    fi
+    echo "[ERROR] PYTHON_BIN is not executable: ${PYTHON_BIN}" >&2
+    exit 127
+  fi
+
+  if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(python3)
+    return 0
+  fi
+
+  if command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(py -3)
+    return 0
+  fi
+
+  if command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(python)
+    return 0
+  fi
+
+  if command -v py >/dev/null 2>&1 && py -c "import sys" >/dev/null 2>&1; then
+    PYTHON_CMD=(py)
+    return 0
+  fi
+
+  echo "[ERROR] no usable Python interpreter found; set PYTHON_BIN explicitly" >&2
+  exit 127
+}
+
+resolve_python_cmd
+
 FAIL_COUNT=0
 FINAL_RC=0
 
@@ -39,11 +77,11 @@ run_step() {
   fi
 }
 
-run_step 01 pytest_full python -m pytest -q
-run_step 02 quality_snapshot python scripts/quality_snapshot.py \
+run_step 01 pytest_full "${PYTHON_CMD[@]}" -m pytest -q
+run_step 02 quality_snapshot "${PYTHON_CMD[@]}" scripts/quality_snapshot.py \
   --output "$QUALITY_SNAPSHOT_PATH" \
   --coverage-json "$COVERAGE_JSON_PATH"
-run_step 03 doc_baseline_consistency python scripts/check_doc_baseline_consistency.py \
+run_step 03 doc_baseline_consistency "${PYTHON_CMD[@]}" scripts/check_doc_baseline_consistency.py \
   --snapshot "$DOC_BASELINE_SNAPSHOT_PATH" \
   --docs-root docs
 run_step 04 clean_workspace bash -lc "set -euo pipefail; cd '$ROOT_DIR'; if [[ -n \"\$(git status --short)\" ]]; then git status --short >&2; exit 2; fi"

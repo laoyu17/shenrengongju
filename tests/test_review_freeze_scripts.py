@@ -109,6 +109,42 @@ def test_i2_freeze_creates_clean_formal_snapshot_and_tag(tmp_path: Path) -> None
     assert _run(["git", "tag"], cwd=repo).stdout.strip()
 
 
+def test_i2_freeze_falls_back_to_py_launcher_when_python_alias_is_unusable(tmp_path: Path) -> None:
+    repo = _setup_repo(tmp_path)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+
+    (fake_bin / "python").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'Python was not found' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "py").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"${1:-}\" == \"-3\" ]]; then shift; fi\n"
+        f"exec {os.fsdecode(os.fsencode(os.sys.executable))!r} \"$@\"\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "python").chmod(0o755)
+    (fake_bin / "py").chmod(0o755)
+
+    env = dict(**os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = _run(
+        ["bash", "review/scripts/i2_freeze_delivery_baseline.sh", "review/runtime/i2/test_freeze"],
+        cwd=repo,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    meta = json.loads((repo / "review/runtime/i2/test_freeze/snapshot_meta.json").read_text(encoding="utf-8"))
+    assert meta["freeze_kind"] == "clean_formal"
+    assert meta["dirty_workspace"] is False
+
+
+
 def test_i2_clean_freeze_gate_orders_required_steps() -> None:
     script = (ROOT / "review/scripts/i2_clean_freeze_gate.sh").read_text(encoding="utf-8")
     assert script.index("run_step 01 pytest_full") < script.index("run_step 02 quality_snapshot")
