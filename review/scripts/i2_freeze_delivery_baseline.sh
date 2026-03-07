@@ -14,9 +14,21 @@ QUALITY_SNAPSHOT_SOURCE="${QUALITY_SNAPSHOT_SOURCE:-artifacts/quality/quality-sn
 declare -a PYTHON_CMD=()
 PYTHON_REPRO_CMD="python"
 
+python_cmd_supports_stdin() {
+  local output
+  if ! output="$("$@" - <<'PY' 2>/dev/null
+import sys
+sys.stdout.write("PYTHON_STDIN_OK")
+PY
+)"; then
+    return 1
+  fi
+  [[ "$output" == "PYTHON_STDIN_OK" ]]
+}
+
 resolve_python_cmd() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
-    if "$PYTHON_BIN" -c "import sys" >/dev/null 2>&1; then
+    if python_cmd_supports_stdin "$PYTHON_BIN"; then
       PYTHON_CMD=("$PYTHON_BIN")
       PYTHON_REPRO_CMD="$PYTHON_BIN"
       return 0
@@ -30,32 +42,32 @@ resolve_python_cmd() {
     if [[ -f "${candidate}.exe" ]]; then
       candidate="${candidate}.exe"
     fi
-    if [[ -f "$candidate" ]] && "$candidate" -c "import sys" >/dev/null 2>&1; then
+    if [[ -f "$candidate" ]] && python_cmd_supports_stdin "$candidate"; then
       PYTHON_CMD=("$candidate")
       PYTHON_REPRO_CMD="$candidate"
       return 0
     fi
   fi
 
-  if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1 && python_cmd_supports_stdin python3; then
     PYTHON_CMD=(python3)
     PYTHON_REPRO_CMD="python3"
     return 0
   fi
 
-  if command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+  if command -v py >/dev/null 2>&1 && python_cmd_supports_stdin py -3; then
     PYTHON_CMD=(py -3)
     PYTHON_REPRO_CMD="py -3"
     return 0
   fi
 
-  if command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1 && python_cmd_supports_stdin python; then
     PYTHON_CMD=(python)
     PYTHON_REPRO_CMD="python"
     return 0
   fi
 
-  if command -v py >/dev/null 2>&1 && py -c "import sys" >/dev/null 2>&1; then
+  if command -v py >/dev/null 2>&1 && python_cmd_supports_stdin py; then
     PYTHON_CMD=(py)
     PYTHON_REPRO_CMD="py"
     return 0
