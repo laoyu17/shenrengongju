@@ -60,14 +60,12 @@ run_step 01 plan_static python -m rtos_sim.cli.main plan-static \
 run_step 02 analyze_wcrt_strict python -m rtos_sim.cli.main analyze-wcrt \
   -c "$CONFIG_PATH" \
   --plan-json "$PLAN_JSON" \
-  --strict-plan-match \
   --out-json "$WCRT_JSON" \
   --out-csv "$WCRT_CSV"
 
 run_step 03 export_os_strict python -m rtos_sim.cli.main export-os-config \
   -c "$CONFIG_PATH" \
   --plan-json "$PLAN_JSON" \
-  --strict-plan-match \
   --out-json "$OS_JSON" \
   --out-csv "$OS_CSV"
 

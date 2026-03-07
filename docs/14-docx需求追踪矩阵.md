@@ -83,6 +83,6 @@
 
 ## 5. Phase 4 当前边界（2026-03-07）
 
-- Compare：结构与导出层已 N-way-ready，但 UI 仍采用 left/right 双路装载与构建。
+- Compare：结构与导出层已 N-way-ready，UI 也已切到 ordered scenarios 装载与构建；当前 backlog 只保留 DAG 深交互。
 - Research Report：UI 已提供导出入口，但底层仍复用既有 `research_report.py` 产物链，不单独维护第二套报告引擎。
 - DAG：多选 / 批量移动 / 批量删除未在本轮实现，继续作为后续 backlog。

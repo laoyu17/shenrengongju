@@ -221,4 +221,4 @@
 - Compare 已完成“报告结构与导出层 N-way-ready”收口：JSON 新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`，并支持 `JSON / CSV / Markdown` 导出。
 - UI 已新增 `Export Research Report`，直接复用 `build_model_relations_report`、`build_audit_report`、`build_research_report_payload` 与 `render_research_report_markdown`，输出 `.md + .json + -summary.csv`。
 - 文档口径已扩展同步到 `docs/18/19/22/25/26` 与 `review/02/06`，保证 30% 门禁、Compare 边界、Research Report 复用链、DAG backlog 四项表述一致。
-- 当前未完成边界继续保留：Compare UI 仍是 left/right 双路装载与构建；DAG 多选 / 批量移动 / 批量删除不纳入本轮完成项。
+- 当前未完成边界继续保留：Compare UI 的 ordered scenarios 闭环已完成；DAG 多选 / 批量移动 / 批量删除不纳入本轮完成项。

@@ -49,12 +49,10 @@ run_step 06 plan_at06 python -m rtos_sim.cli.main plan-static -c examples/at06_t
   --out-csv "$OUT_DIR/artifacts/at06_plan.csv"
 run_step 07 wcrt_at06_strict python -m rtos_sim.cli.main analyze-wcrt -c examples/at06_time_deterministic.yaml \
   --plan-json "$OUT_DIR/artifacts/at06_plan.json" \
-  --strict-plan-match \
   --out-json "$OUT_DIR/artifacts/at06_wcrt.json" \
   --out-csv "$OUT_DIR/artifacts/at06_wcrt.csv"
 run_step 08 export_os_at06_strict python -m rtos_sim.cli.main export-os-config -c examples/at06_time_deterministic.yaml \
   --plan-json "$OUT_DIR/artifacts/at06_plan.json" \
-  --strict-plan-match \
   --out-json "$OUT_DIR/artifacts/at06_os.json" \
   --out-csv "$OUT_DIR/artifacts/at06_os.csv"
 

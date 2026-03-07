@@ -34,7 +34,7 @@
 ## C. 重点清单核对
 
 - CLI：`plan-static/analyze-wcrt/export-os-config/benchmark-sched-rate/inspect-model/migrate-config` 已在 `rtos_sim/cli/main.py:508`~`521` 注册并具备错误码语义。
-- `--strict-plan-match`：`analyze-wcrt` 与 `export-os-config` 校验模型指纹，见 `rtos_sim/cli/parser_builder.py:143`、`246`，并有正负测试 `tests/test_cli_planning_commands.py:78`、`169`。
+- `--plan-json` 默认 strict：`run` / `analyze-wcrt` / `export-os-config` 默认校验 `spec_fingerprint + semantic_fingerprint`，`--allow-plan-mismatch` 为唯一显式放行入口；对应实现见 `rtos_sim/cli/parser_builder.py`、`rtos_sim/cli/handlers_planning.py`，并有正负测试 `tests/test_cli_planning_commands.py`。
 - Python API：`rtos_sim/api.py:113`、`142`、`260`、`419`；旧接口别名层 `rtos_sim/legacy/report_api.py:42`~`452`。
 - 配置与类型：`planning` 段定义于 `rtos_sim/io/schema.py:227`，类型约束在 `rtos_sim/model/spec.py:300`；序列化契约在 `rtos_sim/planning/types.py:121`、`255`、`294`。
 - UI闭环与四态：Planning 面板控件 `rtos_sim/ui/app.py:345`~`404`，动作链路 `rtos_sim/ui/controllers/planning_controller.py:151`~`231`，四态事件映射 `rtos_sim/ui/controllers/timeline_controller.py:53`~`102`。

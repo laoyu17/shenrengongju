@@ -458,8 +458,17 @@ class MainWindow(QMainWindow):
         self._details.setReadOnly(True)
         self._details.setMaximumHeight(200)
 
-        self._compare_left_label = QLineEdit("baseline")
-        self._compare_right_label = QLineEdit("candidate")
+        self._compare_left_label = QLineEdit("")
+        self._compare_right_label = QLineEdit("")
+        self._compare_scenario_label = QLineEdit("")
+        self._compare_scenario_label.setPlaceholderText("optional label for next added scenario")
+        self._compare_scenarios_list = QListWidget()
+        self._compare_scenarios_list.setMinimumHeight(104)
+        self._compare_add_metrics_button = QPushButton("Add Metrics File")
+        self._compare_add_latest_button = QPushButton("Add Latest Run")
+        self._compare_remove_selected_button = QPushButton("Remove Selected")
+        self._compare_move_up_button = QPushButton("Move Up")
+        self._compare_move_down_button = QPushButton("Move Down")
         self._compare_load_left_button = QPushButton("Load Left Metrics")
         self._compare_load_right_button = QPushButton("Load Right Metrics")
         self._compare_use_latest_left_button = QPushButton("Use Latest -> Left")
@@ -497,19 +506,19 @@ class MainWindow(QMainWindow):
 
     @property
     def _compare_left_metrics(self) -> dict[str, Any] | None:
-        return self._compare_panel_state.left_metrics
+        return self._compare_controller.get_scenario_metrics(0)
 
     @_compare_left_metrics.setter
     def _compare_left_metrics(self, value: dict[str, Any] | None) -> None:
-        self._compare_panel_state.left_metrics = value
+        self._compare_controller.set_scenario_metrics(0, value, default_label="baseline")
 
     @property
     def _compare_right_metrics(self) -> dict[str, Any] | None:
-        return self._compare_panel_state.right_metrics
+        return self._compare_controller.get_scenario_metrics(1)
 
     @_compare_right_metrics.setter
     def _compare_right_metrics(self, value: dict[str, Any] | None) -> None:
-        self._compare_panel_state.right_metrics = value
+        self._compare_controller.set_scenario_metrics(1, value, default_label="focus")
 
     @property
     def _latest_compare_report(self) -> dict[str, Any] | None:
@@ -784,6 +793,11 @@ class MainWindow(QMainWindow):
         self._dag_auto_layout_button.clicked.connect(self._on_dag_auto_layout)
         self._dag_persist_layout.toggled.connect(self._on_dag_persist_layout_toggled)
         self._compare_toggle_button.toggled.connect(self._on_compare_toggle)
+        self._compare_add_metrics_button.clicked.connect(self._on_compare_add_metrics)
+        self._compare_add_latest_button.clicked.connect(self._on_compare_add_latest)
+        self._compare_remove_selected_button.clicked.connect(self._on_compare_remove_selected)
+        self._compare_move_up_button.clicked.connect(self._on_compare_move_up)
+        self._compare_move_down_button.clicked.connect(self._on_compare_move_down)
         self._compare_load_left_button.clicked.connect(self._on_compare_load_left)
         self._compare_load_right_button.clicked.connect(self._on_compare_load_right)
         self._compare_use_latest_left_button.clicked.connect(self._on_compare_use_latest_left)
@@ -1948,6 +1962,21 @@ class MainWindow(QMainWindow):
 
     def _on_compare_toggle(self, checked: bool) -> None:
         self._compare_controller.on_compare_toggle(checked)
+
+    def _on_compare_add_metrics(self) -> None:
+        self._compare_controller.on_compare_add_metrics()
+
+    def _on_compare_add_latest(self) -> None:
+        self._compare_controller.on_compare_add_latest()
+
+    def _on_compare_remove_selected(self) -> None:
+        self._compare_controller.on_compare_remove_selected()
+
+    def _on_compare_move_up(self) -> None:
+        self._compare_controller.on_compare_move_selected_up()
+
+    def _on_compare_move_down(self) -> None:
+        self._compare_controller.on_compare_move_selected_down()
 
     def _rebalance_right_splitter(self, *, compare_open: bool) -> None:
         self._compare_controller.rebalance_right_splitter(compare_open=compare_open)

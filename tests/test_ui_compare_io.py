@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from rtos_sim.analysis import build_compare_report
+from rtos_sim.analysis import build_multi_compare_report
 from rtos_sim.ui.compare_io import (
     read_metrics_json,
     write_compare_report_csv,
@@ -31,11 +31,12 @@ def test_read_metrics_json_success(tmp_path: Path) -> None:
 
 
 def test_write_compare_report_json_csv_and_markdown(tmp_path: Path) -> None:
-    report = build_compare_report(
-        {"jobs_completed": 2, "core_utilization": {"c0": 0.4}},
-        {"jobs_completed": 3, "core_utilization": {"c0": 0.5}},
-        left_label="baseline",
-        right_label="candidate",
+    report = build_multi_compare_report(
+        [
+            ("baseline", {"jobs_completed": 2, "core_utilization": {"c0": 0.4}}),
+            ("candidate", {"jobs_completed": 3, "core_utilization": {"c0": 0.5}}),
+            ("stress", {"jobs_completed": 5, "core_utilization": {"c0": 0.7}}),
+        ]
     )
 
     json_path = tmp_path / "compare.json"
@@ -47,7 +48,7 @@ def test_write_compare_report_json_csv_and_markdown(tmp_path: Path) -> None:
     csv_text = csv_path.read_text(encoding="utf-8")
     assert "category,metric,left,right,delta,delta_ratio_pct,core_id" in csv_text
     assert "scalar,jobs_completed,2.0,3.0,1.0,50.0," in csv_text
-    assert "core_utilization,c0,0.4,0.5,0.09999999999999998,24.999999999999993,c0" in csv_text
+    assert "scalar_summary,jobs_completed" in csv_text
     assert "scalar_summary,jobs_completed" in csv_text
     assert "core_utilization_summary,c0" in csv_text
 

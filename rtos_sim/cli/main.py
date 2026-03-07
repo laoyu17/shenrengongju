@@ -23,6 +23,7 @@ from rtos_sim.cli.handlers_planning import (
     cmd_export_os_config,
     cmd_plan_static,
     parse_arrival_envelope_min_intervals,
+    resolve_plan_match_strictness,
 )
 from rtos_sim.core import SimEngine
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
@@ -248,6 +249,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
     try:
+        strict_plan_match = resolve_plan_match_strictness(args, command="run")
+        if strict_plan_match is None:
+            return 2
         spec = loader.load(args.config)
     except ConfigError as exc:
         print(f"[ERROR] {exc}")
@@ -269,7 +273,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             command="run",
             spec=spec,
             plan_payload=plan_payload,
-            strict=bool(args.strict_plan_match),
+            strict=strict_plan_match,
         ):
             return 2
         try:

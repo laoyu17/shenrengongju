@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from rtos_sim.analysis import build_compare_report
+from rtos_sim.analysis import build_multi_compare_report
 from rtos_sim.ui.controllers.compare_controller import CompareController
+from rtos_sim.ui.panel_state import ComparePanelState, CompareScenarioState
 
 
 @dataclass
@@ -87,6 +88,25 @@ class _Scroll:
         self.calls.append((widget, x_margin, y_margin))
 
 
+class _ListWidget:
+    def __init__(self) -> None:
+        self.items: list[str] = []
+        self._current_row = -1
+
+    def clear(self) -> None:
+        self.items.clear()
+        self._current_row = -1
+
+    def addItem(self, value: str) -> None:  # noqa: N802
+        self.items.append(value)
+
+    def currentRow(self) -> int:  # noqa: N802
+        return self._current_row
+
+    def setCurrentRow(self, value: int) -> None:  # noqa: N802
+        self._current_row = value
+
+
 class _Owner:
     _RIGHT_SPLITTER_LOWER_RATIO_EXPANDED = 0.9
     _RIGHT_SPLITTER_LOWER_RATIO_COLLAPSED = 0.3
@@ -98,14 +118,15 @@ class _Owner:
         self._compare_toggle_button = _Button()
         self._right_splitter: _Splitter | None = _Splitter([0, 0], height=50)
         self._telemetry_scroll: _Scroll | None = _Scroll()
+        self._compare_panel_state = ComparePanelState()
 
-        self._compare_left_metrics: dict | None = None
-        self._compare_right_metrics: dict | None = None
         self._latest_metrics_report: dict | None = None
         self._latest_compare_report: dict | None = None
 
         self._compare_left_label = _LineEdit("")
         self._compare_right_label = _LineEdit("")
+        self._compare_scenario_label = _LineEdit("")
+        self._compare_scenarios_list = _ListWidget()
         self._compare_output = _PlainText()
         self._status_label = _Label()
 
@@ -113,6 +134,50 @@ class _Owner:
 
     def _pick_metrics_file(self) -> str:
         return self._picked_paths.pop(0) if self._picked_paths else ""
+
+    @property
+    def _latest_compare_report(self) -> dict | None:
+        return self._compare_panel_state.latest_report
+
+    @_latest_compare_report.setter
+    def _latest_compare_report(self, value: dict | None) -> None:
+        self._compare_panel_state.latest_report = value
+
+    @property
+    def _compare_left_metrics(self) -> dict | None:
+        scenarios = self._compare_panel_state.scenarios
+        return scenarios[0].metrics if len(scenarios) >= 1 else None
+
+    @_compare_left_metrics.setter
+    def _compare_left_metrics(self, value: dict | None) -> None:
+        scenarios = self._compare_panel_state.scenarios
+        if value is None:
+            if scenarios:
+                del scenarios[0]
+            return
+        if scenarios:
+            scenarios[0] = CompareScenarioState(label="baseline", metrics=dict(value), source=scenarios[0].source)
+        else:
+            scenarios.append(CompareScenarioState(label="baseline", metrics=dict(value), source="legacy"))
+
+    @property
+    def _compare_right_metrics(self) -> dict | None:
+        scenarios = self._compare_panel_state.scenarios
+        return scenarios[1].metrics if len(scenarios) >= 2 else None
+
+    @_compare_right_metrics.setter
+    def _compare_right_metrics(self, value: dict | None) -> None:
+        scenarios = self._compare_panel_state.scenarios
+        if value is None:
+            if len(scenarios) >= 2:
+                del scenarios[1]
+            return
+        while len(scenarios) < 1:
+            scenarios.append(CompareScenarioState(label="baseline", metrics={}, source="legacy"))
+        if len(scenarios) >= 2:
+            scenarios[1] = CompareScenarioState(label="focus", metrics=dict(value), source=scenarios[1].source)
+        else:
+            scenarios.append(CompareScenarioState(label="focus", metrics=dict(value), source="legacy"))
 
 
 def _build_controller(owner: _Owner, errors: list[tuple[str, str | None]]) -> CompareController:
@@ -177,7 +242,8 @@ def test_load_metrics_and_error_paths(tmp_path: Path, monkeypatch: pytest.Monkey
     controller.on_compare_load_left()
 
     assert owner._compare_left_metrics == {"jobs_completed": 2}
-    assert "left metrics loaded" in owner._compare_output.toPlainText()
+    assert "baseline metrics loaded" in owner._compare_output.toPlainText()
+    assert owner._compare_scenarios_list.items[0].startswith("1. [baseline]")
 
     invalid_path = tmp_path / "invalid.json"
     invalid_path.write_text("[]", encoding="utf-8")
@@ -215,7 +281,7 @@ def test_use_latest_and_build_report(monkeypatch: pytest.MonkeyPatch) -> None:
 
     owner._compare_left_metrics = None
     controller.on_compare_build()
-    assert info_calls[-1][1].startswith("Please load/set both")
+    assert info_calls[-1][1].startswith("Please add at least two compare scenarios")
 
     owner._compare_left_metrics = {"jobs_completed": 2, "core_utilization": {"c0": 0.2}}
     owner._compare_right_metrics = {"jobs_completed": 5, "core_utilization": {"c0": 0.7}}
@@ -225,9 +291,52 @@ def test_use_latest_and_build_report(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert owner._latest_compare_report is not None
     output = owner._compare_output.toPlainText()
-    assert '"left_label": "left"' in output
-    assert '"right_label": "right"' in output
+    assert '"baseline_label": "baseline"' in output
+    assert '"focus_label": "focus"' in output
     assert '"comparison_mode": "two_way"' in output
+
+
+def test_add_remove_move_and_build_n_way_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = _Owner()
+    controller = _build_controller(owner, [])
+
+    info_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "rtos_sim.ui.controllers.compare_controller.QMessageBox.information",
+        lambda _parent, title, message: info_calls.append((title, message)),
+    )
+
+    controller.on_compare_remove_selected()
+    assert info_calls[-1][1] == "Select a scenario first."
+
+    owner._latest_metrics_report = {"jobs_completed": 2, "core_utilization": {"c0": 0.2}}
+    owner._compare_scenario_label.setText("baseline-a")
+    controller.on_compare_add_latest()
+
+    owner._latest_metrics_report = {"jobs_completed": 3, "core_utilization": {"c0": 0.3}}
+    owner._compare_scenario_label.setText("candidate-a")
+    controller.on_compare_add_latest()
+
+    metrics_path = tmp_path / "candidate-b.json"
+    metrics_path.write_text(json.dumps({"jobs_completed": 4, "core_utilization": {"c0": 0.4}}), encoding="utf-8")
+    owner._picked_paths = [str(metrics_path)]
+    owner._compare_scenario_label.setText("candidate-b")
+    controller.on_compare_add_metrics()
+
+    assert len(owner._compare_panel_state.scenarios) == 3
+    assert owner._compare_scenarios_list.items[0].startswith("1. [baseline] baseline-a")
+
+    owner._compare_scenarios_list.setCurrentRow(2)
+    controller.on_compare_move_selected_up()
+    assert owner._compare_panel_state.scenarios[1].label == "candidate-b"
+
+    owner._compare_scenarios_list.setCurrentRow(1)
+    controller.on_compare_remove_selected()
+    assert [scenario.label for scenario in owner._compare_panel_state.scenarios] == ["baseline-a", "candidate-a"]
+
+    controller.on_compare_build()
+    assert owner._latest_compare_report is not None
+    assert owner._latest_compare_report["comparison_mode"] == "two_way"
 
 
 def test_export_json_csv_and_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -250,11 +359,12 @@ def test_export_json_csv_and_markdown(tmp_path: Path, monkeypatch: pytest.Monkey
     controller.on_compare_export_markdown()
     assert [title for title, _ in info_calls] == ["Compare", "Compare", "Compare"]
 
-    owner._latest_compare_report = build_compare_report(
-        {"jobs_completed": 1, "core_utilization": {"c0": 0.2}},
-        {"jobs_completed": 3, "core_utilization": {"c0": 0.6}},
-        left_label="l",
-        right_label="r",
+    owner._latest_compare_report = build_multi_compare_report(
+        [
+            ("baseline", {"jobs_completed": 1, "core_utilization": {"c0": 0.2}}),
+            ("candidate", {"jobs_completed": 3, "core_utilization": {"c0": 0.6}}),
+            ("stress", {"jobs_completed": 5, "core_utilization": {"c0": 0.8}}),
+        ]
     )
 
     json_path = tmp_path / "report.json"

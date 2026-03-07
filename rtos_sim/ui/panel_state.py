@@ -7,9 +7,15 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class CompareScenarioState:
+    label: str
+    metrics: dict[str, Any]
+    source: str = ""
+
+
+@dataclass(slots=True)
 class ComparePanelState:
-    left_metrics: dict[str, Any] | None = None
-    right_metrics: dict[str, Any] | None = None
+    scenarios: list[CompareScenarioState] = field(default_factory=list)
     latest_report: dict[str, Any] | None = None
 
 

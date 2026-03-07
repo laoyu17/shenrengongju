@@ -7,27 +7,50 @@ cd "$ROOT_DIR"
 OUT_DIR="${1:-review/runtime/i2/baseline_freeze}"
 TIMESTAMP_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 STAMP="$(date -u +"%Y%m%d-%H%M%S")"
-SNAPSHOT_ID="baseline-freeze-${STAMP}"
 TAG_NAME="${BASELINE_TAG:-delivery-baseline-${STAMP}}"
+ALLOW_DIRTY_FREEZE="${ALLOW_DIRTY_FREEZE:-0}"
+QUALITY_SNAPSHOT_SOURCE="${QUALITY_SNAPSHOT_SOURCE:-artifacts/quality/quality-snapshot.json}"
 
 CHANGE_DIR="${OUT_DIR}/change_list"
 ARTIFACT_DIR="${OUT_DIR}/artifacts"
-mkdir -p "$CHANGE_DIR" "$ARTIFACT_DIR"
 
 HEAD_COMMIT="$(git rev-parse HEAD)"
-git status --short > "${CHANGE_DIR}/git_status_short.txt"
-git diff --stat > "${CHANGE_DIR}/git_diff_stat.txt"
-git diff --name-status > "${CHANGE_DIR}/git_diff_name_status.txt"
-CHANGED_COUNT="$(wc -l < "${CHANGE_DIR}/git_status_short.txt" | tr -d ' ')"
+GIT_STATUS_SHORT="$(git status --short)"
+GIT_DIFF_STAT="$(git diff --stat)"
+GIT_DIFF_NAME_STATUS="$(git diff --name-status)"
+CHANGED_COUNT="$(printf '%s\n' "$GIT_STATUS_SHORT" | sed '/^$/d' | wc -l | tr -d ' ')"
+DIRTY_WORKSPACE=false
+FREEZE_KIND="clean_formal"
+SNAPSHOT_ID="baseline-freeze-${STAMP}"
+
+if [[ "$CHANGED_COUNT" != "0" ]]; then
+  DIRTY_WORKSPACE=true
+  if [[ "$ALLOW_DIRTY_FREEZE" != "1" ]]; then
+    echo "[ERROR] baseline freeze requires clean workspace, changed_file_count=${CHANGED_COUNT}" >&2
+    echo "[ERROR] use ALLOW_DIRTY_FREEZE=1 only for historical dirty evidence snapshots" >&2
+    exit 2
+  fi
+  FREEZE_KIND="dirty_evidence"
+  SNAPSHOT_ID="baseline-dirty-evidence-${STAMP}"
+fi
+
+mkdir -p "$CHANGE_DIR" "$ARTIFACT_DIR"
+printf '%s\n' "$GIT_STATUS_SHORT" > "${CHANGE_DIR}/git_status_short.txt"
+printf '%s\n' "$GIT_DIFF_STAT" > "${CHANGE_DIR}/git_diff_stat.txt"
+printf '%s\n' "$GIT_DIFF_NAME_STATUS" > "${CHANGE_DIR}/git_diff_name_status.txt"
 
 TAG_STATUS="not_created"
-if git rev-parse -q --verify "refs/tags/${TAG_NAME}" >/dev/null; then
-  TAG_STATUS="exists"
+if [[ "$DIRTY_WORKSPACE" == true ]]; then
+  TAG_STATUS="skipped_dirty_evidence"
 else
-  if git tag "${TAG_NAME}" "${HEAD_COMMIT}" >/dev/null 2>&1; then
-    TAG_STATUS="created"
+  if git rev-parse -q --verify "refs/tags/${TAG_NAME}" >/dev/null; then
+    TAG_STATUS="exists"
   else
-    TAG_STATUS="failed"
+    if git tag "${TAG_NAME}" "${HEAD_COMMIT}" >/dev/null 2>&1; then
+      TAG_STATUS="created"
+    else
+      TAG_STATUS="failed"
+    fi
   fi
 fi
 
@@ -48,6 +71,7 @@ copy_artifact "review/runtime/runtime_evidence.json" "runtime/runtime_evidence.j
 copy_artifact "review/runtime/command_results.tsv" "runtime/command_results.tsv"
 copy_artifact "review/runtime/i1/ci_gate/results.tsv" "runtime/i1/ci_gate/results.tsv"
 copy_artifact "review/runtime/i1/sched_rate_gate/summary.txt" "runtime/i1/sched_rate_gate/summary.txt"
+copy_artifact "$QUALITY_SNAPSHOT_SOURCE" "quality/quality-snapshot.json"
 copy_artifact "review/03-问题台账.csv" "review/03-问题台账.csv"
 copy_artifact "review/06-收口执行记录.md" "review/06-收口执行记录.md"
 copy_artifact "review/scripts/i1_ci_gate.sh" "scripts/i1_ci_gate.sh"
@@ -56,20 +80,22 @@ copy_artifact "review/scripts/i2_freeze_delivery_baseline.sh" "scripts/i2_freeze
 copy_artifact "review/scripts/strict_plan_pipeline.sh" "scripts/strict_plan_pipeline.sh"
 copy_artifact ".github/workflows/ci.yml" "ci/ci.yml"
 
-cat > "${OUT_DIR}/reproduce_commands.txt" <<'EOF'
+cat > "${OUT_DIR}/reproduce_commands.txt" <<EOF
 python -m pytest -q
 bash review/scripts/i1_freeze_sched_rate_gate.sh
 bash review/scripts/i1_ci_gate.sh
+QUALITY_SNAPSHOT_SOURCE=${QUALITY_SNAPSHOT_SOURCE} bash review/scripts/i2_freeze_delivery_baseline.sh ${OUT_DIR}
 EOF
 
 cat > "${OUT_DIR}/tag.txt" <<EOF
+freeze_kind=${FREEZE_KIND}
 tag_name=${TAG_NAME}
 tag_status=${TAG_STATUS}
 head_commit=${HEAD_COMMIT}
 snapshot_id=${SNAPSHOT_ID}
 EOF
 
-python - <<'PY' "${OUT_DIR}" "${TIMESTAMP_UTC}" "${SNAPSHOT_ID}" "${HEAD_COMMIT}" "${TAG_NAME}" "${TAG_STATUS}" "${CHANGED_COUNT}"
+python - <<'PY' "${OUT_DIR}" "${TIMESTAMP_UTC}" "${SNAPSHOT_ID}" "${HEAD_COMMIT}" "${TAG_NAME}" "${TAG_STATUS}" "${CHANGED_COUNT}" "${FREEZE_KIND}" "${ALLOW_DIRTY_FREEZE}"
 from __future__ import annotations
 
 import hashlib
@@ -84,6 +110,8 @@ head_commit = sys.argv[4]
 tag_name = sys.argv[5]
 tag_status = sys.argv[6]
 changed_count = int(sys.argv[7])
+freeze_kind = sys.argv[8]
+allow_dirty_freeze = sys.argv[9] == "1"
 
 meta = {
     "snapshot_id": snapshot_id,
@@ -91,6 +119,9 @@ meta = {
     "head_commit": head_commit,
     "tag_name": tag_name,
     "tag_status": tag_status,
+    "freeze_kind": freeze_kind,
+    "formal_freeze": freeze_kind == "clean_formal",
+    "allow_dirty_freeze": allow_dirty_freeze,
     "changed_file_count": changed_count,
     "dirty_workspace": changed_count > 0,
     "paths": {
@@ -115,5 +146,6 @@ PY
 
 echo "[OK] baseline freeze snapshot generated"
 echo "[OK] out_dir=${OUT_DIR}"
+echo "[OK] freeze_kind=${FREEZE_KIND}"
 echo "[OK] tag=${TAG_NAME} (${TAG_STATUS})"
 echo "[OK] changed_file_count=${CHANGED_COUNT}"

@@ -113,7 +113,7 @@ def test_cli_plan_static_models_table_based_etm(tmp_path: Path) -> None:
     assert window["end_time"] - window["start_time"] == pytest.approx(2.0)
 
 
-def test_cli_analyze_wcrt_can_reuse_plan_json(tmp_path: Path) -> None:
+def test_cli_analyze_wcrt_can_reuse_matching_plan_json_by_default(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan.json"
     report_json = tmp_path / "wcrt.json"
 
@@ -132,7 +132,7 @@ def test_cli_analyze_wcrt_can_reuse_plan_json(tmp_path: Path) -> None:
         [
             "analyze-wcrt",
             "-c",
-            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
             "--plan-json",
             str(plan_json),
             "--out-json",
@@ -173,7 +173,6 @@ def test_cli_run_can_consume_plan_json(tmp_path: Path) -> None:
             str(EXAMPLES / "at06_time_deterministic.yaml"),
             "--plan-json",
             str(plan_json),
-            "--strict-plan-match",
             "--events-out",
             str(events_jsonl),
             "--metrics-out",
@@ -190,7 +189,7 @@ def test_cli_run_can_consume_plan_json(tmp_path: Path) -> None:
     assert isinstance(metrics.get("jobs_completed"), int)
 
 
-def test_cli_run_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
+def test_cli_run_default_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan_mismatch.json"
     code = main(
         [
@@ -210,7 +209,6 @@ def test_cli_run_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
             str(EXAMPLES / "at01_single_dag_single_core.yaml"),
             "--plan-json",
             str(plan_json),
-            "--strict-plan-match",
             "--metrics-out",
             str(tmp_path / "metrics.json"),
         ]
@@ -218,7 +216,7 @@ def test_cli_run_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
     assert code == 2
 
 
-def test_cli_analyze_wcrt_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
+def test_cli_analyze_wcrt_default_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan_mismatch.json"
     code = main(
         [
@@ -238,7 +236,6 @@ def test_cli_analyze_wcrt_strict_plan_match_fails_on_mismatch(tmp_path: Path) ->
             str(EXAMPLES / "at01_single_dag_single_core.yaml"),
             "--plan-json",
             str(plan_json),
-            "--strict-plan-match",
             "--out-json",
             str(tmp_path / "wcrt.json"),
         ]
@@ -246,7 +243,7 @@ def test_cli_analyze_wcrt_strict_plan_match_fails_on_mismatch(tmp_path: Path) ->
     assert code == 2
 
 
-def test_cli_analyze_wcrt_strict_plan_match_passes_on_match(tmp_path: Path) -> None:
+def test_cli_analyze_wcrt_strict_plan_match_compatibility_flag_still_passes_on_match(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan_match.json"
     code = main(
         [
@@ -295,6 +292,8 @@ def test_cli_export_os_config_outputs_json_and_csv(tmp_path: Path) -> None:
             "export-os-config",
             "--plan-json",
             str(plan_json),
+            "--config",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
             "--out-json",
             str(os_json),
             "--out-csv",
@@ -309,7 +308,7 @@ def test_cli_export_os_config_outputs_json_and_csv(tmp_path: Path) -> None:
     assert os_csv.exists()
 
 
-def test_cli_export_os_config_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
+def test_cli_export_os_config_default_strict_plan_match_fails_on_mismatch(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan_mismatch.json"
     code = main(
         [
@@ -329,7 +328,6 @@ def test_cli_export_os_config_strict_plan_match_fails_on_mismatch(tmp_path: Path
             str(plan_json),
             "--config",
             str(EXAMPLES / "at01_single_dag_single_core.yaml"),
-            "--strict-plan-match",
             "--out-json",
             str(tmp_path / "os.json"),
         ]
@@ -337,7 +335,7 @@ def test_cli_export_os_config_strict_plan_match_fails_on_mismatch(tmp_path: Path
     assert code == 2
 
 
-def test_cli_export_os_config_strict_plan_match_requires_config(tmp_path: Path) -> None:
+def test_cli_export_os_config_default_strict_plan_match_requires_config(tmp_path: Path) -> None:
     plan_json = tmp_path / "plan.json"
     code = main(
         [
@@ -355,12 +353,222 @@ def test_cli_export_os_config_strict_plan_match_requires_config(tmp_path: Path) 
             "export-os-config",
             "--plan-json",
             str(plan_json),
-            "--strict-plan-match",
             "--out-json",
             str(tmp_path / "os.json"),
         ]
     )
     assert code == 2
+
+
+def test_cli_run_allow_plan_mismatch_warns_and_continues(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan_json = tmp_path / "plan_mismatch.json"
+    metrics_json = tmp_path / "metrics.json"
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    payload = json.loads(plan_json.read_text(encoding="utf-8"))
+    payload["semantic_fingerprint"] = "semantic-mismatch-for-test"
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        metadata["semantic_fingerprint"] = "semantic-mismatch-for-test"
+    plan_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    code = main(
+        [
+            "run",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--plan-json",
+            str(plan_json),
+            "--allow-plan-mismatch",
+            "--metrics-out",
+            str(metrics_json),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[WARN] run: plan semantic mismatch" in captured.out
+    assert metrics_json.exists()
+
+
+def test_cli_analyze_wcrt_allow_plan_mismatch_warns_and_continues(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_json = tmp_path / "plan_mismatch.json"
+    report_json = tmp_path / "wcrt.json"
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    code = main(
+        [
+            "analyze-wcrt",
+            "-c",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--plan-json",
+            str(plan_json),
+            "--allow-plan-mismatch",
+            "--out-json",
+            str(report_json),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[WARN] analyze-wcrt: plan/config mismatch" in captured.out
+    assert report_json.exists()
+
+
+def test_cli_export_os_config_allow_plan_mismatch_warns_and_continues(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_json = tmp_path / "plan_mismatch.json"
+    os_json = tmp_path / "os.json"
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    code = main(
+        [
+            "export-os-config",
+            "--plan-json",
+            str(plan_json),
+            "--config",
+            str(EXAMPLES / "at01_single_dag_single_core.yaml"),
+            "--allow-plan-mismatch",
+            "--out-json",
+            str(os_json),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[WARN] export-os-config: plan/config mismatch" in captured.out
+    assert os_json.exists()
+
+
+def test_cli_plan_json_missing_fingerprints_fail_by_default(tmp_path: Path) -> None:
+    plan_json = tmp_path / "plan_missing_fingerprints.json"
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    payload = json.loads(plan_json.read_text(encoding="utf-8"))
+    payload.pop("spec_fingerprint", None)
+    payload.pop("semantic_fingerprint", None)
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.pop("spec_fingerprint", None)
+        metadata.pop("semantic_fingerprint", None)
+    plan_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    assert main([
+        "run",
+        "-c",
+        str(EXAMPLES / "at06_time_deterministic.yaml"),
+        "--plan-json",
+        str(plan_json),
+        "--metrics-out",
+        str(tmp_path / "run-metrics.json"),
+    ]) == 2
+    assert main([
+        "analyze-wcrt",
+        "-c",
+        str(EXAMPLES / "at06_time_deterministic.yaml"),
+        "--plan-json",
+        str(plan_json),
+        "--out-json",
+        str(tmp_path / "wcrt.json"),
+    ]) == 2
+    assert main([
+        "export-os-config",
+        "--plan-json",
+        str(plan_json),
+        "--config",
+        str(EXAMPLES / "at06_time_deterministic.yaml"),
+        "--out-json",
+        str(tmp_path / "os.json"),
+    ]) == 2
+
+
+def test_cli_plan_match_conflict_flags_fail(tmp_path: Path) -> None:
+    plan_json = tmp_path / "plan.json"
+    code = main(
+        [
+            "plan-static",
+            "-c",
+            str(EXAMPLES / "at06_time_deterministic.yaml"),
+            "--out-json",
+            str(plan_json),
+        ]
+    )
+    assert code == 0
+
+    assert main([
+        "run",
+        "-c",
+        str(EXAMPLES / "at06_time_deterministic.yaml"),
+        "--plan-json",
+        str(plan_json),
+        "--strict-plan-match",
+        "--allow-plan-mismatch",
+        "--metrics-out",
+        str(tmp_path / "run-metrics.json"),
+    ]) == 2
+    assert main([
+        "analyze-wcrt",
+        "-c",
+        str(EXAMPLES / "at06_time_deterministic.yaml"),
+        "--plan-json",
+        str(plan_json),
+        "--strict-plan-match",
+        "--allow-plan-mismatch",
+        "--out-json",
+        str(tmp_path / "wcrt.json"),
+    ]) == 2
+    assert main([
+        "export-os-config",
+        "--plan-json",
+        str(plan_json),
+        "--config",
+        str(EXAMPLES / "at06_time_deterministic.yaml"),
+        "--strict-plan-match",
+        "--allow-plan-mismatch",
+        "--out-json",
+        str(tmp_path / "os.json"),
+    ]) == 2
 
 
 def test_schedule_table_to_runtime_windows_keeps_segment_level_fields(tmp_path: Path) -> None:

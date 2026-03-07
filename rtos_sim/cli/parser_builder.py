@@ -53,7 +53,12 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
     run_parser.add_argument(
         "--strict-plan-match",
         action="store_true",
-        help="strictly require --plan-json spec/semantic fingerprints match --config",
+        help="compatibility flag; strict plan matching is already default with --plan-json",
+    )
+    run_parser.add_argument(
+        "--allow-plan-mismatch",
+        action="store_true",
+        help="warn and continue when --plan-json fingerprints are missing/mismatched",
     )
     run_parser.add_argument("--step", action="store_true", help="execute simulation by step loop")
     run_parser.add_argument("--delta", type=float, default=None, help="delta for --step mode")
@@ -162,7 +167,12 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
     wcrt_parser.add_argument(
         "--strict-plan-match",
         action="store_true",
-        help="strictly require --plan-json spec_fingerprint matches --config",
+        help="compatibility flag; strict plan matching is already default with --plan-json",
+    )
+    wcrt_parser.add_argument(
+        "--allow-plan-mismatch",
+        action="store_true",
+        help="warn and continue when --plan-json fingerprints are missing/mismatched",
     )
     wcrt_parser.add_argument(
         "--planner",
@@ -267,7 +277,12 @@ def build_parser(command_handlers: Mapping[str, CommandHandler]) -> argparse.Arg
     export_parser.add_argument(
         "--strict-plan-match",
         action="store_true",
-        help="strictly require --plan-json spec_fingerprint matches --config",
+        help="compatibility flag; strict plan matching is already default with --plan-json",
+    )
+    export_parser.add_argument(
+        "--allow-plan-mismatch",
+        action="store_true",
+        help="warn and continue when --plan-json fingerprints are missing/mismatched",
     )
     export_parser.add_argument(
         "--planner",

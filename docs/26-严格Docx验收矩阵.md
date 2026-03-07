@@ -8,9 +8,9 @@
 | 条款ID | 严格口径要求 | 代码实现点 | 测试点 | 交付件 | 状态 |
 |---|---|---|---|---|---|
 | D-PLAN-01 | 计划结果需可追溯到唯一模型 | `rtos_sim/cli/main.py` `plan-static` 写入 `spec_fingerprint` | `tests/test_cli_planning_commands.py::test_cli_plan_static_outputs_json_and_csv` | 本矩阵 + 测试报告 | 已实现 |
-| D-PLAN-02 | `analyze-wcrt` 禁止跨模型误用计划（严格模式） | `--strict-plan-match` + 指纹比对 | `test_cli_analyze_wcrt_strict_plan_match_*` | 测试细则/测试报告 | 已实现 |
-| D-PLAN-03 | `export-os-config` 禁止跨模型误用计划（严格模式） | `--strict-plan-match` + `--config` 强约束 | `test_cli_export_os_config_strict_plan_match_*` | 测试细则/测试报告 | 已实现 |
-| D-PLAN-04 | `run` 可直接消费统一计划工件并阻止跨语义误用 | `run --plan-json --strict-plan-match` + `runtime_static_windows` 物化 | `test_cli_run_can_consume_plan_json` / `test_cli_run_strict_plan_match_fails_on_mismatch` | 测试细则/测试报告 | 已实现 |
+| D-PLAN-02 | `analyze-wcrt` 默认 strict 禁止跨模型误用计划 | `--plan-json` 默认双指纹比对，`--allow-plan-mismatch` 显式放行 | `test_cli_analyze_wcrt_default_strict_plan_match_fails_on_mismatch` / `test_cli_analyze_wcrt_allow_plan_mismatch_warns_and_continues` | 测试细则/测试报告 | 已实现 |
+| D-PLAN-03 | `export-os-config` 默认 strict 禁止跨模型误用计划 | `--plan-json` 默认双指纹比对，`--config` 为严格校验输入，`--allow-plan-mismatch` 显式放行 | `test_cli_export_os_config_default_strict_plan_match_*` / `test_cli_export_os_config_allow_plan_mismatch_warns_and_continues` | 测试细则/测试报告 | 已实现 |
+| D-PLAN-04 | `run` 可直接消费统一计划工件并默认阻止跨语义误用 | `run --plan-json` 默认 strict + `runtime_static_windows` 物化 | `test_cli_run_can_consume_plan_json` / `test_cli_run_default_strict_plan_match_fails_on_mismatch` / `test_cli_run_allow_plan_mismatch_warns_and_continues` | 测试细则/测试报告 | 已实现 |
 | D-METRIC-01 | 可调度率需提供严格口径与兼容口径并行 | `rtos_sim/api.py::benchmark_sched_rate` 新增 `candidate_only_*` | `test_cli_benchmark_sched_rate_outputs_report` | 测试报告 | 已实现 |
 | D-METRIC-02 | 基准脚本门禁采用严格口径 | `scripts/benchmark_sched_rate.py` gate 使用 `candidate_only_uplift` | `tests/test_sched_rate_benchmark_script.py` | 测试报告 | 已实现 |
 | D-UI-01 | UI 可完成规划 → WCRT → OS 导出闭环 | `rtos_sim/ui/controllers/planning_controller.py` + `rtos_sim/ui/app.py` Planning 页 | `tests/test_ui_gantt.py::test_ui_planning_panel_end_to_end` | 用户手册/培训记录 | 已实现 |

@@ -46,21 +46,18 @@ rtos-sim plan-static -c examples/at06_time_deterministic.yaml \
 # 复用既有计划工件做 WCRT 分析
 rtos-sim analyze-wcrt -c examples/at06_time_deterministic.yaml \
   --plan-json artifacts/plan.json \
-  --strict-plan-match \
   --out-json artifacts/wcrt.json \
   --out-csv artifacts/wcrt.csv
 
 # 复用既有计划工件导出 OS 静态窗口配置
 rtos-sim export-os-config --plan-json artifacts/plan.json \
   --config examples/at06_time_deterministic.yaml \
-  --strict-plan-match \
   --out-json artifacts/os_config.json \
   --out-csv artifacts/os_config.csv
 
 # 直接将计划工件回灌运行时（自动物化为 scheduler.params.static_windows）
 rtos-sim run -c examples/at06_time_deterministic.yaml \
   --plan-json artifacts/plan.json \
-  --strict-plan-match \
   --events-out artifacts/events.plan.jsonl \
   --metrics-out artifacts/metrics.plan.json
 
@@ -197,7 +194,7 @@ python -m pytest
 - `scheduler.params.static_windows[*].release_index` 现已生效，可将静态窗口显式绑定到某个 release instance；`run --plan-json` 导出的 `runtime_static_windows` 也会携带该字段。
 - `semantic_fingerprint` 基于规范化语义投影计算，用于拦截“同一配置、不同规划范围/语义假设”的误用。
 - `analyze-wcrt` 输出新增 `metadata`，显式列出 `assumptions`、`unsupported_dimensions`、`blocking_bound`、`overhead_bound`、`heterogeneous_speed_mode`。
-- `run --plan-json` 会将 `runtime_static_windows` 物化到运行时静态窗口模式；`--strict-plan-match` 会同时校验 `spec_fingerprint` 与 `semantic_fingerprint`。
+- `run` / `analyze-wcrt` / `export-os-config` 在消费 `--plan-json` 时默认校验 `spec_fingerprint` 与 `semantic_fingerprint`；仅 `--allow-plan-mismatch` 可显式告警后继续。
 
 ## 调度参数（S3）
 

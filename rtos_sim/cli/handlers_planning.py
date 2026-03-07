@@ -85,6 +85,15 @@ def apply_cli_planning_overrides(spec: ModelSpec, args: argparse.Namespace) -> M
     )
 
 
+def resolve_plan_match_strictness(args: argparse.Namespace, *, command: str) -> bool | None:
+    allow_plan_mismatch = bool(getattr(args, "allow_plan_mismatch", False))
+    strict_plan_match = bool(getattr(args, "strict_plan_match", False))
+    if allow_plan_mismatch and strict_plan_match:
+        print(f"[ERROR] {command}: --allow-plan-mismatch cannot be used with --strict-plan-match")
+        return None
+    return not allow_plan_mismatch
+
+
 def _validate_plan_fingerprint_match(
     *,
     command: str,
@@ -95,7 +104,7 @@ def _validate_plan_fingerprint_match(
     expectations = sim_api.plan_fingerprint_expectations(spec, plan_payload)
     expected_spec = str(expectations["expected_spec_fingerprint"])
     actual_spec = expectations["actual_spec_fingerprint"]
-    if not actual_spec:
+    if not isinstance(actual_spec, str) or not actual_spec.strip():
         level = "[ERROR]" if strict else "[WARN]"
         print(f"{level} {command}: plan-json missing spec_fingerprint, 期望指纹#{expected_spec}")
         return not strict
@@ -229,6 +238,9 @@ def cmd_plan_static(args: argparse.Namespace) -> int:
 def cmd_analyze_wcrt(args: argparse.Namespace) -> int:
     loader = ConfigLoader()
     try:
+        strict_plan_match = resolve_plan_match_strictness(args, command="analyze-wcrt")
+        if strict_plan_match is None:
+            return 2
         raw_spec = loader.load(args.config)
         spec = apply_cli_planning_overrides(raw_spec, args)
         planner, lp_objective, task_scope, include_non_rt, horizon = _resolve_planning_options(
@@ -245,7 +257,7 @@ def cmd_analyze_wcrt(args: argparse.Namespace) -> int:
                 command="analyze-wcrt",
                 spec=raw_spec,
                 plan_payload=plan_payload,
-                strict=args.strict_plan_match,
+                strict=strict_plan_match,
             ):
                 return 2
             plan_context = sim_api.extract_plan_planning_context(plan_payload)
@@ -315,6 +327,9 @@ def cmd_analyze_wcrt(args: argparse.Namespace) -> int:
 
 def cmd_export_os_config(args: argparse.Namespace) -> int:
     try:
+        strict_plan_match = resolve_plan_match_strictness(args, command="export-os-config")
+        if strict_plan_match is None:
+            return 2
         if args.plan_json:
             plan_payload = _read_planning_result(args.plan_json)
             if args.config:
@@ -324,11 +339,14 @@ def cmd_export_os_config(args: argparse.Namespace) -> int:
                     command="export-os-config",
                     spec=spec,
                     plan_payload=plan_payload,
-                    strict=args.strict_plan_match,
+                    strict=strict_plan_match,
                 ):
                     return 2
-            elif args.strict_plan_match:
-                print("[ERROR] export-os-config: --strict-plan-match requires --config with --plan-json")
+            elif strict_plan_match:
+                print(
+                    "[ERROR] export-os-config: default strict plan matching requires --config with --plan-json; "
+                    "use --allow-plan-mismatch to bypass"
+                )
                 return 2
             schedule_table = sim_api.planning_result_from_dict(plan_payload).schedule_table
         elif args.config:

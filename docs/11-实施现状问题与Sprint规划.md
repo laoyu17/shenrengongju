@@ -49,7 +49,7 @@
 - `validate` 新增 `--strict-id-tokens`（将内部保留分隔符告警升级为失败，便于脚本门禁）：`rtos_sim/cli/main.py:415`
 - `batch-run` 支持严格失败返回码开关 `--strict-fail-on-error`：`rtos_sim/cli/main.py:193`
 - `run` 支持审计报告导出 `--audit-out`（协议/异常路径一致性检查）：`rtos_sim/cli/main.py:81`、`rtos_sim/analysis/audit.py:14`
-- `run` 新增 `--plan-json/--strict-plan-match`，可直接消费统一计划工件并物化 `runtime_static_windows`：`rtos_sim/cli/main.py`
+- `run` / `analyze-wcrt` / `export-os-config` 在消费 `--plan-json` 时默认 strict；`--allow-plan-mismatch` 为唯一显式放行入口，`--strict-plan-match` 仅保留兼容语义：`rtos_sim/cli/main.py`、`rtos_sim/cli/handlers_planning.py`
 - `plan-static` 统一输出 `spec_fingerprint + semantic_fingerprint + planning_context + runtime_static_windows`：`rtos_sim/api.py`、`rtos_sim/cli/handlers_planning.py`
 - `analyze-wcrt` 输出新增 `metadata.assumptions/unsupported_dimensions/blocking_bound/overhead_bound/heterogeneous_speed_mode/arrival_assumption_trace`：`rtos_sim/api.py`、`rtos_sim/planning/wcrt.py`
 - WCRT 已将 `resource_blocking` 与 `dispatch/migration overhead` 纳入真实分析项，`unsupported_dimensions` 中对应条目仅保留“static plan 未直接展开”的提示：`rtos_sim/planning/wcrt.py`、`rtos_sim/planning/normalized.py`
@@ -139,10 +139,10 @@
    - 证据：`rtos_sim/ui/app.py:209`
    - 影响：基础建模效率明显提升，但复杂图编辑体验仍有提升空间。
 
-3. **FR-13 对比视图已完成最小研究化收口，UI 仍保留双路构建边界**
-   - 现状：CLI / UI 的 compare JSON 已新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`，报告结构对 N-way 聚合已就绪；UI 侧已支持 JSON / CSV / Markdown 导出，但交互入口仍是 left/right 双路装载与构建。
+3. **FR-13 对比视图已完成 N-way 场景装载闭环**
+   - 现状：CLI / UI 的 compare JSON 已新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`；UI Compare 面板已切换为 ordered scenarios 列表，支持添加 metrics 文件、添加最近一次运行、删除所选场景、上下移动顺序、构建与导出。
    - 证据：`rtos_sim/analysis/compare.py`、`rtos_sim/ui/compare_io.py`、`rtos_sim/ui/controllers/compare_controller.py`
-   - 影响：本轮已打通研究级报告导出底座，后续可在不破坏现有交互的前提下继续扩展 N-way 场景选择器。
+   - 影响：本轮已把 Compare 的装载/排序/构建/导出闭环打通，后续 backlog 只保留 DAG 多选 / 批量移动 / 批量删除等深交互治理。
 
 4. **研究报告已接入 UI 导出入口，底层复用既有研究闭环产物链**
    - 现状：UI 工具栏新增 `Export Research Report`，会复用最近一次运行缓存的 `spec/events`，调用 `build_model_relations_report`、`build_audit_report`、`build_research_report_payload` 输出 `.md + .json + -summary.csv`；quality 优先复用缓存，缺失时回退读取 `artifacts/quality/quality-snapshot.json`。
@@ -374,7 +374,7 @@
   - `rtos_sim/cli/handlers_planning.py`：`plan-static` / `analyze-wcrt` / `export-os-config` 三处理器独立。
   - `rtos_sim/cli/main.py` 当前约 `532` 行（已满足 `<700` 目标）。
 - 防回退门禁：
-  - 新增 `tests/test_ci_strict_plan_match_gate.py`，静态校验 CI 脚本中 WCRT/导出命令必须携带 `--strict-plan-match`。
+  - 新增 `tests/test_ci_strict_plan_match_gate.py`，静态校验 CI 脚本中 WCRT/导出命令依赖默认 strict，且不得携带 `--allow-plan-mismatch`。
 - 本轮回归结果：
   - `python -m pytest --maxfail=1`：`424 passed`
   - 主链路命令（`validate` / `inspect-model --strict-on-fail` / `benchmark-sched-rate`）均通过。
