@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -10,12 +11,77 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _looks_like_windows_system_bash(path: str | Path) -> bool:
+    normalized = os.fspath(path).replace("/", "\\").lower()
+    return "\\windows\\system32\\bash.exe" in normalized
+
+
+def _candidate_bash_paths(env: dict[str, str]) -> list[Path]:
+    if not sys.platform.startswith("win"):
+        which = shutil.which("bash", path=env.get("PATH"))
+        return [Path(which)] if which else []
+
+    candidates: list[Path] = []
+    for entry in os.get_exec_path(env):
+        if not entry:
+            continue
+        candidates.append(Path(entry) / "bash.exe")
+
+    for key in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        base = (env.get(key) or os.environ.get(key) or "").strip()
+        if base:
+            git_root = Path(base) / "Git"
+            candidates.append(git_root / "bin" / "bash.exe")
+            candidates.append(git_root / "usr" / "bin" / "bash.exe")
+
+    local_app_data = (env.get("LocalAppData") or os.environ.get("LocalAppData") or "").strip()
+    if local_app_data:
+        git_root = Path(local_app_data) / "Programs" / "Git"
+        candidates.append(git_root / "bin" / "bash.exe")
+        candidates.append(git_root / "usr" / "bin" / "bash.exe")
+
+    return candidates
+
+
+def _resolve_bash_command(env: dict[str, str]) -> str:
+    explicit_bash = (env.get("BASH_BIN") or "").strip()
+    if explicit_bash:
+        candidate = Path(explicit_bash)
+        if candidate.is_file():
+            return os.fspath(candidate)
+        raise FileNotFoundError(f"BASH_BIN not found: {candidate}")
+
+    seen: set[str] = set()
+    for candidate in _candidate_bash_paths(env):
+        candidate_key = os.fspath(candidate).replace("/", "\\").lower()
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        if sys.platform.startswith("win") and _looks_like_windows_system_bash(candidate):
+            continue
+        return os.fspath(candidate)
+
+    fallback = shutil.which("bash", path=env.get("PATH"))
+    if fallback and (not sys.platform.startswith("win") or not _looks_like_windows_system_bash(fallback)):
+        return fallback
+    raise FileNotFoundError("unable to locate usable bash executable for freeze script tests")
+
+
+def _normalize_shell_command(cmd: list[str], env: dict[str, str]) -> list[str]:
+    if cmd and cmd[0] == "bash":
+        return [_resolve_bash_command(env), *cmd[1:]]
+    return cmd
+
+
 def _run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     run_env = dict(os.environ)
     run_env.setdefault("PYTHON_BIN", sys.executable)
     if env is not None:
         run_env.update(env)
-    return subprocess.run(cmd, cwd=cwd, env=run_env, check=False, capture_output=True, text=True)
+    effective_cmd = _normalize_shell_command(cmd, run_env)
+    return subprocess.run(effective_cmd, cwd=cwd, env=run_env, check=False, capture_output=True, text=True)
 
 
 def _setup_repo(tmp_path: Path) -> Path:
@@ -58,6 +124,36 @@ def _setup_repo(tmp_path: Path) -> Path:
     commit = _run(["git", "commit", "-m", "init"], cwd=repo)
     assert commit.returncode == 0, commit.stderr
     return repo
+
+
+def test_resolve_bash_command_prefers_explicit_bash_bin(tmp_path: Path, monkeypatch) -> None:
+    explicit_bash = tmp_path / "portable-git" / "bin" / "bash.exe"
+    explicit_bash.parent.mkdir(parents=True)
+    explicit_bash.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    explicit_bash.chmod(0o755)
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    resolved = _resolve_bash_command({"BASH_BIN": os.fspath(explicit_bash)})
+    assert Path(resolved) == explicit_bash
+
+
+def test_resolve_bash_command_skips_windows_system32_shim(tmp_path: Path, monkeypatch) -> None:
+    system_bash = tmp_path / "Windows" / "System32" / "bash.exe"
+    git_bash = tmp_path / "Git" / "bin" / "bash.exe"
+    system_bash.parent.mkdir(parents=True)
+    git_bash.parent.mkdir(parents=True)
+    system_bash.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    git_bash.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    system_bash.chmod(0o755)
+    git_bash.chmod(0o755)
+
+    env = {
+        "PATH": f"{system_bash.parent}{os.pathsep}{git_bash.parent}",
+        "ProgramFiles": os.fspath(tmp_path),
+    }
+    monkeypatch.setattr(sys, "platform", "win32")
+    resolved = _resolve_bash_command(env)
+    assert Path(resolved) == git_bash
 
 
 def test_i2_freeze_rejects_dirty_workspace_without_allow_override(tmp_path: Path) -> None:
@@ -227,7 +323,6 @@ def test_i2_freeze_prefers_py_launcher_for_windows_repro_commands(tmp_path: Path
     assert reproduce.splitlines()[0] == "py -3 -m pytest -q"
 
 
-
 def test_i2_clean_freeze_gate_orders_required_steps() -> None:
     script = (ROOT / "review/scripts/i2_clean_freeze_gate.sh").read_text(encoding="utf-8")
     assert script.index("run_step 01 pytest_full") < script.index("run_step 02 quality_snapshot")
@@ -236,4 +331,4 @@ def test_i2_clean_freeze_gate_orders_required_steps() -> None:
     assert script.index("run_step 04 clean_workspace") < script.index("run_step 05 freeze_clean")
     assert "DOC_BASELINE_SNAPSHOT_PATH" in script
     assert "--require-evidence-equals-head" not in script
-    assert "QUALITY_SNAPSHOT_SOURCE=\"$QUALITY_SNAPSHOT_PATH\"" in script
+    assert 'QUALITY_SNAPSHOT_SOURCE="$QUALITY_SNAPSHOT_PATH"' in script
