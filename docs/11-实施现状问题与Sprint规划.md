@@ -5,8 +5,8 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环 + Phase 4 最小工作台闭环）
 - 日期：2026-03-08
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 证据基线：`evidence_git_sha=de76ff299bea0557032a40c7117b78e16866d1a1`
-- 工作区基线：`workspace_git_sha=de76ff299bea0557032a40c7117b78e16866d1a1`
+- 证据基线：`evidence_git_sha=7f0b9a502b93da00d16d9d272b99fd95d965bb72`
+- 工作区基线：`workspace_git_sha=7f0b9a502b93da00d16d9d272b99fd95d965bb72`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`

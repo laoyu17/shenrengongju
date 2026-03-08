@@ -21,8 +21,8 @@
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
 ## 2. 当前基线快照（2026-03-05）
-- 证据基线：`evidence_git_sha=de76ff299bea0557032a40c7117b78e16866d1a1`
-- 工作区基线：`workspace_git_sha=de76ff299bea0557032a40c7117b78e16866d1a1`
+- 证据基线：`evidence_git_sha=7f0b9a502b93da00d16d9d272b99fd95d965bb72`
+- 工作区基线：`workspace_git_sha=7f0b9a502b93da00d16d9d272b99fd95d965bb72`
 - 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `482 passed`）。
 - 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.98%`，`line_rate=89.9769053117783`）。
 - 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`（兼容） + `compliance_profiles.profiles.research_v2.status`（当前主口径）

@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-03-08T08:17:05Z",
+  "generated_at_utc": "2026-03-08T10:58:40Z",
   "status": "pass",
-  "evidence_git_sha": "1069a1f577f3b9a5f5f945fbb3eac554c73b10f7",
-  "git_sha": "1069a1f577f3b9a5f5f945fbb3eac554c73b10f7",
+  "evidence_git_sha": "7f0b9a502b93da00d16d9d272b99fd95d965bb72",
+  "git_sha": "7f0b9a502b93da00d16d9d272b99fd95d965bb72",
   "command": "python -m pytest --maxfail=1 && python -m pytest --cov=rtos_sim --cov-report=json:artifacts/quality/clean_freeze_gate/quality/coverage.json -q",
   "command_exit_code": 0,
   "pytest": {
-    "passed": 464,
+    "passed": 482,
     "failed": 0,
     "errors": 0,
     "skipped": 0,
     "xfailed": 0,
     "xpassed": 0,
-    "summary_line": "464 passed in 11.19s",
+    "summary_line": "482 passed in 12.53s",
     "parse_mode": "summary_line"
   },
   "coverage": {
-    "num_statements": 10860,
-    "covered_lines": 9737,
-    "missing_lines": 1123,
-    "line_rate": 89.65930018416206,
+    "num_statements": 10825,
+    "covered_lines": 9740,
+    "missing_lines": 1085,
+    "line_rate": 89.9769053117783,
     "line_rate_display": "90"
   }
 }

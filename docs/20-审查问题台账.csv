@@ -6,7 +6,7 @@ REV-004,P2,Risk,ui,UI 主文件体量过大（单文件多职责）,rtos_sim/ui/
 REV-005,P2,Verified,ui,UI app 层宽泛异常捕获导致可观测性不足（历史问题）,rtos_sim/ui/app.py,1,异常定位困难，用户侧仅感知行为异常,搜索 app.py 中 except Exception 并验证异常路径,已收窄为具体异常并统一 UI 错误日志出口,resolved
 REV-006,P2,Verified,devops,CI 仅构建产物而缺少发布链路（历史问题）,.github/workflows/release-draft.yml,1,发布流程依赖人工，制品治理不闭环,检查 workflow 是否存在 tag 触发发布流程,新增 release-draft 工作流（tag 触发 + draft release）,resolved
 REV-007,P3,Verified,governance,多份设计文档曾保留草案措辞，影响基线稳定认知（历史问题）,docs/08-综合架构设计.md,86,评审口径可能随文档语义漂移,搜索 docs 中“草案”并核对是否仍为当前基线,已统一正文为基线/归档语义，保留历史文件名以兼容既有引用,resolved
-REV-008,P2,Risk,quality,UI 相关覆盖率低于主干平均值，复杂交互回归风险仍在,rtos_sim/ui/app.py,1,交互边界变更易引入回归,对比 coverage 文件的模块覆盖率与模块复杂度,补充 UI 异常路径与边界交互测试，设定 UI 子模块覆盖率阈值,open
+REV-008,P2,Risk,quality,UI 相关覆盖率低于主干平均值，复杂交互回归风险仍在（已从纯 open 收口到最小回归治理阶段）,rtos_sim/ui/app.py,1,交互边界变更易引入回归,对比 coverage 文件的模块覆盖率与模块复杂度并核对最小 UI 回归集合,补充 UI 异常路径与边界交互测试，先固化最小必测集合与门禁说明，再视稳定性评估是否升级为硬阈值,partial
 REV-009,P1,Verified,docs,综合审查报告内部曾存在历史测试通过数表述不一致,docs/18-综合审查报告-2026-02-24.md,1,降低审查报告可信度,对比报告中的测试数字与 quality_snapshot,统一报告数字来源并在文档控制章节固定复核命令,resolved
 REV-010,P3,Verified,docs,batch-run 常用参数说明不完整（缺 output-dir/summary 输出说明，历史问题）,docs/19-用户使用说明书.md,145,新用户批跑目录管理与结果定位效率低,核对 batch-run -h 与手册参数列表,补充 --output-dir/--summary-csv/--summary-json 说明与示例,resolved
 REV-011,P1,Verified,docs,当前工作区代码快照与多份主文档实现快照 SHA 不一致（历史问题，已收口）,docs/10-详细设计说明书.md,7,评审基线失真，完成度与问题追溯可能指向过期实现,对比 git rev-parse HEAD 与 docs/10 docs/11 docs/14 docs/18 docs/21 的 git_sha 字段,已同步 docs/10 docs/11 docs/14 docs/18 docs/21 到当前基线 SHA,resolved

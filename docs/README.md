@@ -45,6 +45,8 @@
 
 ## 3. 事实源与更新规则
 - 主线文档涉及测试数、覆盖率、`evidence_git_sha/workspace_git_sha` 时，统一以 `artifacts/quality/quality-snapshot.json` 与当前 `git rev-parse HEAD` 为事实源。
+- 涉及 formal freeze 的交付锚点、tag、是否 clean workspace 等结论时，统一以 `review/runtime/i2/clean_freeze/snapshot_meta.json` 与 `artifacts/quality/quality-snapshot.json` 共同作为一级事实源。
+- `review/06-收口执行记录.md` 属于过程记录；如与一级事实源不一致，以一级事实源为准。
 - 历史阶段数字仅保留在归档文档，避免主线文档口径混杂。
 - 文档中的代码引用优先使用稳定锚点（文件路径 + 函数/模块名）；对于频繁变动文件，避免依赖高风险行号。
 
