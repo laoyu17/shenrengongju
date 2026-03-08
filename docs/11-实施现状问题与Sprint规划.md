@@ -5,8 +5,8 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环 + Phase 4 最小工作台闭环）
 - 日期：2026-03-07
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 证据基线：`evidence_git_sha=a98218562038b60c23a0b99ab630780c3da67970`
-- 工作区基线：`workspace_git_sha=a98218562038b60c23a0b99ab630780c3da67970`
+- 证据基线：`evidence_git_sha=8ba1c0fce2f3ab6d077f145b81209007ceaee0cf`
+- 工作区基线：`workspace_git_sha=8ba1c0fce2f3ab6d077f145b81209007ceaee0cf`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -87,8 +87,8 @@
 - 已提供 10 个主样例（新增 `at10_arrival_process`），并补充 3 个研究到达样例：`examples/research_arrival_periodic_jitter.yaml:1`、`examples/research_arrival_burst_sequence.yaml:1`、`examples/research_arrival_envelope.yaml:1`。
 - 已实现模型/引擎/CLI 自动化测试：`tests/test_model_validation.py:41`、`tests/test_engine_scenarios.py:22`、`tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`tests/test_audit.py:1`、`tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-03-08）：`python -m pytest --maxfail=1` 通过，`437 passed`
-- 当前覆盖率快照（2026-03-08）：总覆盖率 89.37%（`coverage.line_rate=89.36764412527428`，来源：`artifacts/quality/quality-snapshot.json`）
+- 当前本地测试状态（2026-03-08）：`python -m pytest --maxfail=1` 通过，`453 passed`
+- 当前覆盖率快照（2026-03-08）：总覆盖率 89.23%（`coverage.line_rate=89.23491679836386`，来源：`artifacts/quality/quality-snapshot.json`）
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`evidence_git_sha`、`git_sha`（兼容别名）、`generated_at_utc`
@@ -327,7 +327,7 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `437 passed / 89.37%`）。
+- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `453 passed / 89.23%`）。
 - 历史首轮审查文档新增醒目提示，避免误读历史测试统计为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 已从 `research_v1`/`engineering_v1` 扩展为 `research_v1`/`research_v2`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
@@ -376,5 +376,5 @@
 - 防回退门禁：
   - 新增 `tests/test_ci_strict_plan_match_gate.py`，静态校验 CI 脚本中 WCRT/导出命令依赖默认 strict，且不得携带 `--allow-plan-mismatch`。
 - 本轮回归结果：
-  - `python -m pytest --maxfail=1`：`437 passed`
+  - `python -m pytest --maxfail=1`：`453 passed`
   - 主链路命令（`validate` / `inspect-model --strict-on-fail` / `benchmark-sched-rate`）均通过。

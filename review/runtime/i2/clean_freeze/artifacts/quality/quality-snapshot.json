@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-03-08T02:54:01Z",
+  "generated_at_utc": "2026-03-08T05:28:16Z",
   "status": "pass",
-  "evidence_git_sha": "a98218562038b60c23a0b99ab630780c3da67970",
-  "git_sha": "a98218562038b60c23a0b99ab630780c3da67970",
+  "evidence_git_sha": "8ba1c0fce2f3ab6d077f145b81209007ceaee0cf",
+  "git_sha": "8ba1c0fce2f3ab6d077f145b81209007ceaee0cf",
   "command": "python -m pytest --maxfail=1 && python -m pytest --cov=rtos_sim --cov-report=json:artifacts/quality/clean_freeze_gate/quality/coverage.json -q",
   "command_exit_code": 0,
   "pytest": {
-    "passed": 437,
+    "passed": 453,
     "failed": 0,
     "errors": 0,
     "skipped": 0,
     "xfailed": 0,
     "xpassed": 0,
-    "summary_line": "437 passed in 16.55s",
+    "summary_line": "453 passed in 12.32s",
     "parse_mode": "summary_line"
   },
   "coverage": {
-    "num_statements": 10026,
-    "covered_lines": 8960,
-    "missing_lines": 1066,
-    "line_rate": 89.36764412527428,
+    "num_statements": 10757,
+    "covered_lines": 9599,
+    "missing_lines": 1158,
+    "line_rate": 89.23491679836386,
     "line_rate_display": "89"
   }
 }
