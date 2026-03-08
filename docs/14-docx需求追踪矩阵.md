@@ -5,8 +5,8 @@
 - 日期：2026-03-07
 - 基线：`250909-仿真工具-基础模型.docx`
 - 追踪范围：仓库根目录当前主干实现
-- 证据基线：`evidence_git_sha=8ba1c0fce2f3ab6d077f145b81209007ceaee0cf`
-- 工作区基线：`workspace_git_sha=8ba1c0fce2f3ab6d077f145b81209007ceaee0cf`
+- 证据基线：`evidence_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
+- 工作区基线：`workspace_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
