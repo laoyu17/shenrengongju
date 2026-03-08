@@ -29,7 +29,6 @@ from rtos_sim.cli.handlers_planning import (
     cmd_export_os_config,
     cmd_plan_static,
     parse_arrival_envelope_min_intervals,
-    resolve_plan_match_strictness,
 )
 from rtos_sim.cli.handlers_runtime import cmd_run as _cmd_run
 from rtos_sim.io import ConfigError, ConfigLoader, ExperimentRunner
