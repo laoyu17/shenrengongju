@@ -1,5 +1,5 @@
 freeze_kind=clean_formal
-tag_name=delivery-baseline-20260308-052817
+tag_name=delivery-baseline-20260308-081706
 tag_status=created
-head_commit=8ba1c0fce2f3ab6d077f145b81209007ceaee0cf
-snapshot_id=baseline-freeze-20260308-052817
+head_commit=1069a1f577f3b9a5f5f945fbb3eac554c73b10f7
+snapshot_id=baseline-freeze-20260308-081706
