@@ -332,3 +332,11 @@ def test_i2_clean_freeze_gate_orders_required_steps() -> None:
     assert "DOC_BASELINE_SNAPSHOT_PATH" in script
     assert "--require-evidence-equals-head" not in script
     assert 'QUALITY_SNAPSHOT_SOURCE="$QUALITY_SNAPSHOT_PATH"' in script
+
+
+def test_i2_refresh_formal_freeze_script_runs_gate_before_reference_check() -> None:
+    script = (ROOT / "review/scripts/i2_refresh_formal_freeze.sh").read_text(encoding="utf-8")
+    assert "review/scripts/i2_clean_freeze_gate.sh" in script
+    assert script.index("review/scripts/i2_clean_freeze_gate.sh") < script.index("check_doc_reference_integrity.py")
+    assert "freeze_fact_source" in script
+    assert "quality_fact_source" in script

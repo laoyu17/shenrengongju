@@ -14,7 +14,7 @@
 
 | 条款ID | Docx原文锚点 | 代码证据 | 测试证据 | 运行证据 | 判定 |
 |---|---|---|---|---|---|
-| G-01 固定点任务规划 | `review/docx/baseline_design_report_extracted.md:84` | `rtos_sim/cli/main.py:480` `cmd_plan_static`；`rtos_sim/planning/types.py:160` | `tests/test_cli_planning_commands.py:17` | `review/runtime/logs/04_plan_at06.log:1` | 已实现 |
+| G-01 固定点任务规划 | `review/docx/baseline_design_report_extracted.md:84` | `rtos_sim/cli/main.py:411`（`plan-static` 注册）；`rtos_sim/cli/handlers_planning.py:103`（`cmd_plan_static`）；`rtos_sim/planning/types.py:160` | `tests/test_cli_planning_commands.py:17` | `review/runtime/logs/04_plan_at06.log:1` | 已实现 |
 | G-02 固定点+定期+间歇混合调度 | `review/docx/baseline_design_report_extracted.md:85` | `rtos_sim/planning/types.py:17`（`task_scope`）；`rtos_sim/core/engine_static_window.py:77`（静态窗口约束） | `tests/test_engine_static_window_mode.py:107` | `review/runtime/logs/15_run_at05_preempt.log:1` + `review/runtime/artifacts/at05_metrics.json`（`preempt_count=1`） | 已实现 |
 | G-03 混合任务可调度性分析（WCRT） | `review/docx/baseline_design_report_extracted.md:86` | `rtos_sim/cli/handlers_planning.py:167`；`rtos_sim/planning/wcrt.py:190` | `tests/test_wcrt_analysis.py:76` | `review/runtime/logs/05_wcrt_at06_strict_match.log:1` | 已实现 |
 | G-04 可调度率提升 30%（口径） | `review/docx/baseline_design_report_extracted.md:87` | `review/scripts/i1_freeze_sched_rate_gate.sh:41`；`scripts/benchmark_sched_rate.py:1` | `tests/test_sched_rate_benchmark_script.py:22` | `review/runtime/i1/sched_rate_gate/summary.txt:1`（`gate_metric=candidate_only_uplift`，`actual=1.75`） | 已实现 |
@@ -28,12 +28,12 @@
 | Docx表 | 关键结论 | 代码与测试映射 | 判定 |
 |---|---|---|---|
 | 表13（任务书技术要求与测试）`review/docx/baseline_design_report_extracted.md:403` | 7项均标注“满足任务书要求” | CLI/UI/WCRT/导出链路均有测试：`tests/test_cli_planning_commands.py`、`tests/test_ui_gantt.py`、`tests/test_wcrt_analysis.py` | 与现状基本一致 |
-| 表17（设计满足任务书）`review/docx/baseline_design_report_extracted.md:482` | 固定点规划、混合调度、WCRT、状态四态、用户交互、OS参数导出 | `rtos_sim/cli/main.py`、`rtos_sim/api.py`、`rtos_sim/ui/app.py`、`rtos_sim/ui/controllers/timeline_controller.py` | 与现状一致 |
+| 表17（设计满足任务书）`review/docx/baseline_design_report_extracted.md:482` | 固定点规划、混合调度、WCRT、状态四态、用户交互、OS参数导出 | `rtos_sim/cli/main.py:401`、`rtos_sim/api.py`、`rtos_sim/ui/app.py`、`rtos_sim/ui/controllers/timeline_controller.py` | 与现状一致 |
 | 表6（主要接口）`review/docx/baseline_design_report_extracted.md:272` | `sched_init_sched_table` 等接口需可用 | `rtos_sim/legacy/report_api.py:42`~`452` 提供同名别名；`tests/test_cli_planning_commands.py:476` 覆盖可调用性 | 已实现（别名层） |
 
 ## C. 重点清单核对
 
-- CLI：`plan-static/analyze-wcrt/export-os-config/benchmark-sched-rate/inspect-model/migrate-config` 已在 `rtos_sim/cli/main.py:508`~`521` 注册并具备错误码语义。
+- CLI：`plan-static/analyze-wcrt/export-os-config/benchmark-sched-rate/inspect-model/migrate-config` 已在 `rtos_sim/cli/main.py:401`~`414` 注册并具备错误码语义。
 - `--plan-json` 默认 strict：`run` / `analyze-wcrt` / `export-os-config` 默认校验 `spec_fingerprint + semantic_fingerprint`，`--allow-plan-mismatch` 为唯一显式放行入口；对应实现见 `rtos_sim/cli/parser_builder.py`、`rtos_sim/cli/handlers_planning.py`，并有正负测试 `tests/test_cli_planning_commands.py`。
 - Python API：`rtos_sim/api.py:113`、`142`、`260`、`419`；旧接口别名层 `rtos_sim/legacy/report_api.py:42`~`452`。
 - 配置与类型：`planning` 段定义于 `rtos_sim/io/schema.py:227`，类型约束在 `rtos_sim/model/spec.py:300`；序列化契约在 `rtos_sim/planning/types.py:121`、`255`、`294`。
