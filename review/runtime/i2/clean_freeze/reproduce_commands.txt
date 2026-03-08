@@ -1,4 +1,4 @@
-python -m pytest -q
+python3 -m pytest -q
 bash review/scripts/i1_freeze_sched_rate_gate.sh
 bash review/scripts/i1_ci_gate.sh
 QUALITY_SNAPSHOT_SOURCE=artifacts/quality/clean_freeze_gate/quality/quality-snapshot.json bash review/scripts/i2_freeze_delivery_baseline.sh review/runtime/i2/clean_freeze

@@ -11,6 +11,165 @@ TAG_NAME="${BASELINE_TAG:-delivery-baseline-${STAMP}}"
 ALLOW_DIRTY_FREEZE="${ALLOW_DIRTY_FREEZE:-0}"
 QUALITY_SNAPSHOT_SOURCE="${QUALITY_SNAPSHOT_SOURCE:-artifacts/quality/quality-snapshot.json}"
 
+normalize_bash_path() {
+  local path_value="$1"
+  if [[ -z "$path_value" ]]; then
+    return 1
+  fi
+  if command -v cygpath >/dev/null 2>&1 && [[ "$path_value" =~ ^[A-Za-z]:[\\/].* ]]; then
+    cygpath -u "$path_value"
+    return 0
+  fi
+  printf '%s\n' "$path_value"
+}
+
+is_windows_bash() {
+  case "${OSTYPE:-}" in
+    msys*|cygwin*|win32*)
+      return 0
+      ;;
+  esac
+
+  if [[ -n "${MSYSTEM:-}" ]]; then
+    return 0
+  fi
+
+  if command -v cygpath >/dev/null 2>&1; then
+    return 0
+  fi
+
+  case "$(uname -s 2>/dev/null || true)" in
+    MSYS*|MINGW*|CYGWIN*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+resolve_python_repro_cmd() {
+  local candidate=""
+  local base_dir=""
+
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    if candidate="$(normalize_bash_path "$PYTHON_BIN" 2>/dev/null)"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${pythonLocation:-}" ]]; then
+    if base_dir="$(normalize_bash_path "$pythonLocation" 2>/dev/null)"; then
+      candidate="${base_dir%/}/python"
+      if [[ -f "${candidate}.exe" ]]; then
+        candidate="${candidate}.exe"
+      fi
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  if is_windows_bash && command -v py >/dev/null 2>&1; then
+    printf 'py -3\n'
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    printf 'python3\n'
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf 'python\n'
+    return 0
+  fi
+  if command -v py >/dev/null 2>&1; then
+    printf 'py -3\n'
+    return 0
+  fi
+
+  printf 'python\n'
+}
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+compute_sha256() {
+  local target_file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$target_file" | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$target_file" | awk '{print $1}'
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$target_file" | awk '{print $2}'
+    return 0
+  fi
+  echo "[ERROR] no SHA-256 tool found for manifest generation" >&2
+  exit 127
+}
+
+file_size_bytes() {
+  wc -c < "$1" | tr -d ' '
+}
+
+write_snapshot_meta() {
+  local formal_freeze_json="false"
+  local dirty_workspace_json="false"
+  local allow_dirty_json="false"
+
+  if [[ "$FREEZE_KIND" == "clean_formal" ]]; then
+    formal_freeze_json="true"
+  fi
+  if [[ "$DIRTY_WORKSPACE" == true ]]; then
+    dirty_workspace_json="true"
+  fi
+  if [[ "$ALLOW_DIRTY_FREEZE" == "1" ]]; then
+    allow_dirty_json="true"
+  fi
+
+  cat > "${OUT_DIR}/snapshot_meta.json" <<EOF_JSON
+{
+  "snapshot_id": "$(json_escape "$SNAPSHOT_ID")",
+  "generated_at_utc": "$(json_escape "$TIMESTAMP_UTC")",
+  "head_commit": "$(json_escape "$HEAD_COMMIT")",
+  "tag_name": "$(json_escape "$TAG_NAME")",
+  "tag_status": "$(json_escape "$TAG_STATUS")",
+  "freeze_kind": "$(json_escape "$FREEZE_KIND")",
+  "formal_freeze": ${formal_freeze_json},
+  "allow_dirty_freeze": ${allow_dirty_json},
+  "changed_file_count": ${CHANGED_COUNT},
+  "dirty_workspace": ${dirty_workspace_json},
+  "paths": {
+    "change_list": "$(json_escape "${OUT_DIR}/change_list")",
+    "artifacts": "$(json_escape "${OUT_DIR}/artifacts")",
+    "reproduce_commands": "$(json_escape "${OUT_DIR}/reproduce_commands.txt")"
+  }
+}
+EOF_JSON
+}
+
+write_manifest() {
+  local manifest_tmp="${OUT_DIR}/manifest.tsv.tmp"
+  local file_path=""
+  local digest=""
+  local size=""
+  local rel_path=""
+
+  printf 'sha256\tsize\tpath\n' > "$manifest_tmp"
+  while IFS= read -r file_path; do
+    digest="$(compute_sha256 "$file_path")"
+    size="$(file_size_bytes "$file_path")"
+    rel_path="${file_path#${OUT_DIR}/}"
+    printf '%s\t%s\t%s\n' "$digest" "$size" "$rel_path" >> "$manifest_tmp"
+  done < <(find "$OUT_DIR" -type f ! -name 'manifest.tsv' ! -name 'manifest.tsv.tmp' | LC_ALL=C sort)
+
+  mv "$manifest_tmp" "${OUT_DIR}/manifest.tsv"
+}
+
 CHANGE_DIR="${OUT_DIR}/change_list"
 ARTIFACT_DIR="${OUT_DIR}/artifacts"
 
@@ -33,6 +192,8 @@ if [[ "$CHANGED_COUNT" != "0" ]]; then
   FREEZE_KIND="dirty_evidence"
   SNAPSHOT_ID="baseline-dirty-evidence-${STAMP}"
 fi
+
+PYTHON_REPRO_CMD="$(resolve_python_repro_cmd)"
 
 mkdir -p "$CHANGE_DIR" "$ARTIFACT_DIR"
 printf '%s\n' "$GIT_STATUS_SHORT" > "${CHANGE_DIR}/git_status_short.txt"
@@ -80,69 +241,23 @@ copy_artifact "review/scripts/i2_freeze_delivery_baseline.sh" "scripts/i2_freeze
 copy_artifact "review/scripts/strict_plan_pipeline.sh" "scripts/strict_plan_pipeline.sh"
 copy_artifact ".github/workflows/ci.yml" "ci/ci.yml"
 
-cat > "${OUT_DIR}/reproduce_commands.txt" <<EOF
-python -m pytest -q
+cat > "${OUT_DIR}/reproduce_commands.txt" <<EOF_REPRO
+${PYTHON_REPRO_CMD} -m pytest -q
 bash review/scripts/i1_freeze_sched_rate_gate.sh
 bash review/scripts/i1_ci_gate.sh
 QUALITY_SNAPSHOT_SOURCE=${QUALITY_SNAPSHOT_SOURCE} bash review/scripts/i2_freeze_delivery_baseline.sh ${OUT_DIR}
-EOF
+EOF_REPRO
 
-cat > "${OUT_DIR}/tag.txt" <<EOF
+cat > "${OUT_DIR}/tag.txt" <<EOF_TAG
 freeze_kind=${FREEZE_KIND}
 tag_name=${TAG_NAME}
 tag_status=${TAG_STATUS}
 head_commit=${HEAD_COMMIT}
 snapshot_id=${SNAPSHOT_ID}
-EOF
+EOF_TAG
 
-python - <<'PY' "${OUT_DIR}" "${TIMESTAMP_UTC}" "${SNAPSHOT_ID}" "${HEAD_COMMIT}" "${TAG_NAME}" "${TAG_STATUS}" "${CHANGED_COUNT}" "${FREEZE_KIND}" "${ALLOW_DIRTY_FREEZE}"
-from __future__ import annotations
-
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-out_dir = Path(sys.argv[1])
-timestamp_utc = sys.argv[2]
-snapshot_id = sys.argv[3]
-head_commit = sys.argv[4]
-tag_name = sys.argv[5]
-tag_status = sys.argv[6]
-changed_count = int(sys.argv[7])
-freeze_kind = sys.argv[8]
-allow_dirty_freeze = sys.argv[9] == "1"
-
-meta = {
-    "snapshot_id": snapshot_id,
-    "generated_at_utc": timestamp_utc,
-    "head_commit": head_commit,
-    "tag_name": tag_name,
-    "tag_status": tag_status,
-    "freeze_kind": freeze_kind,
-    "formal_freeze": freeze_kind == "clean_formal",
-    "allow_dirty_freeze": allow_dirty_freeze,
-    "changed_file_count": changed_count,
-    "dirty_workspace": changed_count > 0,
-    "paths": {
-        "change_list": str(out_dir / "change_list"),
-        "artifacts": str(out_dir / "artifacts"),
-        "reproduce_commands": str(out_dir / "reproduce_commands.txt"),
-    },
-}
-(out_dir / "snapshot_meta.json").write_text(
-    json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
-    encoding="utf-8",
-)
-
-manifest_lines = ["sha256\tsize\tpath"]
-for file in sorted(p for p in out_dir.rglob("*") if p.is_file()):
-    digest = hashlib.sha256(file.read_bytes()).hexdigest()
-    size = file.stat().st_size
-    rel = file.relative_to(out_dir).as_posix()
-    manifest_lines.append(f"{digest}\t{size}\t{rel}")
-(out_dir / "manifest.tsv").write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
-PY
+write_snapshot_meta
+write_manifest
 
 echo "[OK] baseline freeze snapshot generated"
 echo "[OK] out_dir=${OUT_DIR}"

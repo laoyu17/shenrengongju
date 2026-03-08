@@ -49,7 +49,9 @@ def test_benchmark_sched_rate_script_generates_stratified_report(tmp_path: Path)
     assert report["profiles"]["standard_seeded"]["overall"]["total_cases"] == 3
     assert len(report["profiles"]["standard_seeded"]["tiers"]) == 3
     assert report["macro_uplift"] >= 0.3
-    assert report["gate_metric"] == "macro_uplift"
+    assert report["candidate_only_uplift"] >= 0.3
+    assert report["gate_metric"] == "candidate_only_uplift"
+    assert report["gate_value"] == report["candidate_only_uplift"]
     assert "macro_best_candidate_uplift" in report
     assert "candidate_only_uplift" in report["profiles"]["standard_seeded"]["tiers"][0]
     assert report["profiles"]["standard_seeded"]["overall"]["non_empty_case_count"] > 0

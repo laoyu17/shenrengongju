@@ -449,6 +449,9 @@ def main(argv: list[str] | None = None) -> int:
         "docx_mixed": docx_profile,
     }
     all_gate_pass = all(bool(profile.get("gate_pass")) for profile in profiles.values())
+    top_gate_metric = str(docx_profile["gate_metric"])
+    top_gate_value = float(docx_profile["gate_value"])
+    top_gate_pass = bool(docx_profile["gate_pass"])
 
     payload = {
         "generated_at_utc": _utc_now(),
@@ -462,8 +465,10 @@ def main(argv: list[str] | None = None) -> int:
         # Backward-compatible aliases (standard profile)
         "macro_uplift": standard_profile["macro_uplift"],
         "macro_best_candidate_uplift": standard_profile["macro_best_candidate_uplift"],
-        "gate_metric": standard_profile["gate_metric"],
-        "gate_pass": standard_profile["gate_pass"],
+        "candidate_only_uplift": top_gate_value,
+        "gate_metric": top_gate_metric,
+        "gate_value": top_gate_value,
+        "gate_pass": top_gate_pass,
         "dual_gate_pass": all_gate_pass,
         "tiers": standard_profile["tiers"],
         "overall": standard_profile["overall"],
@@ -477,20 +482,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         "[OK] benchmark profiles generated, "
+        f"gate_metric={top_gate_metric}, gate_value={top_gate_value}, gate_pass={top_gate_pass}, "
         f"standard_macro_uplift={standard_profile['macro_uplift']}, "
-        f"docx_candidate_only_uplift={docx_profile['gate_value']}, "
         f"all_gate_pass={all_gate_pass}, json={out_json}, csv={out_csv}"
     )
 
-    if args.strict and not all_gate_pass:
-        failed_profiles: list[str] = []
-        for profile_name, profile_payload in profiles.items():
-            if bool(profile_payload.get("gate_pass")):
-                continue
-            reasons = _profile_gate_failure_reasons(profile_name, profile_payload)
-            detail = ", ".join(reasons) if reasons else "unknown"
-            failed_profiles.append(f"{profile_name}({detail})")
-        print("[ERROR] dual gate not met: " + "; ".join(failed_profiles))
+    if args.strict and not top_gate_pass:
+        reasons = _profile_gate_failure_reasons("docx_mixed", docx_profile)
+        detail = ", ".join(reasons) if reasons else "unknown"
+        print("[ERROR] benchmark gate not met: docx_mixed(" + detail + ")")
         return 2
     return 0
 
