@@ -58,6 +58,37 @@ class _Owner:
         self._dirty_marks += 1
 
 
+
+
+class _EmptyDoc:
+    def list_tasks(self) -> list[dict[str, str]]:
+        return []
+
+
+class _EmptyOwner:
+    def __init__(self) -> None:
+        self._selected_task_index = 3
+        self._selected_subtask_id = "stale"
+
+    def _ensure_config_doc(self) -> _EmptyDoc:
+        return _EmptyDoc()
+
+
+def test_select_task_resets_selection_when_doc_is_empty(monkeypatch) -> None:
+    owner = _EmptyOwner()
+    controller = DagController(owner)
+
+    synced: list[str | None] = []
+    refreshed: list[_EmptyDoc] = []
+    monkeypatch.setattr(controller, "_sync_single_selection_state", lambda subtask_id: synced.append(subtask_id))
+    monkeypatch.setattr(controller, "refresh_dag_widgets", lambda doc: refreshed.append(doc))
+
+    assert controller.select_task(0, sync_table_selection=False) is False
+    assert owner._selected_task_index == -1
+    assert owner._selected_subtask_id == "s0"
+    assert synced == [None]
+    assert len(refreshed) == 1
+
 def test_would_create_cycle_detects_back_edge() -> None:
     doc = _Doc()
 
