@@ -21,12 +21,12 @@
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
 ## 2. 当前基线快照（2026-03-05）
-- 证据基线：`evidence_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
-- 工作区基线：`workspace_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
-- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `464 passed`）。
-- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.66%`，`line_rate=89.65930018416206`）。
+- 证据基线：`evidence_git_sha=aa5868e39b69dcd44a8f4ff3f212d50fdb489aba`
+- 工作区基线：`workspace_git_sha=aa5868e39b69dcd44a8f4ff3f212d50fdb489aba`
+- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `482 passed`）。
+- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.98%`，`line_rate=89.9769053117783`）。
 - 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`（兼容） + `compliance_profiles.profiles.research_v2.status`（当前主口径）
-- 当前结论：证明资产、报告模板化、CI 稳定化与 UI 研究报告出口已形成最小闭环；剩余差距集中在 Compare 的 N-way 场景装载 UI 与 DAG 多选/批量编辑。
+- 当前结论：证明资产、报告模板化、CI 稳定化与 UI 研究报告出口已形成最小闭环；剩余差距集中在 DAG 深交互的易用性/批量编辑体验，以及最新 freeze 证据追平。
 - 门禁升级建议：维持 `research_audit` 非阻断；当连续 7 天 `research_v2=pass` 且 `unexpected_actual_checks=0` 后，再评估升级为阻断。
 
 ## 3. Issue Backlog（按优先级）
@@ -221,4 +221,4 @@
 - Compare 已完成“报告结构与导出层 N-way-ready”收口：JSON 新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`，并支持 `JSON / CSV / Markdown` 导出。
 - UI 已新增 `Export Research Report`，直接复用 `build_model_relations_report`、`build_audit_report`、`build_research_report_payload` 与 `render_research_report_markdown`，输出 `.md + .json + -summary.csv`。
 - 文档口径已扩展同步到 `docs/18/19/22/25/26` 与 `review/02/06`，保证 30% 门禁、Compare 边界、Research Report 复用链、DAG backlog 四项表述一致。
-- 当前未完成边界继续保留：Compare UI 的 ordered scenarios 闭环已完成；DAG 多选 / 批量移动 / 批量删除不纳入本轮完成项。
+- 当前未完成边界继续保留：Compare UI 的 ordered scenarios 闭环已完成；DAG 的基础多选 / 批量移动 / 批量删除已纳入当前实现，剩余问题集中在易用性、批量编辑体验与产品化收口。

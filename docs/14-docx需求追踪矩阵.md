@@ -5,8 +5,8 @@
 - 日期：2026-03-07
 - 基线：`250909-仿真工具-基础模型.docx`
 - 追踪范围：仓库根目录当前主干实现
-- 证据基线：`evidence_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
-- 工作区基线：`workspace_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
+- 证据基线：`evidence_git_sha=aa5868e39b69dcd44a8f4ff3f212d50fdb489aba`
+- 工作区基线：`workspace_git_sha=aa5868e39b69dcd44a8f4ff3f212d50fdb489aba`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -81,8 +81,8 @@
 8. 评审时以本矩阵为索引，逐条核对 Docx 条目与证据链是否一致。
 
 
-## 5. Phase 4 当前边界（2026-03-07）
+## 5. Phase 4 当前边界（2026-03-08）
 
-- Compare：结构与导出层已 N-way-ready，UI 也已切到 ordered scenarios 装载与构建；当前 backlog 只保留 DAG 深交互。
+- Compare：结构与导出层已 N-way-ready，UI 也已切到 ordered scenarios 装载与构建；当前 backlog 主要收敛到 DAG 深交互的易用性与产品化收口。
 - Research Report：UI 已提供导出入口，但底层仍复用既有 `research_report.py` 产物链，不单独维护第二套报告引擎。
-- DAG：多选 / 批量移动 / 批量删除未在本轮实现，继续作为后续 backlog。
+- DAG：Ctrl/Meta 多选、批量移动、批量删除已在当前实现中落地并有控制器回归；剩余 backlog 已转为易用性引导、批量编辑体验与产品化收口。

@@ -11,6 +11,13 @@ from typing import Any
 import yaml
 
 from rtos_sim import api as sim_api
+from rtos_sim.cli.shared_helpers import (
+    read_json as _read_json,
+    read_planning_result as _read_planning_result,
+    validate_plan_fingerprint_match as _validate_plan_fingerprint_match,
+    write_json as _write_json,
+    write_rows_csv as _write_rows_csv,
+)
 from rtos_sim.analysis import (
     build_audit_report,
     build_compare_report,
@@ -81,12 +88,6 @@ def _write_jsonl(path: str, rows: list[dict[str, Any]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _write_json(path: str, payload: dict[str, Any]) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def _write_events_csv(path: str, rows: list[dict[str, Any]]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -120,68 +121,6 @@ def _write_events_csv(path: str, rows: list[dict[str, Any]]) -> None:
                     "payload": json.dumps(row.get("payload", {}), ensure_ascii=False),
                 }
             )
-
-
-def _write_rows_csv(path: str, rows: list[dict[str, Any]]) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fieldnames:
-                fieldnames.append(key)
-    with output.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _read_json(path: str) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ConfigError(f"metrics file must be object: {path}")
-    return payload
-
-
-def _validate_plan_fingerprint_match(
-    *,
-    command: str,
-    spec: ModelSpec,
-    plan_payload: dict[str, Any],
-    strict: bool,
-) -> bool:
-    expectations = sim_api.plan_fingerprint_expectations(spec, plan_payload)
-    expected_spec = str(expectations["expected_spec_fingerprint"])
-    actual_spec = expectations["actual_spec_fingerprint"]
-    if not isinstance(actual_spec, str) or not actual_spec.strip():
-        level = "[ERROR]" if strict else "[WARN]"
-        print(f"{level} {command}: plan-json missing spec_fingerprint, 期望指纹#{expected_spec}")
-        return not strict
-    if actual_spec != expected_spec:
-        level = "[ERROR]" if strict else "[WARN]"
-        print(
-            f"{level} {command}: plan/config mismatch, "
-            f"期望指纹#{expected_spec}, 实际指纹#{actual_spec}"
-        )
-        return not strict
-
-    expected_semantic = str(expectations["expected_semantic_fingerprint"])
-    actual_semantic = expectations["actual_semantic_fingerprint"]
-    if not isinstance(actual_semantic, str) or not actual_semantic.strip():
-        level = "[ERROR]" if strict else "[WARN]"
-        print(
-            f"{level} {command}: plan-json missing semantic_fingerprint, "
-            f"期望语义指纹#{expected_semantic}"
-        )
-        return not strict
-    if actual_semantic != expected_semantic:
-        level = "[ERROR]" if strict else "[WARN]"
-        print(
-            f"{level} {command}: plan semantic mismatch, "
-            f"期望语义指纹#{expected_semantic}, 实际语义指纹#{actual_semantic}"
-        )
-        return not strict
-    return True
 
 
 def _read_config_payload(path: str) -> dict[str, Any]:
@@ -259,9 +198,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if args.plan_json:
         try:
-            plan_payload = _read_json(args.plan_json)
-            if not isinstance(plan_payload.get("schedule_table"), dict):
-                raise ConfigError(f"planning result missing schedule_table: {args.plan_json}")
+            plan_payload = _read_planning_result(args.plan_json)
         except ConfigError as exc:
             print(f"[ERROR] {exc}")
             return 1

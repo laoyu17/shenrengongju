@@ -5,8 +5,8 @@
 - 状态：S7（Phase A/B/C + D/E/F + G + H 研究执行闭环 + Phase 4 最小工作台闭环）
 - 日期：2026-03-08
 - 适用范围：仓库根目录当前实现（代码 + 文档 + 测试）
-- 证据基线：`evidence_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
-- 工作区基线：`workspace_git_sha=e21800ced15067ecf6fbf8c9d1397546d3b91184`
+- 证据基线：`evidence_git_sha=aa5868e39b69dcd44a8f4ff3f212d50fdb489aba`
+- 工作区基线：`workspace_git_sha=aa5868e39b69dcd44a8f4ff3f212d50fdb489aba`
 - 复核命令：
   - `python -m pytest -q`
   - `python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
@@ -87,8 +87,8 @@
 - 已提供 10 个主样例（新增 `at10_arrival_process`），并补充 3 个研究到达样例：`examples/research_arrival_periodic_jitter.yaml:1`、`examples/research_arrival_burst_sequence.yaml:1`、`examples/research_arrival_envelope.yaml:1`。
 - 已实现模型/引擎/CLI 自动化测试：`tests/test_model_validation.py:41`、`tests/test_engine_scenarios.py:22`、`tests/test_cli.py:12`
 - 已新增审计模块与 UI worker 真线程/直执行回归：`tests/test_audit.py:1`、`tests/test_ui_worker.py:1`
-- 当前本地测试状态（2026-03-08）：`python -m pytest --maxfail=1` 通过，`464 passed`
-- 当前覆盖率快照（2026-03-08）：总覆盖率 89.66%（`coverage.line_rate=89.65930018416206`，来源：`artifacts/quality/quality-snapshot.json`）
+- 当前本地测试状态（2026-03-08）：`python -m pytest --maxfail=1` 通过，`482 passed`
+- 当前覆盖率快照（2026-03-08）：总覆盖率 89.98%（`coverage.line_rate=89.9769053117783`，来源：`artifacts/quality/quality-snapshot.json`）
 - 新增质量快照脚本（用于文档事实对齐）：`scripts/quality_snapshot.py`
   - 建议命令：`python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.json --coverage-json artifacts/quality/coverage.json`
   - 快照字段：`pytest.passed/failed/errors`、`coverage.line_rate`、`evidence_git_sha`、`git_sha`（兼容别名）、`generated_at_utc`
@@ -142,12 +142,12 @@
 3. **FR-13 对比视图已完成 N-way 场景装载闭环**
    - 现状：CLI / UI 的 compare JSON 已新增 `comparison_mode`、`scenario_labels`、`scenarios`、`scalar_summary`、`core_utilization_summary`；UI Compare 面板已切换为 ordered scenarios 列表，支持添加 metrics 文件、添加最近一次运行、删除所选场景、上下移动顺序、构建与导出。
    - 证据：`rtos_sim/analysis/compare.py`、`rtos_sim/ui/compare_io.py`、`rtos_sim/ui/controllers/compare_controller.py`
-   - 影响：本轮已把 Compare 的装载/排序/构建/导出闭环打通，后续 backlog 只保留 DAG 多选 / 批量移动 / 批量删除等深交互治理。
+   - 影响：本轮已把 Compare 的装载/排序/构建/导出闭环打通，后续 backlog 主要收敛到 DAG 深交互的易用性引导、批量编辑体验与产品化治理。
 
 4. **研究报告已接入 UI 导出入口，底层复用既有研究闭环产物链**
    - 现状：UI 工具栏新增 `Export Research Report`，会复用最近一次运行缓存的 `spec/events`，调用 `build_model_relations_report`、`build_audit_report`、`build_research_report_payload` 输出 `.md + .json + -summary.csv`；quality 优先复用缓存，缺失时回退读取 `artifacts/quality/quality-snapshot.json`。
    - 证据：`rtos_sim/ui/controllers/run_controller.py`、`rtos_sim/ui/controllers/research_report_controller.py`、`rtos_sim/analysis/research_report.py`
-   - 影响：UI 已具备研究报告工作台的最小闭环，后续重点转向 DAG 多选/批量编辑而非重复造报告引擎。
+   - 影响：UI 已具备研究报告工作台的最小闭环，后续重点转向 DAG 批量编辑体验与引导收口，而非重复造报告引擎。
 
 5. **模型关系导出已进入“基础自动判定”阶段，仍需向研究模板扩展**
    - 现状：`inspect-model` 已可导出任务/子任务/分段与核/资源双向关系表，并附带 `status/checks` 自动判定摘要。
@@ -327,7 +327,7 @@
 - `research_report` 对同一 rule 多 issue 的聚合已完善：输出 `issue_count`、聚合后的 `sample_count` 与 `sample_event_ids`，避免仅取首条 issue 造成低估。
 
 ### Phase H-2（文档与可维护性收敛）已完成（2026-02-23）
-- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `464 passed / 89.66%`）。
+- 文档事实快照已统一更新：主线文档统一以 `artifacts/quality/quality-snapshot.json` 作为事实源（当前基线 `482 passed / 89.98%`）。
 - 历史首轮审查文档新增醒目提示，避免误读历史测试统计为当前状态：`docs/12-docx基线实施审查报告-2026-02-18.md`。
 - `research_audit` Step Summary 已从 `research_v1`/`engineering_v1` 扩展为 `research_v1`/`research_v2`/`engineering_v1` 显式告警与失败规则摘要（保持 non-blocking）：`.github/workflows/ci.yml`。
 - UI 可维护性低风险收敛：DAG 自动布局与表格校验逻辑拆分为独立模块，并新增对应单测：
@@ -376,5 +376,5 @@
 - 防回退门禁：
   - 新增 `tests/test_ci_strict_plan_match_gate.py`，静态校验 CI 脚本中 WCRT/导出命令依赖默认 strict，且不得携带 `--allow-plan-mismatch`。
 - 本轮回归结果：
-  - `python -m pytest --maxfail=1`：`464 passed`
+  - `python -m pytest --maxfail=1`：`482 passed`
   - 主链路命令（`validate` / `inspect-model --strict-on-fail` / `benchmark-sched-rate`）均通过。
