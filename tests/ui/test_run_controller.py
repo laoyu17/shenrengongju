@@ -38,6 +38,13 @@ class _Signal:
     def connect(self, handler) -> None:
         self.handlers.append(handler)
 
+    def disconnect(self, handler) -> None:
+        self.handlers = [item for item in self.handlers if item != handler]
+
+    def emit(self, *args) -> None:
+        for handler in list(self.handlers):
+            handler(*args)
+
 
 class _DummyWorker:
     def __init__(self, config_text: str, step_delta: float | None = None) -> None:
@@ -46,6 +53,7 @@ class _DummyWorker:
         self.events_batch = _Signal()
         self.finished_report = _Signal()
         self.failed = _Signal()
+        self.finished = _Signal()
         self.started = False
         self.running = False
         self.paused = False
@@ -53,6 +61,7 @@ class _DummyWorker:
         self.pause_called = False
         self.resume_called = False
         self.requested_step: float | None = None
+        self.wait_result: bool | None = True
 
     def start(self) -> None:
         self.started = True
@@ -63,7 +72,6 @@ class _DummyWorker:
 
     def stop(self) -> None:
         self.stop_called = True
-        self.running = False
 
     def pause(self) -> None:
         self.pause_called = True
@@ -76,8 +84,12 @@ class _DummyWorker:
     def request_step(self, delta: float | None) -> None:
         self.requested_step = delta
 
-    def wait(self, _ms: int) -> None:
+    def wait(self, _ms: int) -> bool | None:
+        if self.wait_result is False:
+            return False
         self.running = False
+        self.finished.emit()
+        return self.wait_result
 
 
 class _DummyScheduler:
@@ -152,7 +164,6 @@ def test_on_run_starts_worker_and_updates_controls(monkeypatch: pytest.MonkeyPat
     controller = RunController(owner, lambda *_args, **_kwargs: None)
 
     monkeypatch.setattr("rtos_sim.ui.controllers.run_controller.SimulationWorker", _DummyWorker)
-    monkeypatch.setattr("rtos_sim.ui.controllers.run_controller.SimEngine", _DummyEngine)
 
     controller.on_run()
 
@@ -209,6 +220,7 @@ def test_on_finished_appends_metrics_caches_events_and_clears_worker() -> None:
     owner = _Owner()
     controller = RunController(owner, lambda *_args, **_kwargs: None)
     owner._worker = _DummyWorker("config")
+    owner._worker.running = True
 
     controller.on_event_batch([{"event_id": "e1"}])
     controller.on_finished(
@@ -221,6 +233,9 @@ def test_on_finished_appends_metrics_caches_events_and_clears_worker() -> None:
     assert any(line.startswith("\n=== Metrics ===") for line in owner._metrics)
     assert owner._status_label.text == "Completed"
     assert owner._worker is None
+    assert owner._event_batches == [[{"event_id": "e1"}], [{"event_id": "e2"}]]
+
+    controller.on_event_batch([{"event_id": "late"}])
     assert owner._event_batches == [[{"event_id": "e1"}], [{"event_id": "e2"}]]
 
 
@@ -261,3 +276,22 @@ def test_on_reset_and_failed_clear_research_caches(monkeypatch: pytest.MonkeyPat
     assert owner._latest_model_relations_report is None
     assert owner._latest_research_report is None
     assert owner._status_label.text == "Failed"
+
+
+def test_on_reset_wait_timeout_keeps_worker_handle_and_blocks_reset() -> None:
+    owner = _Owner()
+    controller = RunController(owner, lambda *_args, **_kwargs: None)
+    owner._worker = _DummyWorker("config")
+    owner._worker.running = True
+    owner._worker.wait_result = False
+    owner._latest_run_payload = {"version": "0.2"}
+    owner._latest_run_spec = _DummySpec(scheduler=_DummyScheduler())
+    owner._latest_run_events = [{"event_id": "e1"}]
+
+    controller.on_reset()
+
+    assert owner._worker is not None
+    assert owner._worker.stop_called is True
+    assert owner._status_label.text == "Stopping..."
+    assert owner._latest_run_payload == {"version": "0.2"}
+    assert owner._latest_run_events == [{"event_id": "e1"}]

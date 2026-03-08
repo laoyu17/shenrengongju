@@ -63,7 +63,7 @@ def build_planning_tab(owner: MainWindow) -> QWidget:
 
 
 def build_compare_group(owner: MainWindow) -> QGroupBox:
-    compare_group = QGroupBox("FR-13 Compare (MVP)")
+    compare_group = QGroupBox("FR-13 Compare")
     compare_layout = QVBoxLayout(compare_group)
     compare_layout.addWidget(QLabel("Ordered scenarios (#1 baseline, #2 focus)"))
     compare_layout.addWidget(owner._compare_scenarios_list)
@@ -92,3 +92,51 @@ def build_compare_group(owner: MainWindow) -> QGroupBox:
     compare_layout.addLayout(compare_export_grid)
     compare_layout.addWidget(owner._compare_output)
     return compare_group
+
+
+def build_dag_workbench_group(owner: MainWindow) -> QGroupBox:
+    dag_group = QGroupBox("DAG Workbench")
+    dag_layout = QVBoxLayout(dag_group)
+
+    overview_tab = QWidget()
+    overview_layout = QVBoxLayout(overview_tab)
+    overview_layout.addWidget(QLabel("Cross-task overview. Click a task card to open its detail canvas."))
+    overview_layout.addWidget(owner._dag_overview_view, stretch=1)
+
+    detail_tab = QWidget()
+    detail_layout = QHBoxLayout(detail_tab)
+    detail_layout.addWidget(owner._dag_view, stretch=2)
+
+    dag_side = QVBoxLayout()
+    dag_actions_row = QHBoxLayout()
+    dag_actions_row.addWidget(owner._dag_auto_layout_button)
+    dag_actions_row.addWidget(owner._dag_persist_layout)
+    dag_actions_row.addStretch(1)
+    dag_side.addLayout(dag_actions_row)
+    dag_side.addWidget(QLabel("Subtasks"))
+    dag_side.addWidget(owner._dag_subtasks_list)
+    dag_subtask_add_row = QHBoxLayout()
+    dag_subtask_add_row.addWidget(owner._dag_new_subtask_id)
+    dag_subtask_add_row.addWidget(owner._dag_add_subtask_button)
+    dag_side.addLayout(dag_subtask_add_row)
+    dag_side.addWidget(owner._dag_remove_subtask_button)
+    dag_side.addWidget(QLabel("Edges"))
+    dag_side.addWidget(owner._dag_edges_list)
+    dag_edge_row = QHBoxLayout()
+    dag_edge_row.addWidget(owner._dag_edge_src)
+    dag_edge_row.addWidget(owner._dag_edge_dst)
+    dag_side.addLayout(dag_edge_row)
+    dag_edge_button_row = QHBoxLayout()
+    dag_edge_button_row.addWidget(owner._dag_add_edge_button)
+    dag_edge_button_row.addWidget(owner._dag_remove_edge_button)
+    dag_side.addLayout(dag_edge_button_row)
+    detail_layout.addLayout(dag_side, stretch=1)
+
+    owner._dag_canvas_tabs.clear()
+    owner._dag_canvas_tabs.addTab(overview_tab, "Overview")
+    owner._dag_canvas_tabs.addTab(detail_tab, "Task Detail")
+    owner._dag_overview_tab = overview_tab
+    owner._dag_detail_tab = detail_tab
+    owner._dag_canvas_tabs.setCurrentIndex(1)
+    dag_layout.addWidget(owner._dag_canvas_tabs)
+    return dag_group

@@ -11,7 +11,7 @@ from typing import Any
 import pyqtgraph as pg
 import yaml
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QBrush, QColor, QPen
+from PyQt6.QtGui import QBrush, QColor, QCloseEvent, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QListWidget,
-    QListWidgetItem,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -52,6 +51,7 @@ from rtos_sim.io import ConfigError, ConfigLoader
 from .controllers import (
     CompareController,
     DagController,
+    DagOverviewController,
     FormController,
     GanttStyleController,
     PlanningController,
@@ -61,7 +61,6 @@ from .controllers import (
     TimelineController,
 )
 from .config_doc import ConfigDocument
-from .dag_layout import compute_auto_layout_positions
 from .gantt_helpers import (
     SegmentBlockItem,
     SegmentVisualMeta,
@@ -69,8 +68,15 @@ from .gantt_helpers import (
     safe_float,
     safe_optional_float,
 )
-from .panel_builders import build_compare_group, build_planning_tab
-from .panel_state import ComparePanelState, TelemetryPanelState
+from .panel_builders import build_compare_group, build_dag_workbench_group, build_planning_tab
+from .panel_state import (
+    ComparePanelState,
+    DagBatchOperationEntry,
+    DagMultiSelectState,
+    DagOverviewCanvasEntry,
+    DagWorkbenchState,
+    TelemetryPanelState,
+)
 from .table_validation import build_resource_table_errors, build_task_table_errors
 from .worker import SimulationWorker
 
@@ -115,16 +121,29 @@ class DagNodeItem(QGraphicsEllipseItem):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def mousePressEvent(self, event: Any) -> None:  # noqa: ANN401
-        self._owner._on_dag_node_clicked(self.subtask_id)
         modifiers = event.modifiers() if hasattr(event, "modifiers") else Qt.KeyboardModifier.NoModifier
         start_link = event.button() == Qt.MouseButton.RightButton or (
             event.button() == Qt.MouseButton.LeftButton
             and bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
         )
+        toggle_selection = not start_link and (
+            bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+            or bool(modifiers & Qt.KeyboardModifier.MetaModifier)
+        )
+        self._owner._on_dag_node_clicked(
+            self.subtask_id,
+            toggle=toggle_selection,
+            preserve_existing=not toggle_selection,
+        )
         if start_link:
             self._owner._start_dag_link_drag(self.subtask_id, event.scenePos())
             self._link_dragging = True
             self.setCursor(Qt.CursorShape.CrossCursor)
+            event.accept()
+            return
+        if toggle_selection:
+            self._link_dragging = False
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
             event.accept()
             return
         self._link_dragging = False
@@ -209,6 +228,7 @@ class MainWindow(QMainWindow):
         self._segment_label_min_duration = 0.85
 
         self._compare_panel_state = ComparePanelState()
+        self._dag_workbench_state = DagWorkbenchState()
         self._telemetry_panel_state = TelemetryPanelState()
         self._latest_metrics_report: dict[str, Any] = {}
         self._latest_run_payload: dict[str, Any] | None = None
@@ -235,12 +255,6 @@ class MainWindow(QMainWindow):
         self._selected_resource_index = 0
         self._selected_subtask_id = "s0"
         self._table_validation_errors: dict[tuple[str, int, int], str] = {}
-        self._dag_node_centers: dict[str, QPointF] = {}
-        self._dag_node_items: dict[str, DagNodeItem] = {}
-        self._dag_edge_items: dict[tuple[str, str], QGraphicsLineItem] = {}
-        self._dag_manual_positions_by_task: dict[str, dict[str, QPointF]] = {}
-        self._dag_drag_source_id: str | None = None
-        self._dag_drag_line: QGraphicsLineItem | None = None
         self._editor_tabs = QTabWidget()
         self._form_hint = QLabel("Structured form ready.")
         self._sync_text_to_form_button = QPushButton("Sync Text -> Form")
@@ -311,6 +325,12 @@ class MainWindow(QMainWindow):
         self._dag_scene = QGraphicsScene(self)
         self._dag_view = QGraphicsView(self._dag_scene)
         self._dag_view.setMinimumHeight(210)
+        self._dag_overview_scene = QGraphicsScene(self)
+        self._dag_overview_view = QGraphicsView(self._dag_overview_scene)
+        self._dag_overview_view.setMinimumHeight(210)
+        self._dag_canvas_tabs = QTabWidget()
+        self._dag_overview_tab: QWidget | None = None
+        self._dag_detail_tab: QWidget | None = None
         self._dag_subtasks_list = QListWidget()
         self._dag_edges_list = QListWidget()
         self._dag_new_subtask_id = QLineEdit()
@@ -489,6 +509,7 @@ class MainWindow(QMainWindow):
         self._compare_controller = CompareController(self, _log_ui_error)
         self._form_controller = FormController(self, _log_ui_error)
         self._dag_controller = DagController(self)
+        self._dag_overview_controller = DagOverviewController(self)
         self._gantt_style_controller = GanttStyleController(self)
         self._planning_controller = PlanningController(self, _log_ui_error)
         self._research_report_controller = ResearchReportController(self, _log_ui_error)
@@ -552,6 +573,84 @@ class MainWindow(QMainWindow):
     def _locked_segment_key(self, value: str | None) -> None:
         self._telemetry_panel_state.locked_segment_key = value
 
+    @property
+    def _dag_node_centers(self) -> dict[str, QPointF]:
+        return self._dag_workbench_state.node_centers
+
+    @_dag_node_centers.setter
+    def _dag_node_centers(self, value: dict[str, QPointF]) -> None:
+        self._dag_workbench_state.node_centers = dict(value)
+
+    @property
+    def _dag_node_items(self) -> dict[str, DagNodeItem]:
+        return self._dag_workbench_state.node_items
+
+    @_dag_node_items.setter
+    def _dag_node_items(self, value: dict[str, DagNodeItem]) -> None:
+        self._dag_workbench_state.node_items = dict(value)
+
+    @property
+    def _dag_edge_items(self) -> dict[tuple[str, str], QGraphicsLineItem]:
+        return self._dag_workbench_state.edge_items
+
+    @_dag_edge_items.setter
+    def _dag_edge_items(self, value: dict[tuple[str, str], QGraphicsLineItem]) -> None:
+        self._dag_workbench_state.edge_items = dict(value)
+
+    @property
+    def _dag_manual_positions_by_task(self) -> dict[str, dict[str, QPointF]]:
+        return self._dag_workbench_state.manual_positions_by_task
+
+    @_dag_manual_positions_by_task.setter
+    def _dag_manual_positions_by_task(self, value: dict[str, dict[str, QPointF]]) -> None:
+        self._dag_workbench_state.manual_positions_by_task = {
+            key: dict(positions) for key, positions in value.items()
+        }
+
+    @property
+    def _dag_drag_source_id(self) -> str | None:
+        return self._dag_workbench_state.drag_source_id
+
+    @_dag_drag_source_id.setter
+    def _dag_drag_source_id(self, value: str | None) -> None:
+        self._dag_workbench_state.drag_source_id = value
+
+    @property
+    def _dag_drag_line(self) -> QGraphicsLineItem | None:
+        return self._dag_workbench_state.drag_line
+
+    @_dag_drag_line.setter
+    def _dag_drag_line(self, value: QGraphicsLineItem | None) -> None:
+        self._dag_workbench_state.drag_line = value
+
+    @property
+    def _dag_multi_select_state(self) -> DagMultiSelectState:
+        return self._dag_workbench_state.multi_selection
+
+    @property
+    def _dag_last_batch_operation(self) -> DagBatchOperationEntry | None:
+        return self._dag_workbench_state.last_batch_operation
+
+    @_dag_last_batch_operation.setter
+    def _dag_last_batch_operation(self, value: DagBatchOperationEntry | None) -> None:
+        self._dag_workbench_state.last_batch_operation = value
+
+    @property
+    def _dag_overview_canvas_entry(self) -> DagOverviewCanvasEntry | None:
+        return self._dag_workbench_state.overview_canvas_entry
+
+    @_dag_overview_canvas_entry.setter
+    def _dag_overview_canvas_entry(self, value: DagOverviewCanvasEntry | None) -> None:
+        self._dag_workbench_state.overview_canvas_entry = value
+
+    @property
+    def _dag_canvas_mode(self) -> str:
+        return self._dag_workbench_state.canvas_mode
+
+    @_dag_canvas_mode.setter
+    def _dag_canvas_mode(self, value: str) -> None:
+        self._dag_workbench_state.canvas_mode = value
+
     def _build_layout(self) -> None:
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
@@ -591,7 +690,7 @@ class MainWindow(QMainWindow):
         form_content = QWidget()
         form_content_layout = QVBoxLayout(form_content)
 
-        platform_group = QGroupBox("Platform (Basic)")
+        platform_group = QGroupBox("Platform")
         platform_form = QFormLayout(platform_group)
         platform_form.addRow("processor_type.id", self._form_processor_id)
         platform_form.addRow("processor_type.name", self._form_processor_name)
@@ -618,7 +717,7 @@ class MainWindow(QMainWindow):
         resource_layout.addLayout(resource_form)
         form_content_layout.addWidget(resource_group)
 
-        task_group = QGroupBox("Tasks (Table + DAG Prototype + Selected Detail)")
+        task_group = QGroupBox("Tasks (Table + DAG Workbench + Selected Detail)")
         task_layout = QVBoxLayout(task_group)
         task_layout.addWidget(self._task_table)
         task_button_row = QHBoxLayout()
@@ -626,35 +725,7 @@ class MainWindow(QMainWindow):
         task_button_row.addWidget(self._task_remove_button)
         task_button_row.addStretch(1)
         task_layout.addLayout(task_button_row)
-
-        dag_group = QGroupBox("DAG Prototype (selected task)")
-        dag_layout = QHBoxLayout(dag_group)
-        dag_layout.addWidget(self._dag_view, stretch=2)
-        dag_side = QVBoxLayout()
-        dag_actions_row = QHBoxLayout()
-        dag_actions_row.addWidget(self._dag_auto_layout_button)
-        dag_actions_row.addWidget(self._dag_persist_layout)
-        dag_actions_row.addStretch(1)
-        dag_side.addLayout(dag_actions_row)
-        dag_side.addWidget(QLabel("Subtasks"))
-        dag_side.addWidget(self._dag_subtasks_list)
-        dag_subtask_add_row = QHBoxLayout()
-        dag_subtask_add_row.addWidget(self._dag_new_subtask_id)
-        dag_subtask_add_row.addWidget(self._dag_add_subtask_button)
-        dag_side.addLayout(dag_subtask_add_row)
-        dag_side.addWidget(self._dag_remove_subtask_button)
-        dag_side.addWidget(QLabel("Edges"))
-        dag_side.addWidget(self._dag_edges_list)
-        dag_edge_row = QHBoxLayout()
-        dag_edge_row.addWidget(self._dag_edge_src)
-        dag_edge_row.addWidget(self._dag_edge_dst)
-        dag_side.addLayout(dag_edge_row)
-        dag_edge_button_row = QHBoxLayout()
-        dag_edge_button_row.addWidget(self._dag_add_edge_button)
-        dag_edge_button_row.addWidget(self._dag_remove_edge_button)
-        dag_side.addLayout(dag_edge_button_row)
-        dag_layout.addLayout(dag_side, stretch=1)
-        task_layout.addWidget(dag_group)
+        task_layout.addWidget(build_dag_workbench_group(self))
 
         task_form = QFormLayout()
         task_form.addRow("selected task.id", self._form_task_id)
@@ -792,6 +863,7 @@ class MainWindow(QMainWindow):
         self._dag_remove_edge_button.clicked.connect(self._on_dag_remove_edge)
         self._dag_auto_layout_button.clicked.connect(self._on_dag_auto_layout)
         self._dag_persist_layout.toggled.connect(self._on_dag_persist_layout_toggled)
+        self._dag_canvas_tabs.currentChanged.connect(self._on_dag_canvas_tab_changed)
         self._compare_toggle_button.toggled.connect(self._on_compare_toggle)
         self._compare_add_metrics_button.clicked.connect(self._on_compare_add_metrics)
         self._compare_add_latest_button.clicked.connect(self._on_compare_add_latest)
@@ -1137,51 +1209,7 @@ class MainWindow(QMainWindow):
         self._form_segment_preemptible.setChecked(bool(segment.get("preemptible", True)))
 
     def _refresh_dag_widgets(self, doc: ConfigDocument) -> None:
-        if self._selected_task_index < 0 or not doc.list_tasks():
-            self._clear_dag_drag_preview()
-            self._dag_scene.clear()
-            self._dag_subtasks_list.clear()
-            self._dag_edges_list.clear()
-            self._dag_node_centers.clear()
-            self._dag_node_items.clear()
-            self._dag_edge_items.clear()
-            self._dag_auto_layout_button.setEnabled(False)
-            return
-
-        subtasks = doc.list_subtasks(self._selected_task_index)
-        subtask_ids = [str(subtask.get("id") or "") for subtask in subtasks if str(subtask.get("id") or "")]
-        edges = doc.list_edges(self._selected_task_index)
-
-        if self._selected_subtask_id not in subtask_ids and subtask_ids:
-            self._selected_subtask_id = subtask_ids[0]
-
-        self._dag_subtasks_list.blockSignals(True)
-        self._dag_edges_list.blockSignals(True)
-        try:
-            self._dag_subtasks_list.clear()
-            for sub_id in subtask_ids:
-                self._dag_subtasks_list.addItem(sub_id)
-
-            self._dag_edges_list.clear()
-            for src_id, dst_id in edges:
-                item = QListWidgetItem(f"{src_id} -> {dst_id}")
-                item.setData(Qt.ItemDataRole.UserRole, (src_id, dst_id))
-                self._dag_edges_list.addItem(item)
-
-            for idx, sub_id in enumerate(subtask_ids):
-                if sub_id == self._selected_subtask_id:
-                    self._dag_subtasks_list.setCurrentRow(idx)
-                    break
-        finally:
-            self._dag_subtasks_list.blockSignals(False)
-            self._dag_edges_list.blockSignals(False)
-
-        self._dag_remove_subtask_button.setEnabled(bool(subtask_ids))
-        self._dag_remove_edge_button.setEnabled(bool(edges))
-        self._dag_auto_layout_button.setEnabled(bool(subtask_ids))
-        layout_key = self._current_task_layout_key(doc)
-        positions = self._resolve_dag_positions(doc, layout_key, subtask_ids, edges)
-        self._render_dag_scene(subtask_ids, edges, positions=positions)
+        self._dag_controller.refresh_dag_widgets(doc)
 
     def _current_task_layout_key(self, doc: ConfigDocument) -> str:
         tasks = doc.list_tasks()
@@ -1201,41 +1229,14 @@ class MainWindow(QMainWindow):
         subtask_ids: list[str],
         edges: list[tuple[str, str]],
     ) -> dict[str, QPointF]:
-        auto_positions = self._compute_auto_layout_positions(subtask_ids, edges)
-        if not layout_key:
-            return auto_positions
-
-        task_positions = self._dag_manual_positions_by_task.get(layout_key)
-        if task_positions is None:
-            saved_positions = doc.get_task_node_layout(layout_key)
-            if saved_positions:
-                task_positions = {
-                    sub_id: QPointF(float(xy[0]), float(xy[1]))
-                    for sub_id, xy in saved_positions.items()
-                }
-                self._dag_manual_positions_by_task[layout_key] = task_positions
-
-        result: dict[str, QPointF] = {}
-        for sub_id in subtask_ids:
-            manual = task_positions.get(sub_id) if task_positions else None
-            if manual is not None:
-                result[sub_id] = QPointF(manual.x(), manual.y())
-            else:
-                result[sub_id] = auto_positions.get(sub_id, QPointF(80.0, 80.0))
-
-        if task_positions is not None:
-            self._dag_manual_positions_by_task[layout_key] = {
-                sub_id: QPointF(pos.x(), pos.y()) for sub_id, pos in result.items()
-            }
-        return result
+        return self._dag_controller.resolve_dag_positions(doc, layout_key, subtask_ids, edges)
 
     @staticmethod
     def _compute_auto_layout_positions(
         subtask_ids: list[str],
         edges: list[tuple[str, str]],
     ) -> dict[str, QPointF]:
-        raw_positions = compute_auto_layout_positions(subtask_ids, edges)
-        return {sub_id: QPointF(pos[0], pos[1]) for sub_id, pos in raw_positions.items()}
+        return DagController.compute_auto_layout_positions(subtask_ids, edges)
 
     def _render_dag_scene(
         self,
@@ -1244,123 +1245,41 @@ class MainWindow(QMainWindow):
         *,
         positions: dict[str, QPointF],
     ) -> None:
-        self._clear_dag_drag_preview()
-        self._dag_scene.clear()
-        self._dag_node_centers = {}
-        self._dag_node_items = {}
-        self._dag_edge_items = {}
-        if not subtask_ids:
-            self._dag_scene.addText("No subtask in selected task")
-            return
-
-        node_radius = 22.0
-        self._dag_node_centers = {
-            sub_id: QPointF(
-                positions.get(sub_id, QPointF(80.0, 80.0)).x(),
-                positions.get(sub_id, QPointF(80.0, 80.0)).y(),
-            )
-            for sub_id in subtask_ids
-        }
-
-        edge_pen = QPen(QColor("#8ea6b8"))
-        edge_pen.setWidth(2)
-        for src_id, dst_id in edges:
-            src = self._dag_node_centers.get(src_id)
-            dst = self._dag_node_centers.get(dst_id)
-            if src is None or dst is None:
-                continue
-            line = QGraphicsLineItem(src.x(), src.y(), dst.x(), dst.y())
-            line.setPen(edge_pen)
-            line.setZValue(1)
-            self._dag_scene.addItem(line)
-            self._dag_edge_items[(src_id, dst_id)] = line
-
-        for sub_id in subtask_ids:
-            center = self._dag_node_centers[sub_id]
-            node_item = DagNodeItem(
-                owner=self,
-                subtask_id=sub_id,
-                center=center,
-                radius=node_radius,
-                selected=sub_id == self._selected_subtask_id,
-            )
-            self._dag_scene.addItem(node_item)
-            self._dag_node_items[sub_id] = node_item
-
-            label_item = self._dag_scene.addText(sub_id)
-            label_item.setParentItem(node_item)
-            rect = label_item.boundingRect()
-            label_item.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
-            label_item.setDefaultTextColor(QColor("#f5f7fa"))
-            label_item.setZValue(3)
-
-        self._dag_view.setSceneRect(self._dag_scene.itemsBoundingRect().adjusted(-30, -30, 30, 30))
+        self._dag_controller.render_dag_scene(subtask_ids, edges, positions=positions)
 
     def _start_dag_link_drag(self, src_id: str, scene_pos: QPointF) -> None:
-        self._clear_dag_drag_preview()
-        self._dag_drag_source_id = src_id
-        line = QGraphicsLineItem(scene_pos.x(), scene_pos.y(), scene_pos.x(), scene_pos.y())
-        pen = QPen(QColor("#f8d26a"))
-        pen.setStyle(Qt.PenStyle.DashLine)
-        pen.setWidth(2)
-        line.setPen(pen)
-        line.setZValue(4)
-        self._dag_scene.addItem(line)
-        self._dag_drag_line = line
+        self._dag_controller.start_dag_link_drag(src_id, scene_pos)
 
     def _update_dag_link_drag(self, scene_pos: QPointF) -> None:
-        line = self._dag_drag_line
-        if line is None:
-            return
-        segment = line.line()
-        line.setLine(segment.x1(), segment.y1(), scene_pos.x(), scene_pos.y())
+        self._dag_controller.update_dag_link_drag(scene_pos)
 
     def _finish_dag_link_drag(self, scene_pos: QPointF) -> None:
-        src_id = self._dag_drag_source_id
-        dst_id = self._dag_node_id_from_scene_pos(scene_pos)
-        self._clear_dag_drag_preview()
-        if src_id is None or dst_id is None:
-            return
-        self._try_add_dag_edge(src_id, dst_id, show_feedback=True)
+        self._dag_controller.finish_dag_link_drag(scene_pos)
 
     def _clear_dag_drag_preview(self) -> None:
-        if self._dag_drag_line is not None:
-            try:
-                self._dag_scene.removeItem(self._dag_drag_line)
-            except RuntimeError as exc:
-                _log_ui_error("dag_drag_preview_remove", exc)
-        self._dag_drag_line = None
-        self._dag_drag_source_id = None
+        self._dag_controller.clear_dag_drag_preview()
 
     def _dag_node_id_from_scene_pos(self, scene_pos: QPointF) -> str | None:
-        for item in self._dag_scene.items(scene_pos):
-            if isinstance(item, DagNodeItem):
-                return item.subtask_id
-        nearest_id: str | None = None
-        nearest_distance = float("inf")
-        for sub_id, center in self._dag_node_centers.items():
-            dx = center.x() - scene_pos.x()
-            dy = center.y() - scene_pos.y()
-            distance = dx * dx + dy * dy
-            if distance < nearest_distance:
-                nearest_distance = distance
-                nearest_id = sub_id
-        if nearest_id is not None and nearest_distance <= 28.0 * 28.0:
-            return nearest_id
-        return None
+        return self._dag_controller.dag_node_id_from_scene_pos(scene_pos)
 
     def _dag_scene_pos_for_subtask(self, subtask_id: str) -> QPointF | None:
-        center = self._dag_node_centers.get(subtask_id)
-        if center is None:
-            return None
-        return QPointF(center.x(), center.y())
+        return self._dag_controller.dag_scene_pos_for_subtask(subtask_id)
 
-    def _on_dag_node_clicked(self, subtask_id: str) -> None:
-        self._dag_controller.on_dag_node_clicked(subtask_id)
+    def _on_dag_node_clicked(
+        self,
+        subtask_id: str,
+        *,
+        toggle: bool = False,
+        preserve_existing: bool = False,
+    ) -> None:
+        self._dag_controller.on_dag_node_clicked(
+            subtask_id,
+            toggle=toggle,
+            preserve_existing=preserve_existing,
+        )
 
     def _refresh_dag_node_selection_visuals(self) -> None:
-        for sub_id, node_item in self._dag_node_items.items():
-            node_item.setBrush(QBrush(QColor("#2d7ff9" if sub_id == self._selected_subtask_id else "#47617a")))
+        self._dag_controller.refresh_dag_node_selection_visuals()
 
     def _on_dag_node_moved(self, subtask_id: str, center: QPointF) -> None:
         self._dag_controller.on_dag_node_moved(subtask_id, center)
@@ -1369,28 +1288,22 @@ class MainWindow(QMainWindow):
         self._dag_controller.on_dag_node_drag_finished(subtask_id)
 
     def _update_dag_edges_for_node(self, subtask_id: str) -> None:
-        center = self._dag_node_centers.get(subtask_id)
-        if center is None:
-            return
-        for (src_id, dst_id), line in self._dag_edge_items.items():
-            current = line.line()
-            if src_id == subtask_id:
-                line.setLine(center.x(), center.y(), current.x2(), current.y2())
-            elif dst_id == subtask_id:
-                line.setLine(current.x1(), current.y1(), center.x(), center.y())
+        self._dag_controller.update_dag_edges_for_node(subtask_id)
 
     def _persist_current_dag_layout_to_doc(self) -> None:
-        doc = self._ensure_config_doc()
-        layout_key = self._current_task_layout_key(doc)
-        if not layout_key:
-            return
-        positions = {
-            sub_id: (center.x(), center.y())
-            for sub_id, center in self._dag_node_centers.items()
-        }
-        doc.set_task_node_layout(layout_key, positions)
-        self._mark_form_dirty()
-        self._form_hint.setText("DAG layout changed. Apply Form -> Text to persist ui_layout.")
+        self._dag_controller.persist_current_dag_layout_to_doc()
+
+    def _refresh_dag_overview_canvas(self, entry: DagOverviewCanvasEntry | None) -> None:
+        self._dag_overview_controller.refresh_overview_canvas(entry)
+
+    def _on_dag_canvas_tab_changed(self, index: int) -> None:
+        self._dag_overview_controller.on_canvas_tab_changed(index)
+
+    def _open_dag_overview_canvas(self) -> None:
+        self._dag_overview_controller.show_overview_canvas()
+
+    def _open_dag_overview_task_detail(self, task_ref: int | str) -> bool:
+        return self._dag_overview_controller.open_task_detail(task_ref)
 
     def _on_dag_auto_layout(self) -> None:
         self._dag_controller.on_dag_auto_layout()
@@ -1789,14 +1702,12 @@ class MainWindow(QMainWindow):
         if self._suspend_form_events:
             return
         row = self._task_table.currentRow()
-        self._selected_task_index = row if row >= 0 else -1
-        doc = self._ensure_config_doc()
-        self._suspend_form_events = True
-        try:
-            self._refresh_selected_task_fields(doc)
-        finally:
-            self._suspend_form_events = False
-        self._refresh_dag_widgets(doc)
+        if row < 0:
+            self._selected_task_index = -1
+            self._selected_subtask_id = "s0"
+            self._dag_controller.refresh_dag_widgets(self._ensure_config_doc())
+            return
+        self._dag_controller.select_task(row, sync_table_selection=False)
 
     def _on_resource_selection_changed(self) -> None:
         if self._suspend_form_events:
@@ -1865,6 +1776,23 @@ class MainWindow(QMainWindow):
     def _on_dag_remove_edge(self) -> None:
         self._dag_controller.on_dag_remove_edge()
 
+    def _get_dag_multi_select_state(self) -> DagMultiSelectState:
+        return self._dag_controller.get_multi_select_state()
+
+    def _open_dag_batch_operation(
+        self,
+        action_id: str,
+        *,
+        selected_subtask_ids: list[str] | tuple[str, ...] | None = None,
+    ) -> DagBatchOperationEntry | None:
+        return self._dag_controller.open_batch_operation(
+            action_id,
+            selected_subtask_ids=selected_subtask_ids,
+        )
+
+    def _get_dag_overview_canvas_entry(self) -> DagOverviewCanvasEntry | None:
+        return self._dag_controller.get_overview_canvas_entry()
+
     @staticmethod
     def _parse_optional_float(raw: str, field_name: str) -> float | None:
         text = raw.strip()
@@ -1924,8 +1852,10 @@ class MainWindow(QMainWindow):
             self._suspend_text_events = False
         self._config_doc = None
         self._invalidate_planning_cache()
-        self._sync_text_to_form(show_message=False)
-        self._status_label.setText(f"Loaded: {path}")
+        if self._sync_text_to_form(show_message=False):
+            self._status_label.setText(f"Loaded: {path}")
+            return
+        self._status_label.setText(f"Loaded text only: {path}")
 
     def _pick_save_file(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -2146,6 +2076,13 @@ class MainWindow(QMainWindow):
 
         self._max_time = 0.0
         self._telemetry_controller.reset_panel_state()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if not self._run_controller.teardown_worker(wait_ms=2000):
+            self._status_label.setText("Stopping...")
+            event.ignore()
+            return
+        super().closeEvent(event)
 
 
 def run_ui(config_path: str | None = None) -> None:

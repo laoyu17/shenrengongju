@@ -270,6 +270,58 @@ def test_cli_compare_returns_error_when_metrics_is_not_object(tmp_path: Path) ->
     assert code == 1
 
 
+def test_cli_compare_returns_error_on_report_build_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    left = tmp_path / "left.json"
+    right = tmp_path / "right.json"
+    left.write_text("{}", encoding="utf-8")
+    right.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("rtos_sim.cli.main.build_compare_report", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("compare boom")))
+
+    code = main(["compare", "--left-metrics", str(left), "--right-metrics", str(right)])
+
+    assert code == 1
+    assert "[ERROR] unexpected compare error: compare boom" in capsys.readouterr().out
+
+
+def test_cli_compare_cleans_new_json_when_csv_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    left = tmp_path / "left.json"
+    right = tmp_path / "right.json"
+    out_json = tmp_path / "compare.json"
+    out_csv = tmp_path / "compare.csv"
+    left.write_text("{}", encoding="utf-8")
+    right.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("rtos_sim.cli.main._write_rows_csv", lambda *_a, **_k: (_ for _ in ()).throw(OSError("disk full")))
+
+    code = main(
+        [
+            "compare",
+            "--left-metrics",
+            str(left),
+            "--right-metrics",
+            str(right),
+            "--out-json",
+            str(out_json),
+            "--out-csv",
+            str(out_csv),
+        ]
+    )
+
+    assert code == 1
+    assert out_json.exists() is False
+    assert out_csv.exists() is False
+    assert "[ERROR] failed to write compare outputs: disk full" in capsys.readouterr().out
+
+
 def test_cli_inspect_model_returns_error_on_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def _config_error(_self: object, _path: str) -> object:
         raise ConfigError("bad config")

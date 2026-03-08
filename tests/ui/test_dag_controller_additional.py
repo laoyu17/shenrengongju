@@ -6,6 +6,7 @@ from PyQt6.QtCore import QPointF
 from PyQt6.QtCore import Qt
 
 from rtos_sim.ui.controllers.dag_controller import DagController
+from rtos_sim.ui.panel_state import DagMultiSelectState
 
 
 class _LineEdit:
@@ -120,6 +121,9 @@ class _Doc:
     def list_subtasks(self, task_index: int) -> list[dict]:
         return list(self._tasks[task_index]["subtasks"])
 
+    def get_task(self, task_index: int) -> dict:
+        return dict(self._tasks[task_index])
+
     def add_subtask(self, task_index: int, subtask_id: str | None) -> int:
         subtasks = self._tasks[task_index]["subtasks"]
         new_id = subtask_id or f"s{len(subtasks)}"
@@ -164,6 +168,9 @@ class _Owner:
         self._dag_edge_dst = _LineEdit()
         self._dag_persist_layout = _CheckBox(False)
         self._form_hint = _Label()
+        self._dag_multi_select_state = DagMultiSelectState()
+        self._dag_last_batch_operation = None
+        self._dag_overview_canvas_entry = None
 
         self._dag_scene = _Scene()
         self._dag_view = _View()
@@ -366,6 +373,55 @@ def test_node_click_move_drag_and_layout_paths() -> None:
     assert owner._form_hint.value == "DAG layout persistence disabled."
 
 
+def test_multi_select_toggle_keeps_non_empty_selection() -> None:
+    owner = _Owner(doc=_Doc(subtask_ids=["s0", "s1", "s2"], edges=[]))
+    controller = DagController(owner)
+
+    controller.on_dag_node_clicked("s0")
+    controller.on_dag_node_clicked("s1", toggle=True)
+
+    multi = controller.get_multi_select_state()
+    assert multi.selected_subtask_ids == ["s0", "s1"]
+    assert multi.focus_subtask_id == "s1"
+    assert owner._selected_subtask_id == "s1"
+
+    controller.on_dag_node_clicked("s1", toggle=True)
+    multi = controller.get_multi_select_state()
+    assert multi.selected_subtask_ids == ["s0"]
+    assert multi.focus_subtask_id == "s0"
+    assert owner._selected_subtask_id == "s0"
+
+    controller.on_dag_node_clicked("s0", toggle=True)
+    multi = controller.get_multi_select_state()
+    assert multi.selected_subtask_ids == ["s0"]
+    assert multi.focus_subtask_id == "s0"
+
+
+def test_multi_select_move_keeps_relative_offsets_and_records_batch_operation() -> None:
+    owner = _Owner(doc=_Doc(subtask_ids=["s0", "s1", "s2"], edges=[]))
+    owner._dag_node_centers = {
+        "s0": QPointF(0.0, 0.0),
+        "s1": QPointF(100.0, 20.0),
+        "s2": QPointF(240.0, 60.0),
+    }
+    controller = DagController(owner)
+
+    controller.on_dag_node_clicked("s0")
+    controller.on_dag_node_clicked("s1", toggle=True)
+    controller.on_dag_node_moved("s1", QPointF(130.0, 55.0))
+
+    assert owner._dag_node_centers["s1"] == QPointF(130.0, 55.0)
+    assert owner._dag_node_centers["s0"] == QPointF(30.0, 35.0)
+    assert owner._dag_node_centers["s2"] == QPointF(240.0, 60.0)
+    assert owner._dag_manual_positions_by_task["t0"]["s0"] == QPointF(30.0, 35.0)
+    assert owner._dag_manual_positions_by_task["t0"]["s1"] == QPointF(130.0, 55.0)
+
+    controller.on_dag_node_drag_finished("s1")
+    assert owner._dag_last_batch_operation is not None
+    assert owner._dag_last_batch_operation.action_id == "move-selected"
+    assert owner._dag_last_batch_operation.selected_subtask_ids == ("s0", "s1")
+
+
 def test_try_add_dag_edge_validation_branches() -> None:
     owner = _Owner(doc=_Doc(subtask_ids=["s0", "s1"], edges=[]))
     controller = DagController(owner)
@@ -391,3 +447,69 @@ def test_would_create_cycle_handles_revisit_paths() -> None:
     )
 
     assert DagController.would_create_cycle(doc, 0, "s4", "s0") is False
+
+
+def test_workbench_entrypoints_follow_single_selection_contract() -> None:
+    owner = _Owner(doc=_Doc(subtask_ids=["s0", "s1", "s2"], edges=[("s0", "s1")]))
+    controller = DagController(owner)
+
+    controller.on_dag_node_clicked("s1")
+    multi = controller.get_multi_select_state()
+    assert multi.selected_subtask_ids == ["s1"]
+    assert multi.anchor_subtask_id == "s1"
+    assert multi.focus_subtask_id == "s1"
+
+    batch = controller.open_batch_operation("delete-selected")
+    assert batch is not None
+    assert batch.action_id == "delete-selected"
+    assert batch.selected_subtask_ids == ("s1",)
+    assert owner._dag_last_batch_operation == batch
+
+    overridden = controller.open_batch_operation("relink", selected_subtask_ids=["s2", "s1", "s2", "missing"])
+    assert overridden is not None
+    assert overridden.selected_subtask_ids == ("s2", "s1")
+
+    overview = controller.get_overview_canvas_entry()
+    assert overview is not None
+    assert overview.task_id == "t0"
+    assert overview.selected_subtask_ids == ("s1",)
+    assert overview.subtask_ids == ("s0", "s1", "s2")
+    assert overview.edges == (("s0", "s1"),)
+    assert len(overview.tasks) == 1
+    assert overview.tasks[0].task_id == "t0"
+    assert overview.tasks[0].selected_subtask_ids == ("s1",)
+    assert overview.tasks[0].subtask_count == 3
+    assert dict(overview.tasks[0].node_positions)["s0"] == (0.0, 0.0)
+    assert owner._dag_overview_canvas_entry == overview
+
+
+def test_batch_remove_subtasks_prunes_edges_and_collapses_selection() -> None:
+    owner = _Owner(
+        doc=_Doc(
+            subtask_ids=["s0", "s1", "s2", "s3"],
+            edges=[("s0", "s1"), ("s1", "s2"), ("s2", "s3"), ("s0", "s3")],
+        )
+    )
+    owner._dag_manual_positions_by_task["t0"] = {
+        "s0": QPointF(0.0, 0.0),
+        "s1": QPointF(100.0, 0.0),
+        "s2": QPointF(200.0, 0.0),
+        "s3": QPointF(300.0, 0.0),
+    }
+    owner._dag_persist_layout.setChecked(True)
+    controller = DagController(owner)
+
+    controller.on_dag_node_clicked("s1")
+    controller.on_dag_node_clicked("s2", toggle=True)
+    controller.on_dag_remove_subtask()
+
+    assert [sub["id"] for sub in owner._doc.list_subtasks(0)] == ["s0", "s3"]
+    assert owner._doc.list_edges(0) == [("s0", "s3")]
+    assert owner._selected_subtask_id == "s3"
+    assert controller.get_multi_select_state().selected_subtask_ids == ["s3"]
+    assert owner._persist_calls == 1
+    assert owner._dirty_calls == 1
+    assert owner._dag_last_batch_operation is not None
+    assert owner._dag_last_batch_operation.action_id == "delete-selected"
+    assert owner._dag_last_batch_operation.selected_subtask_ids == ("s1", "s2")
+    assert set(owner._dag_manual_positions_by_task["t0"]) == {"s0", "s3"}

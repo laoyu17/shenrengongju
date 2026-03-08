@@ -18,6 +18,12 @@ class _Doc:
         self._subtasks = [{"id": "s0"}, {"id": "s1"}]
         self._edges: list[tuple[str, str]] = [("s0", "s1")]
 
+    def list_tasks(self) -> list[dict]:
+        return [{"id": "t0"}]
+
+    def get_task(self, _task_index: int) -> dict:
+        return {"id": "t0"}
+
     def list_subtasks(self, _task_index: int) -> list[dict]:
         return list(self._subtasks)
 
@@ -31,11 +37,13 @@ class _Doc:
 class _Owner:
     def __init__(self) -> None:
         self._selected_task_index = 0
+        self._selected_subtask_id = "s0"
         self._form_hint = _Label()
         self._populate_calls = 0
         self._refresh_calls = 0
         self._dirty_marks = 0
         self._doc = _Doc()
+        self._dag_overview_canvas_entry = None
 
     def _ensure_config_doc(self) -> _Doc:
         return self._doc

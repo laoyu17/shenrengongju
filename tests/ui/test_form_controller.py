@@ -131,3 +131,16 @@ def test_sync_form_to_text_success_refreshes_editor_and_document() -> None:
     assert owner._populate_doc_calls == 1
     assert owner._form_dirty is False
     assert owner._form_hint.text == "Form applied to text."
+
+
+def test_sync_form_to_text_blank_editor_avoids_startup_noise() -> None:
+    owner = _Owner()
+    owner._editor.text = ""
+    owner._read_editor_payload = lambda: (_ for _ in ()).throw(ConfigError("blank editor"))  # type: ignore[method-assign]
+    errors: list[tuple[str, Exception]] = []
+    controller = FormController(owner, lambda action, exc, **_: errors.append((action, exc)))
+
+    assert controller.sync_form_to_text(show_message=False) is True
+    assert owner._apply_payload_calls == [{}]
+    assert owner._form_hint.text == "Form applied to text."
+    assert errors == []

@@ -2,6 +2,7 @@
 
 from .compare_controller import CompareController
 from .dag_controller import DagController
+from .dag_overview_controller import DagOverviewController
 from .form_controller import FormController
 from .gantt_style_controller import GanttStyleController
 from .planning_controller import PlanningController
@@ -13,6 +14,7 @@ from .timeline_controller import TimelineController
 __all__ = [
     "CompareController",
     "DagController",
+    "DagOverviewController",
     "FormController",
     "GanttStyleController",
     "PlanningController",

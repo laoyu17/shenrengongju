@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPointF
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication
 import pytest
 import yaml
@@ -42,6 +43,101 @@ def _render_example(example_name: str) -> MainWindow:
     window = MainWindow(config_path=f"examples/{example_name}")
     window._on_finished(engine.metric_report(), events)
     return window
+
+
+def _multi_task_dag_payload() -> dict[str, object]:
+    return {
+        "version": "0.2",
+        "platform": {
+            "processor_types": [{"id": "CPU", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+            "cores": [{"id": "c0", "type_id": "CPU", "speed_factor": 1.0}],
+        },
+        "resources": [],
+        "tasks": [
+            {
+                "id": "t0",
+                "name": "ingest",
+                "task_type": "dynamic_rt",
+                "arrival": 0,
+                "deadline": 10,
+                "subtasks": [
+                    {
+                        "id": "s0",
+                        "predecessors": [],
+                        "successors": ["s1"],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                    },
+                    {
+                        "id": "s1",
+                        "predecessors": ["s0"],
+                        "successors": [],
+                        "segments": [{"id": "seg1", "index": 1, "wcet": 2}],
+                    },
+                ],
+            },
+            {
+                "id": "t1",
+                "name": "plan",
+                "task_type": "time_deterministic",
+                "arrival": 0,
+                "period": 12,
+                "deadline": 12,
+                "subtasks": [
+                    {
+                        "id": "u0",
+                        "predecessors": [],
+                        "successors": ["u1"],
+                        "segments": [{"id": "seg0", "index": 1, "wcet": 1}],
+                    },
+                    {
+                        "id": "u1",
+                        "predecessors": ["u0"],
+                        "successors": [],
+                        "segments": [{"id": "seg1", "index": 1, "wcet": 1.5}],
+                    },
+                ],
+            },
+        ],
+        "scheduler": {"name": "edf", "params": {}},
+        "sim": {"duration": 24, "seed": 7},
+        "ui_layout": {
+            "task_nodes": {
+                "t0": {"s0": [40.0, 50.0], "s1": [180.0, 90.0]},
+                "t1": {"u0": [35.0, 45.0], "u1": [170.0, 125.0]},
+            }
+        },
+    }
+
+
+def _load_payload(window: MainWindow, payload: dict[str, object]) -> None:
+    window._editor.setPlainText(yaml.safe_dump(payload, sort_keys=False))
+    assert window._sync_text_to_form(show_message=False) is True
+    APP.processEvents()
+
+
+def test_ui_close_event_teardown_accepts_when_worker_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    event = QCloseEvent()
+    calls: list[int] = []
+    try:
+        monkeypatch.setattr(window._run_controller, "teardown_worker", lambda *, wait_ms: calls.append(wait_ms) or True)
+        window.closeEvent(event)
+        assert calls == [2000]
+        assert event.isAccepted() is True
+    finally:
+        window.close()
+
+
+def test_ui_close_event_ignores_when_worker_teardown_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    event = QCloseEvent()
+    try:
+        monkeypatch.setattr(window._run_controller, "teardown_worker", lambda *, wait_ms: False)
+        window.closeEvent(event)
+        assert event.isAccepted() is False
+        assert window._status_label.text() == "Stopping..."
+    finally:
+        window.close()
 
 
 def test_ui_cpu_lane_and_preempt_visuals() -> None:
@@ -673,6 +769,155 @@ def test_ui_dag_layout_persist_to_ui_layout_optional() -> None:
 
         # ui_layout metadata should not break runtime validation in UI path.
         window._loader.load_data(payload)
+    finally:
+        window.close()
+
+
+def test_ui_dag_multi_select_batch_move_uses_existing_ui_layout_protocol() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        window._dag_persist_layout.setChecked(True)
+        window._on_dag_node_clicked("s0")
+        window._on_dag_node_clicked("s1", toggle=True)
+
+        state = window._get_dag_multi_select_state()
+        assert state.selected_subtask_ids == ["s0", "s1"]
+        assert state.focus_subtask_id == "s1"
+
+        before0 = window._dag_scene_pos_for_subtask("s0")
+        before1 = window._dag_scene_pos_for_subtask("s1")
+        assert before0 is not None and before1 is not None
+
+        window._dag_node_items["s1"].setPos(QPointF(before1.x() + 90.0, before1.y() + 45.0))
+        window._on_dag_node_drag_finished("s1")
+        APP.processEvents()
+
+        after0 = window._dag_scene_pos_for_subtask("s0")
+        after1 = window._dag_scene_pos_for_subtask("s1")
+        assert after0 is not None and after1 is not None
+        assert after0 == QPointF(before0.x() + 90.0, before0.y() + 45.0)
+        assert after1 == QPointF(before1.x() + 90.0, before1.y() + 45.0)
+        assert window._dag_last_batch_operation is not None
+        assert window._dag_last_batch_operation.action_id == "move-selected"
+        assert window._dag_last_batch_operation.selected_subtask_ids == ("s0", "s1")
+
+        assert window._sync_form_to_text(show_message=False) is True
+        payload = yaml.safe_load(window._editor.toPlainText())
+        assert "ui_layout" in payload
+        assert "task_nodes" in payload["ui_layout"]
+        assert "dag_layout" not in payload
+        assert "dag_layout" not in payload["ui_layout"]
+        assert set(payload["ui_layout"]["task_nodes"]["t0"]) == {"s0", "s1"}
+    finally:
+        window.close()
+
+
+def test_ui_dag_batch_delete_prunes_edges_and_keeps_focus_consistent() -> None:
+    window = MainWindow(config_path="examples/at01_single_dag_single_core.yaml")
+    try:
+        window._dag_new_subtask_id.setText("s2")
+        window._on_dag_add_subtask()
+        window._dag_new_subtask_id.setText("s3")
+        window._on_dag_add_subtask()
+        assert window._try_add_dag_edge("s1", "s2", show_feedback=False) is True
+        assert window._try_add_dag_edge("s2", "s3", show_feedback=False) is True
+        assert window._try_add_dag_edge("s0", "s3", show_feedback=False) is True
+
+        window._on_dag_node_clicked("s1")
+        window._on_dag_node_clicked("s2", toggle=True)
+        window._on_dag_remove_subtask()
+        APP.processEvents()
+
+        assert set(window._dag_node_items) == {"s0", "s3"}
+        edges_text = [window._dag_edges_list.item(i).text() for i in range(window._dag_edges_list.count())]
+        assert edges_text == ["s0 -> s3"]
+
+        state = window._get_dag_multi_select_state()
+        assert state.selected_subtask_ids == ["s3"]
+        assert state.focus_subtask_id == "s3"
+        assert window._selected_subtask_id == "s3"
+        assert window._form_subtask_id.text() == "s3"
+        assert window._dag_last_batch_operation is not None
+        assert window._dag_last_batch_operation.action_id == "delete-selected"
+        assert window._dag_last_batch_operation.selected_subtask_ids == ("s1", "s2")
+    finally:
+        window.close()
+
+
+def test_ui_dag_overview_loads_cross_task_cards() -> None:
+    window = MainWindow()
+    try:
+        _load_payload(window, _multi_task_dag_payload())
+
+        entry = window._get_dag_overview_canvas_entry()
+        assert entry is not None
+        assert entry.task_id == "t0"
+        assert [task.task_id for task in entry.tasks] == ["t0", "t1"]
+        task1 = next(task for task in entry.tasks if task.task_id == "t1")
+        assert task1.task_name == "plan"
+        assert task1.subtask_count == 2
+        assert dict(task1.node_positions)["u1"] == (170.0, 125.0)
+
+        window._open_dag_overview_canvas()
+        APP.processEvents()
+
+        assert window._dag_canvas_tabs.tabText(0) == "Overview"
+        assert window._dag_canvas_tabs.tabText(1) == "Task Detail"
+        assert window._dag_canvas_mode == "overview"
+        assert len(window._dag_overview_scene.items()) > 0
+    finally:
+        window.close()
+
+
+def test_ui_dag_overview_switches_to_task_detail_canvas() -> None:
+    window = MainWindow()
+    try:
+        _load_payload(window, _multi_task_dag_payload())
+        window._open_dag_overview_canvas()
+        APP.processEvents()
+
+        assert window._open_dag_overview_task_detail("t1") is True
+        APP.processEvents()
+
+        assert window._dag_canvas_mode == "detail"
+        assert window._selected_task_index == 1
+        assert window._form_task_id.text() == "t1"
+        assert window._form_subtask_id.text() == "u0"
+        assert window._dag_scene_pos_for_subtask("u0") is not None
+        assert window._dag_scene_pos_for_subtask("s0") is None
+    finally:
+        window.close()
+
+
+def test_ui_dag_overview_and_detail_share_ui_layout_persistence() -> None:
+    window = MainWindow()
+    try:
+        _load_payload(window, _multi_task_dag_payload())
+        assert window._open_dag_overview_task_detail("t0") is True
+
+        window._dag_persist_layout.setChecked(True)
+        before = window._dag_scene_pos_for_subtask("s1")
+        assert before is not None
+        target = QPointF(before.x() + 84.0, before.y() + 36.0)
+        window._dag_node_items["s1"].setPos(target)
+        window._on_dag_node_drag_finished("s1")
+        APP.processEvents()
+
+        entry = window._get_dag_overview_canvas_entry()
+        assert entry is not None
+        task0 = next(task for task in entry.tasks if task.task_id == "t0")
+        assert dict(task0.node_positions)["s1"] == (target.x(), target.y())
+
+        assert window._sync_form_to_text(show_message=False) is True
+        payload = yaml.safe_load(window._editor.toPlainText())
+        assert payload["ui_layout"]["task_nodes"]["t0"]["s1"] == [target.x(), target.y()]
+
+        assert window._open_dag_overview_task_detail("t1") is True
+        assert window._open_dag_overview_task_detail("t0") is True
+        APP.processEvents()
+
+        after = window._dag_scene_pos_for_subtask("s1")
+        assert after == target
     finally:
         window.close()
 

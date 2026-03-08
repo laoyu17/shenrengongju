@@ -393,28 +393,45 @@ def cmd_batch_run(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
+    out_json = args.out_json
+    out_csv = args.out_csv
+    json_preexisting = bool(out_json and Path(out_json).exists())
+    csv_preexisting = bool(out_csv and Path(out_csv).exists())
+    json_written = False
+    csv_written = False
+
     try:
         left_metrics = _read_json(args.left_metrics)
         right_metrics = _read_json(args.right_metrics)
+        report = build_compare_report(
+            left_metrics,
+            right_metrics,
+            left_label=args.left_label or "left",
+            right_label=args.right_label or "right",
+        )
     except Exception as exc:  # noqa: BLE001
-        print(f"[ERROR] {exc}")
+        print(f"[ERROR] unexpected compare error: {exc}")
         return 1
 
-    report = build_compare_report(
-        left_metrics,
-        right_metrics,
-        left_label=args.left_label or "left",
-        right_label=args.right_label or "right",
-    )
-    if args.out_json:
-        _write_json(args.out_json, report)
-    if args.out_csv:
-        _write_rows_csv(args.out_csv, compare_report_to_rows(report))
+    try:
+        if out_json:
+            _write_json(out_json, report)
+            json_written = True
+        if out_csv:
+            _write_rows_csv(out_csv, compare_report_to_rows(report))
+            csv_written = True
+    except Exception as exc:  # noqa: BLE001
+        if json_written and out_json and not json_preexisting:
+            Path(out_json).unlink(missing_ok=True)
+        if csv_written and out_csv and not csv_preexisting:
+            Path(out_csv).unlink(missing_ok=True)
+        print(f"[ERROR] failed to write compare outputs: {exc}")
+        return 1
 
     print(
         "[OK] metrics compare completed, "
         f"left={args.left_metrics}, right={args.right_metrics}, "
-        f"json={args.out_json or '-'}, csv={args.out_csv or '-'}"
+        f"json={out_json or '-'}, csv={out_csv or '-'}"
     )
     return 0
 

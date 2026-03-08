@@ -71,11 +71,16 @@ class FormController:
         if self._owner._config_doc is not None:
             base_payload = self._owner._config_doc.to_payload()
         else:
-            try:
-                base_payload = self._owner._read_editor_payload()
-            except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
-                self._error_logger("sync_form_to_text_base_payload", exc)
+            editor = self._owner._editor
+            raw_text = editor.toPlainText() if hasattr(editor, "toPlainText") else str(getattr(editor, "text", ""))
+            if not raw_text.strip():
                 base_payload = {}
+            else:
+                try:
+                    base_payload = self._owner._read_editor_payload()
+                except (ConfigError, ValueError, TypeError, yaml.YAMLError) as exc:
+                    self._error_logger("sync_form_to_text_base_payload", exc)
+                    base_payload = {}
 
         try:
             payload = self._owner._apply_form_to_payload(base_payload)
