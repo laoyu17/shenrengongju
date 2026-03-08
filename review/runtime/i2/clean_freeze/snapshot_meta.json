@@ -1,8 +1,8 @@
 {
-  "snapshot_id": "baseline-freeze-20260308-105841",
-  "generated_at_utc": "2026-03-08T10:58:41Z",
-  "head_commit": "7f0b9a502b93da00d16d9d272b99fd95d965bb72",
-  "tag_name": "delivery-baseline-20260308-105841",
+  "snapshot_id": "baseline-freeze-20260308-130600",
+  "generated_at_utc": "2026-03-08T13:06:00Z",
+  "head_commit": "9cfa458e7a5ea1f0181ebb6471b96920a6ed9487",
+  "tag_name": "delivery-baseline-20260308-130509",
   "tag_status": "created",
   "freeze_kind": "clean_formal",
   "formal_freeze": true,

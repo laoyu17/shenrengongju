@@ -21,10 +21,10 @@
 5. 文档追踪矩阵与执行文档保持一致更新（`11/14/15/16` 四份）。
 
 ## 2. 当前基线快照（2026-03-05）
-- 证据基线：`evidence_git_sha=7f0b9a502b93da00d16d9d272b99fd95d965bb72`
-- 工作区基线：`workspace_git_sha=7f0b9a502b93da00d16d9d272b99fd95d965bb72`
-- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `482 passed`）。
-- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `89.98%`，`line_rate=89.9769053117783`）。
+- 证据基线：`evidence_git_sha=9cfa458e7a5ea1f0181ebb6471b96920a6ed9487`
+- 工作区基线：`workspace_git_sha=9cfa458e7a5ea1f0181ebb6471b96920a6ed9487`
+- 全量测试：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `484 passed`）。
+- 覆盖率：主线事实以 `artifacts/quality/quality-snapshot.json` 为准（当前基线 `90.04%`，`line_rate=90.03965692151618`）。
 - 现有研究判定入口：`compliance_profiles.profiles.research_v1.status`（兼容） + `compliance_profiles.profiles.research_v2.status`（当前主口径）
 - 当前结论：证明资产、报告模板化、CI 稳定化与 UI 研究报告出口已形成最小闭环；剩余差距集中在 DAG 深交互的易用性/批量编辑体验，以及最新 freeze 证据追平。
 - 门禁升级建议：维持 `research_audit` 非阻断；当连续 7 天 `research_v2=pass` 且 `unexpected_actual_checks=0` 后，再评估升级为阻断。

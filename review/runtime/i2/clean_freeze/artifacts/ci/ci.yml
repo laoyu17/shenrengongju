@@ -607,6 +607,7 @@ jobs:
                       {
                           "report_status": payload.get("status"),
                           "research_v1": statuses.get("research_v1"),
+                          "research_v2": statuses.get("research_v2"),
                           "engineering_v1": statuses.get("engineering_v1"),
                           "model_relations": statuses.get("model_relations"),
                           "audit": statuses.get("audit"),
@@ -664,9 +665,11 @@ jobs:
               report = json.loads(report_path.read_text(encoding="utf-8"))
               statuses = report.get("statuses", {})
               research_status = statuses.get("research_v1")
+              research_v2_status = statuses.get("research_v2")
               engineering_status = statuses.get("engineering_v1")
               summary_lines.append(f"- report.status: {report.get('status')}")
               summary_lines.append(f"- research_v1: {research_status}")
+              summary_lines.append(f"- research_v2: {research_v2_status}")
               summary_lines.append(f"- engineering_v1: {engineering_status}")
               failed = report.get("failed_check_details", [])
               summary_lines.append(f"- failed_checks: {len(failed)}")
@@ -677,6 +680,10 @@ jobs:
               ]
               if failed_rules:
                   summary_lines.append(f"- failed_rules: {', '.join(failed_rules[:8])}")
+              if research_v2_status != "pass":
+                  summary_lines.append(
+                      "- ⚠️ research_v2 is not pass (non-blocking job). Keep it visible until promotion criteria are met."
+                  )
               if research_status != "pass":
                   summary_lines.append(
                       "- ❌ research_v1 is not pass (non-blocking job). Please investigate before merge."
@@ -699,8 +706,17 @@ jobs:
                   for item in matrix.get("cases", [])
                   if isinstance(item, dict) and item.get("report_status") != "pass"
               ]
+              research_v2_failed_cases = [
+                  item.get("case")
+                  for item in matrix.get("cases", [])
+                  if isinstance(item, dict) and item.get("research_v2") != "pass"
+              ]
               if failed_cases:
                   summary_lines.append(f"- matrix.failed_cases: {', '.join(str(item) for item in failed_cases[:8])}")
+              if research_v2_failed_cases:
+                  summary_lines.append(
+                      f"- matrix.research_v2_failed_cases: {', '.join(str(item) for item in research_v2_failed_cases[:8])}"
+                  )
               if matrix.get("status") != "pass":
                   summary_lines.append(
                       "- ⚠️ multi-case research matrix is not pass (non-blocking job)."
