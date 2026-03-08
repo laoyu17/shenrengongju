@@ -338,5 +338,7 @@ def test_i2_refresh_formal_freeze_script_runs_gate_before_reference_check() -> N
     script = (ROOT / "review/scripts/i2_refresh_formal_freeze.sh").read_text(encoding="utf-8")
     assert "review/scripts/i2_clean_freeze_gate.sh" in script
     assert script.index("review/scripts/i2_clean_freeze_gate.sh") < script.index("check_doc_reference_integrity.py")
+    assert "step 3/3" in script
     assert "freeze_fact_source" in script
     assert "quality_fact_source" in script
+    assert "next_step" in script

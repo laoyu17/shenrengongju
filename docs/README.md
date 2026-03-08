@@ -63,3 +63,18 @@ python scripts/quality_snapshot.py --output artifacts/quality/quality-snapshot.j
 python scripts/check_doc_baseline_consistency.py --snapshot artifacts/quality/quality-snapshot.json \
   --docs-root docs
 ```
+
+## 6. Formal Freeze 固定步骤
+
+当前仓库对正式 freeze 采用“checkpoint commit + freeze evidence refresh + archive evidence commit”的固定步骤，而不是让 archive commit 直接充当 freeze 锚点。
+
+最小固定步骤如下：
+
+1. 在 clean workspace 上确认当前 `HEAD` 就是要冻结的 checkpoint commit。
+2. 执行 `bash review/scripts/i2_refresh_formal_freeze.sh`，刷新 `snapshot_meta.json`、`quality-snapshot.json` 及关联引用校验。
+3. 审核 `docs/` 与 `review/` 的追平差异，单独提交 archive evidence commit；如需形成远端正式交付，再推送 `main` 与当前 freeze tag。
+
+说明：
+
+- freeze 一级事实源始终是 `review/runtime/i2/clean_freeze/snapshot_meta.json` 与 `artifacts/quality/quality-snapshot.json`。
+- `review/06-收口执行记录.md` 只记录过程，不仲裁当前 freeze 事实。
