@@ -7,6 +7,7 @@ from rtos_sim.planning import (
     PlanningProblem,
     PlanningSegment,
     assign_segments_wfd,
+    build_normalized_execution_model,
     plan_np_dm,
     plan_np_edf,
     plan_np_rm,
@@ -597,3 +598,44 @@ def test_planning_problem_conservative_envelope_supports_burst_sequence_builtin_
     assert task_trace["generator"] == "burst_sequence"
     assert task_trace["resolved_min_interval"] == pytest.approx(0.3)
     assert task_trace["envelope_source"] == "arrival_process.params.burst_intervals/recovery_interval(min)"
+
+
+def test_normalized_execution_projection_preserves_arrival_context() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "version": "0.2",
+            "platform": {
+                "processor_types": [{"id": "cpu", "name": "cpu", "core_count": 1, "speed_factor": 1.0}],
+                "cores": [{"id": "c0", "type_id": "cpu", "speed_factor": 1.0}],
+            },
+            "resources": [],
+            "tasks": [
+                {
+                    "id": "j",
+                    "name": "jitter",
+                    "task_type": "dynamic_rt",
+                    "deadline": 10.0,
+                    "arrival": 0.0,
+                    "arrival_process": {
+                        "type": "custom",
+                        "params": {"generator": "periodic_jitter", "period": 1.0, "jitter": 0.25},
+                        "max_releases": 5,
+                    },
+                    "subtasks": [
+                        {"id": "s0", "predecessors": [], "successors": [], "segments": [{"id": "seg0", "index": 1, "wcet": 0.1}]}
+                    ],
+                }
+            ],
+            "scheduler": {"name": "edf", "params": {}},
+            "sim": {"duration": 10.0, "seed": 31},
+            "planning": {"enabled": True, "params": {"arrival_analysis_mode": "conservative_envelope"}},
+        }
+    )
+
+    normalized = build_normalized_execution_model(spec, task_scope="sync_and_dynamic_rt")
+    problem = normalized.to_planning_problem()
+
+    assert [segment.release_time for segment in problem.segments] == pytest.approx([0.0, 0.75, 1.5, 2.25, 3.0])
+    assert problem.horizon == pytest.approx(normalized.coverage_summary["analysis_horizon"])
+    assert problem.metadata["semantic_fingerprint"] == normalized.semantic_fingerprint()
+    assert problem.metadata["arrival_assumption_trace"] == normalized.arrival_assumption_trace

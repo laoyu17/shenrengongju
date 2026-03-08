@@ -58,6 +58,14 @@ class _PlanningArrivalContext:
         self.conservative_min_intervals = dict(conservative_min_intervals or {})
 
 
+@dataclass(slots=True)
+class _ExpandedArrivals:
+    analysis_horizon: float
+    arrival_analysis_mode: str
+    conservative_min_intervals: dict[str, float]
+    release_schedule: dict[str, list[tuple[int, float]]]
+
+
 
 
 def _arrival_analysis_mode(spec: ModelSpec) -> str:
@@ -507,301 +515,13 @@ class NormalizedExecutionModel:
         include_non_rt: bool = False,
         horizon: float | None = None,
     ) -> "NormalizedExecutionModel":
-        resolved_scope = normalize_task_scope(task_scope, include_non_rt=include_non_rt)
-        processor_speed = {
-            processor.id: float(processor.speed_factor)
-            for processor in spec.platform.processor_types
-        }
-        cores = [
-            NormalizedCore(
-                core_id=core.id,
-                processor_type_id=core.type_id,
-                processor_speed_factor=processor_speed[core.type_id],
-                core_speed_factor=float(core.speed_factor),
-                effective_speed_factor=float(core.speed_factor) * processor_speed[core.type_id],
-            )
-            for core in spec.platform.cores
-        ]
-
-        resource_bindings = {
-            resource.id: {
-                "bound_core_id": resource.bound_core_id,
-                "protocol": resource.protocol,
-            }
-            for resource in spec.resources
-        }
-        core_ids = [core.core_id for core in cores]
-        core_speed_by_id = {core.core_id: core.effective_speed_factor for core in cores}
-        effective_speeds = sorted({round(core.effective_speed_factor, 12) for core in cores})
-        scheduler_params = dict(spec.scheduler.params)
-        overhead_params = scheduler_params.get("overhead", {})
-        if not isinstance(overhead_params, dict):
-            overhead_params = {}
-        etm_params = scheduler_params.get("etm_params", {})
-        if not isinstance(etm_params, dict):
-            etm_params = {}
-        etm_name = str(scheduler_params.get("etm", "constant") or "constant")
-        arrival_analysis_mode = _arrival_analysis_mode(spec)
-        conservative_min_intervals = _conservative_min_interval_map(spec)
-        etm = create_etm(etm_name, etm_params)
-
-        segments: list[NormalizedSegment] = []
-        included_task_ids: set[str] = set()
-        skipped_dynamic_rt = 0
-        skipped_non_rt = 0
-        resource_segment_count = 0
-        release_offset_segment_count = 0
-        non_preemptible_segment_count = 0
-        stochastic_arrival_task_count = 0
-        phase_offset_task_count = 0
-        expanded_release_count = 0
-        analysis_horizon = float(horizon) if horizon is not None else float(spec.sim.duration)
-        release_schedule = _expanded_release_schedule(spec, analysis_horizon)
-
-        for task in spec.tasks:
-            if not _task_in_scope(task.task_type, resolved_scope):
-                if task.task_type == TaskType.DYNAMIC_RT:
-                    skipped_dynamic_rt += 1
-                elif task.task_type == TaskType.NON_RT:
-                    skipped_non_rt += 1
-                continue
-
-            included_task_ids.add(task.id)
-            if task.phase_offset not in (None, 0.0):
-                phase_offset_task_count += 1
-            arrival_mode = _task_arrival_mode(task)
-            if arrival_mode in {
-                ArrivalProcessType.UNIFORM.value,
-                ArrivalProcessType.POISSON.value,
-                ArrivalProcessType.CUSTOM.value,
-                "uniform_interval",
-            }:
-                stochastic_arrival_task_count += 1
-
-            relative_deadline = float(task.deadline) if task.deadline is not None else None
-            task_mapping = task.task_mapping_hint
-            task_releases = release_schedule.get(task.id, [])
-            expanded_release_count += len(task_releases)
-
-            for release_idx, task_release_time in task_releases:
-                release_marker = release_idx if len(task_releases) > 1 else None
-                absolute_deadline = (
-                    task_release_time + relative_deadline if relative_deadline is not None else None
-                )
-                subtask_segment_keys: dict[str, list[str]] = {}
-
-                for subtask in task.subtasks:
-                    ordered_segments = sorted(subtask.segments, key=lambda item: item.index)
-                    subtask_mapping = subtask.subtask_mapping_hint or task_mapping
-                    previous_segment_key: str | None = None
-                    subtask_keys: list[str] = []
-
-                    for segment in ordered_segments:
-                        mapping_hint = segment.mapping_hint or subtask_mapping
-                        release_offsets = [float(value) for value in (segment.release_offsets or [])]
-                        effective_release_time = float(task_release_time)
-                        deterministic_offset_index: int | None = None
-                        if release_offsets:
-                            deterministic_offset_index = release_idx % len(release_offsets)
-                            effective_release_time += release_offsets[deterministic_offset_index]
-
-                        eligible_core_ids = [mapping_hint] if mapping_hint else list(core_ids)
-                        execution_cost_by_core = {
-                            core_id: float(
-                                etm.estimate(
-                                    float(segment.wcet),
-                                    float(core_speed_by_id[core_id]),
-                                    effective_release_time,
-                                    task_id=task.id,
-                                    subtask_id=subtask.id,
-                                    segment_id=segment.id,
-                                    core_id=core_id,
-                                )
-                            )
-                            for core_id in eligible_core_ids
-                        }
-                        default_execution_cost = (
-                            min(execution_cost_by_core.values())
-                            if execution_cost_by_core
-                            else float(segment.wcet)
-                        )
-                        segment_key = (f"{task.id}@{release_idx}:{subtask.id}:{segment.id}" if release_marker is not None else f"{task.id}:{subtask.id}:{segment.id}")
-                        normalized_segment = NormalizedSegment(
-                            task_id=task.id,
-                            subtask_id=subtask.id,
-                            segment_id=segment.id,
-                            key=segment_key,
-                            task_type=task.task_type.value,
-                            wcet=float(segment.wcet),
-                            release_index=release_marker,
-                            release_time=effective_release_time,
-                            period=float(task.period) if task.period is not None else None,
-                            relative_deadline=relative_deadline,
-                            absolute_deadline=absolute_deadline,
-                            arrival_mode=arrival_mode,
-                            phase_offset=float(task.phase_offset) if task.phase_offset is not None else None,
-                            mapping_hint=mapping_hint,
-                            required_resources=list(segment.required_resources),
-                            predecessor_keys=[previous_segment_key] if previous_segment_key else [],
-                            preemptible=bool(segment.preemptible),
-                            release_offsets=release_offsets,
-                            metadata={
-                                "segment_index": int(segment.index),
-                                "task_name": task.name,
-                                "subtask_successor_count": len(subtask.successors),
-                                "eligible_core_ids": list(eligible_core_ids),
-                                "execution_cost_by_core": {
-                                    core_id: round(cost, 12)
-                                    for core_id, cost in sorted(execution_cost_by_core.items())
-                                },
-                                "default_execution_cost": round(default_execution_cost, 12),
-                                "raw_wcet": float(segment.wcet),
-                                "effective_speed_by_core": {
-                                    core_id: float(core_speed_by_id[core_id])
-                                    for core_id in eligible_core_ids
-                                },
-                                "etm": etm_name,
-                                "release_index": int(release_idx),
-                                "task_release_time": float(task_release_time),
-                                "analysis_release_time": float(effective_release_time),
-                                "deterministic_offset_index": deterministic_offset_index,
-                            },
-                        )
-                        if normalized_segment.required_resources:
-                            resource_segment_count += 1
-                        if normalized_segment.release_offsets:
-                            release_offset_segment_count += 1
-                        if not normalized_segment.preemptible:
-                            non_preemptible_segment_count += 1
-                        segments.append(normalized_segment)
-                        subtask_keys.append(segment_key)
-                        previous_segment_key = segment_key
-                    subtask_segment_keys[subtask.id] = subtask_keys
-
-                by_key = {
-                    segment.key: segment
-                    for segment in segments
-                    if segment.task_id == task.id and (segment.release_index or 0) == (release_marker if release_marker is not None else 0)
-                }
-                for subtask in task.subtasks:
-                    current_keys = subtask_segment_keys.get(subtask.id, [])
-                    if not current_keys:
-                        continue
-                    first_segment = by_key[current_keys[0]]
-                    for predecessor_subtask in subtask.predecessors:
-                        predecessor_keys = subtask_segment_keys.get(predecessor_subtask, [])
-                        if not predecessor_keys:
-                            continue
-                        predecessor_key = predecessor_keys[-1]
-                        if predecessor_key not in first_segment.predecessor_keys:
-                            first_segment.predecessor_keys.append(predecessor_key)
-
-        assumptions = [
-            {
-                "id": "release_expansion_within_horizon",
-                "message": "Offline planning/WCRT expand task releases within the selected horizon (defaults to sim.duration), instead of collapsing tasks to one representative release.",
-                "horizon": analysis_horizon,
-                "expanded_release_count": expanded_release_count,
-            },
-            {
-                "id": "stochastic_arrival_expansion_mode",
-                "message": (
-                    "Uniform/Poisson/custom arrivals are expanded as a deterministic sample path driven by sim.seed and the shared release queue order."
-                    if arrival_analysis_mode == "sample_path"
-                    else "Uniform/Poisson/custom arrivals are expanded using conservative minimum-interval envelopes when available."
-                ),
-                "arrival_analysis_mode": arrival_analysis_mode,
-                "conservative_envelope_override_count": len(conservative_min_intervals),
-            },
-            {
-                "id": "runtime_static_window_materialization",
-                "message": "Runtime consumes planning artifacts by materializing runtime_static_windows into scheduler.params.static_windows.",
-            },
-        ]
-
-        unsupported_dimensions: list[dict[str, Any]] = []
-        if resource_segment_count > 0:
-            unsupported_dimensions.append(
-                {
-                    "id": "resource_blocking_not_in_static_plan",
-                    "message": "Static planning feasibility does not expand runtime resource contention directly; blocking is modeled analytically in WCRT.",
-                    "segment_count": resource_segment_count,
-                }
-            )
-        if any(float(overhead_params.get(key, 0.0) or 0.0) > 0.0 for key in ("context_switch", "migration", "schedule")):
-            unsupported_dimensions.append(
-                {
-                    "id": "runtime_overheads_not_in_static_plan",
-                    "message": "Static planning feasibility does not fully expand runtime scheduling/context/migration overheads; WCRT models these costs analytically.",
-                    "overhead": {
-                        key: float(overhead_params.get(key, 0.0) or 0.0)
-                        for key in ("context_switch", "migration", "schedule")
-                    },
-                }
-            )
-        if non_preemptible_segment_count > 0:
-            unsupported_dimensions.append(
-                {
-                    "id": "segment_preemptibility_not_modeled",
-                    "message": "Segment-level preemptible flags are enforced at runtime, but offline planning/WCRT do not derive separate bounds from them.",
-                    "segment_count": non_preemptible_segment_count,
-                }
-            )
-
-        coverage_summary = {
-            "source": "model_spec",
-            "task_scope": resolved_scope,
-            "include_non_rt": bool(include_non_rt),
-            "horizon": horizon,
-            "analysis_horizon": analysis_horizon,
-            "arrival_analysis_mode": arrival_analysis_mode,
-            "conservative_envelope_override_count": len(conservative_min_intervals),
-            "total_tasks": len(spec.tasks),
-            "included_task_count": len(included_task_ids),
-            "included_segment_count": len(segments),
-            "expanded_release_count": expanded_release_count,
-            "skipped_dynamic_rt_tasks": skipped_dynamic_rt,
-            "skipped_non_rt_tasks": skipped_non_rt,
-            "resource_segment_count": resource_segment_count,
-            "release_offset_segment_count": release_offset_segment_count,
-            "non_preemptible_segment_count": non_preemptible_segment_count,
-            "stochastic_arrival_task_count": stochastic_arrival_task_count,
-            "phase_offset_task_count": phase_offset_task_count,
-            "unsupported_dimension_count": len(unsupported_dimensions),
-            "effective_core_speed_count": len(effective_speeds),
-            "etm_name": etm_name,
-        }
-
-        arrival_assumption_trace = _build_arrival_assumption_trace(
+        expanded_arrivals = _expand_arrivals(spec, horizon=horizon)
+        return _build_normalized_graph(
             spec,
-            included_task_ids=included_task_ids,
-            arrival_analysis_mode=arrival_analysis_mode,
-            conservative_min_intervals=conservative_min_intervals,
-        )
-
-        scheduler_context = {
-            "scheduler_name": spec.scheduler.name,
-            "resource_acquire_policy": scheduler_params.get("resource_acquire_policy", "legacy_sequential"),
-            "etm": str(scheduler_params.get("etm", "constant") or "constant"),
-            "etm_params": dict(etm_params),
-            "overhead_model": str(scheduler_params.get("overhead_model", "default") or "default"),
-            "overhead": {
-                key: float(overhead_params.get(key, 0.0) or 0.0)
-                for key in ("context_switch", "migration", "schedule")
-            },
-        }
-        return cls(
-            task_scope=resolved_scope,
-            include_non_rt=bool(include_non_rt),
-            horizon=analysis_horizon,
-            cores=sorted(cores, key=lambda item: item.core_id),
-            segments=sorted(segments, key=lambda item: item.key),
-            resource_bindings=resource_bindings,
-            scheduler_context=scheduler_context,
-            coverage_summary=coverage_summary,
-            assumptions=assumptions,
-            unsupported_dimensions=unsupported_dimensions,
-            arrival_assumption_trace=arrival_assumption_trace,
+            task_scope=task_scope,
+            include_non_rt=include_non_rt,
+            horizon=horizon,
+            expanded_arrivals=expanded_arrivals,
         )
 
     def fingerprint_payload(self) -> dict[str, Any]:
@@ -823,56 +543,389 @@ class NormalizedExecutionModel:
         return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
     def to_planning_problem(self):
-        from .types import PlanningProblem, PlanningSegment
+        return _project_planning_problem(self)
 
-        segments = [
-            PlanningSegment(
-                task_id=segment.task_id,
-                subtask_id=segment.subtask_id,
-                segment_id=segment.segment_id,
-                wcet=segment.wcet,
-                release_index=segment.release_index,
-                release_time=segment.release_time,
-                period=segment.period,
-                relative_deadline=segment.relative_deadline,
-                absolute_deadline=segment.absolute_deadline,
-                mapping_hint=segment.mapping_hint,
-                predecessors=list(segment.predecessor_keys),
-                metadata={
-                    **dict(segment.metadata),
-                    "task_type": segment.task_type,
-                    "arrival_mode": segment.arrival_mode,
-                    "preemptible": segment.preemptible,
-                    "required_resources": list(segment.required_resources),
-                    "required_resource_count": len(segment.required_resources),
-                    "release_offsets": list(segment.release_offsets),
-                    "release_offset_count": len(segment.release_offsets),
-                    "raw_wcet": segment.wcet,
-                    "base_segment_key": f"{segment.task_id}:{segment.subtask_id}:{segment.segment_id}",
-                },
+
+def _expand_arrivals(
+    spec: ModelSpec,
+    *,
+    horizon: float | None,
+) -> _ExpandedArrivals:
+    analysis_horizon = float(horizon) if horizon is not None else float(spec.sim.duration)
+    arrival_analysis_mode = _arrival_analysis_mode(spec)
+    conservative_min_intervals = _conservative_min_interval_map(spec)
+    return _ExpandedArrivals(
+        analysis_horizon=analysis_horizon,
+        arrival_analysis_mode=arrival_analysis_mode,
+        conservative_min_intervals=conservative_min_intervals,
+        release_schedule=_expanded_release_schedule(spec, analysis_horizon),
+    )
+
+
+def _build_normalized_graph(
+    spec: ModelSpec,
+    *,
+    task_scope: str | None,
+    include_non_rt: bool,
+    horizon: float | None,
+    expanded_arrivals: _ExpandedArrivals,
+) -> NormalizedExecutionModel:
+    resolved_scope = normalize_task_scope(task_scope, include_non_rt=include_non_rt)
+    processor_speed = {
+        processor.id: float(processor.speed_factor)
+        for processor in spec.platform.processor_types
+    }
+    cores = [
+        NormalizedCore(
+            core_id=core.id,
+            processor_type_id=core.type_id,
+            processor_speed_factor=processor_speed[core.type_id],
+            core_speed_factor=float(core.speed_factor),
+            effective_speed_factor=float(core.speed_factor) * processor_speed[core.type_id],
+        )
+        for core in spec.platform.cores
+    ]
+
+    resource_bindings = {
+        resource.id: {
+            "bound_core_id": resource.bound_core_id,
+            "protocol": resource.protocol,
+        }
+        for resource in spec.resources
+    }
+    core_ids = [core.core_id for core in cores]
+    core_speed_by_id = {core.core_id: core.effective_speed_factor for core in cores}
+    effective_speeds = sorted({round(core.effective_speed_factor, 12) for core in cores})
+    scheduler_params = dict(spec.scheduler.params)
+    overhead_params = scheduler_params.get("overhead", {})
+    if not isinstance(overhead_params, dict):
+        overhead_params = {}
+    etm_params = scheduler_params.get("etm_params", {})
+    if not isinstance(etm_params, dict):
+        etm_params = {}
+    etm_name = str(scheduler_params.get("etm", "constant") or "constant")
+    etm = create_etm(etm_name, etm_params)
+
+    segments: list[NormalizedSegment] = []
+    included_task_ids: set[str] = set()
+    skipped_dynamic_rt = 0
+    skipped_non_rt = 0
+    resource_segment_count = 0
+    release_offset_segment_count = 0
+    non_preemptible_segment_count = 0
+    stochastic_arrival_task_count = 0
+    phase_offset_task_count = 0
+    expanded_release_count = 0
+
+    for task in spec.tasks:
+        if not _task_in_scope(task.task_type, resolved_scope):
+            if task.task_type == TaskType.DYNAMIC_RT:
+                skipped_dynamic_rt += 1
+            elif task.task_type == TaskType.NON_RT:
+                skipped_non_rt += 1
+            continue
+
+        included_task_ids.add(task.id)
+        if task.phase_offset not in (None, 0.0):
+            phase_offset_task_count += 1
+        arrival_mode = _task_arrival_mode(task)
+        if arrival_mode in {
+            ArrivalProcessType.UNIFORM.value,
+            ArrivalProcessType.POISSON.value,
+            ArrivalProcessType.CUSTOM.value,
+            "uniform_interval",
+        }:
+            stochastic_arrival_task_count += 1
+
+        relative_deadline = float(task.deadline) if task.deadline is not None else None
+        task_mapping = task.task_mapping_hint
+        task_releases = expanded_arrivals.release_schedule.get(task.id, [])
+        expanded_release_count += len(task_releases)
+
+        for release_idx, task_release_time in task_releases:
+            release_marker = release_idx if len(task_releases) > 1 else None
+            absolute_deadline = (
+                task_release_time + relative_deadline if relative_deadline is not None else None
             )
-            for segment in self.segments
-        ]
-        return PlanningProblem(
-            core_ids=[core.core_id for core in self.cores],
-            segments=segments,
-            horizon=float(self.coverage_summary.get("analysis_horizon", self.horizon or 0.0)) if (self.coverage_summary.get("analysis_horizon") is not None or self.horizon is not None) else None,
-            metadata={
-                **dict(self.coverage_summary),
-                "task_scope": self.task_scope,
-                "include_non_rt": self.include_non_rt,
-                "horizon": self.horizon,
-                "semantic_fingerprint": self.semantic_fingerprint(),
-                "scheduler_context": dict(self.scheduler_context),
-                "resource_bindings": {
-                    resource_id: dict(binding)
-                    for resource_id, binding in sorted(self.resource_bindings.items())
+            subtask_segment_keys: dict[str, list[str]] = {}
+
+            for subtask in task.subtasks:
+                ordered_segments = sorted(subtask.segments, key=lambda item: item.index)
+                subtask_mapping = subtask.subtask_mapping_hint or task_mapping
+                previous_segment_key: str | None = None
+                subtask_keys: list[str] = []
+
+                for segment in ordered_segments:
+                    mapping_hint = segment.mapping_hint or subtask_mapping
+                    release_offsets = [float(value) for value in (segment.release_offsets or [])]
+                    effective_release_time = float(task_release_time)
+                    deterministic_offset_index: int | None = None
+                    if release_offsets:
+                        deterministic_offset_index = release_idx % len(release_offsets)
+                        effective_release_time += release_offsets[deterministic_offset_index]
+
+                    eligible_core_ids = [mapping_hint] if mapping_hint else list(core_ids)
+                    execution_cost_by_core = {
+                        core_id: float(
+                            etm.estimate(
+                                float(segment.wcet),
+                                float(core_speed_by_id[core_id]),
+                                effective_release_time,
+                                task_id=task.id,
+                                subtask_id=subtask.id,
+                                segment_id=segment.id,
+                                core_id=core_id,
+                            )
+                        )
+                        for core_id in eligible_core_ids
+                    }
+                    default_execution_cost = (
+                        min(execution_cost_by_core.values())
+                        if execution_cost_by_core
+                        else float(segment.wcet)
+                    )
+                    segment_key = (
+                        f"{task.id}@{release_idx}:{subtask.id}:{segment.id}"
+                        if release_marker is not None
+                        else f"{task.id}:{subtask.id}:{segment.id}"
+                    )
+                    normalized_segment = NormalizedSegment(
+                        task_id=task.id,
+                        subtask_id=subtask.id,
+                        segment_id=segment.id,
+                        key=segment_key,
+                        task_type=task.task_type.value,
+                        wcet=float(segment.wcet),
+                        release_index=release_marker,
+                        release_time=effective_release_time,
+                        period=float(task.period) if task.period is not None else None,
+                        relative_deadline=relative_deadline,
+                        absolute_deadline=absolute_deadline,
+                        arrival_mode=arrival_mode,
+                        phase_offset=float(task.phase_offset) if task.phase_offset is not None else None,
+                        mapping_hint=mapping_hint,
+                        required_resources=list(segment.required_resources),
+                        predecessor_keys=[previous_segment_key] if previous_segment_key else [],
+                        preemptible=bool(segment.preemptible),
+                        release_offsets=release_offsets,
+                        metadata={
+                            "segment_index": int(segment.index),
+                            "task_name": task.name,
+                            "subtask_successor_count": len(subtask.successors),
+                            "eligible_core_ids": list(eligible_core_ids),
+                            "execution_cost_by_core": {
+                                core_id: round(cost, 12)
+                                for core_id, cost in sorted(execution_cost_by_core.items())
+                            },
+                            "default_execution_cost": round(default_execution_cost, 12),
+                            "raw_wcet": float(segment.wcet),
+                            "effective_speed_by_core": {
+                                core_id: float(core_speed_by_id[core_id])
+                                for core_id in eligible_core_ids
+                            },
+                            "etm": etm_name,
+                            "release_index": int(release_idx),
+                            "task_release_time": float(task_release_time),
+                            "analysis_release_time": float(effective_release_time),
+                            "deterministic_offset_index": deterministic_offset_index,
+                        },
+                    )
+                    if normalized_segment.required_resources:
+                        resource_segment_count += 1
+                    if normalized_segment.release_offsets:
+                        release_offset_segment_count += 1
+                    if not normalized_segment.preemptible:
+                        non_preemptible_segment_count += 1
+                    segments.append(normalized_segment)
+                    subtask_keys.append(segment_key)
+                    previous_segment_key = segment_key
+                subtask_segment_keys[subtask.id] = subtask_keys
+
+            by_key = {
+                segment.key: segment
+                for segment in segments
+                if segment.task_id == task.id
+                and (segment.release_index or 0) == (release_marker if release_marker is not None else 0)
+            }
+            for subtask in task.subtasks:
+                current_keys = subtask_segment_keys.get(subtask.id, [])
+                if not current_keys:
+                    continue
+                first_segment = by_key[current_keys[0]]
+                for predecessor_subtask in subtask.predecessors:
+                    predecessor_keys = subtask_segment_keys.get(predecessor_subtask, [])
+                    if not predecessor_keys:
+                        continue
+                    predecessor_key = predecessor_keys[-1]
+                    if predecessor_key not in first_segment.predecessor_keys:
+                        first_segment.predecessor_keys.append(predecessor_key)
+
+    assumptions = [
+        {
+            "id": "release_expansion_within_horizon",
+            "message": "Offline planning/WCRT expand task releases within the selected horizon (defaults to sim.duration), instead of collapsing tasks to one representative release.",
+            "horizon": expanded_arrivals.analysis_horizon,
+            "expanded_release_count": expanded_release_count,
+        },
+        {
+            "id": "stochastic_arrival_expansion_mode",
+            "message": (
+                "Uniform/Poisson/custom arrivals are expanded as a deterministic sample path driven by sim.seed and the shared release queue order."
+                if expanded_arrivals.arrival_analysis_mode == "sample_path"
+                else "Uniform/Poisson/custom arrivals are expanded using conservative minimum-interval envelopes when available."
+            ),
+            "arrival_analysis_mode": expanded_arrivals.arrival_analysis_mode,
+            "conservative_envelope_override_count": len(expanded_arrivals.conservative_min_intervals),
+        },
+        {
+            "id": "runtime_static_window_materialization",
+            "message": "Runtime consumes planning artifacts by materializing runtime_static_windows into scheduler.params.static_windows.",
+        },
+    ]
+
+    unsupported_dimensions: list[dict[str, Any]] = []
+    if resource_segment_count > 0:
+        unsupported_dimensions.append(
+            {
+                "id": "resource_blocking_not_in_static_plan",
+                "message": "Static planning feasibility does not expand runtime resource contention directly; blocking is modeled analytically in WCRT.",
+                "segment_count": resource_segment_count,
+            }
+        )
+    if any(float(overhead_params.get(key, 0.0) or 0.0) > 0.0 for key in ("context_switch", "migration", "schedule")):
+        unsupported_dimensions.append(
+            {
+                "id": "runtime_overheads_not_in_static_plan",
+                "message": "Static planning feasibility does not fully expand runtime scheduling/context/migration overheads; WCRT models these costs analytically.",
+                "overhead": {
+                    key: float(overhead_params.get(key, 0.0) or 0.0)
+                    for key in ("context_switch", "migration", "schedule")
                 },
-                "assumptions": [dict(item) for item in self.assumptions],
-                "unsupported_dimensions": [dict(item) for item in self.unsupported_dimensions],
-                "arrival_assumption_trace": dict(self.arrival_assumption_trace),
+            }
+        )
+    if non_preemptible_segment_count > 0:
+        unsupported_dimensions.append(
+            {
+                "id": "segment_preemptibility_not_modeled",
+                "message": "Segment-level preemptible flags are enforced at runtime, but offline planning/WCRT do not derive separate bounds from them.",
+                "segment_count": non_preemptible_segment_count,
+            }
+        )
+
+    coverage_summary = {
+        "source": "model_spec",
+        "task_scope": resolved_scope,
+        "include_non_rt": bool(include_non_rt),
+        "horizon": horizon,
+        "analysis_horizon": expanded_arrivals.analysis_horizon,
+        "arrival_analysis_mode": expanded_arrivals.arrival_analysis_mode,
+        "conservative_envelope_override_count": len(expanded_arrivals.conservative_min_intervals),
+        "total_tasks": len(spec.tasks),
+        "included_task_count": len(included_task_ids),
+        "included_segment_count": len(segments),
+        "expanded_release_count": expanded_release_count,
+        "skipped_dynamic_rt_tasks": skipped_dynamic_rt,
+        "skipped_non_rt_tasks": skipped_non_rt,
+        "resource_segment_count": resource_segment_count,
+        "release_offset_segment_count": release_offset_segment_count,
+        "non_preemptible_segment_count": non_preemptible_segment_count,
+        "stochastic_arrival_task_count": stochastic_arrival_task_count,
+        "phase_offset_task_count": phase_offset_task_count,
+        "unsupported_dimension_count": len(unsupported_dimensions),
+        "effective_core_speed_count": len(effective_speeds),
+        "etm_name": etm_name,
+    }
+
+    arrival_assumption_trace = _build_arrival_assumption_trace(
+        spec,
+        included_task_ids=included_task_ids,
+        arrival_analysis_mode=expanded_arrivals.arrival_analysis_mode,
+        conservative_min_intervals=expanded_arrivals.conservative_min_intervals,
+    )
+
+    scheduler_context = {
+        "scheduler_name": spec.scheduler.name,
+        "resource_acquire_policy": scheduler_params.get("resource_acquire_policy", "legacy_sequential"),
+        "etm": str(scheduler_params.get("etm", "constant") or "constant"),
+        "etm_params": dict(etm_params),
+        "overhead_model": str(scheduler_params.get("overhead_model", "default") or "default"),
+        "overhead": {
+            key: float(overhead_params.get(key, 0.0) or 0.0)
+            for key in ("context_switch", "migration", "schedule")
+        },
+    }
+    return NormalizedExecutionModel(
+        task_scope=resolved_scope,
+        include_non_rt=bool(include_non_rt),
+        horizon=expanded_arrivals.analysis_horizon,
+        cores=sorted(cores, key=lambda item: item.core_id),
+        segments=sorted(segments, key=lambda item: item.key),
+        resource_bindings=resource_bindings,
+        scheduler_context=scheduler_context,
+        coverage_summary=coverage_summary,
+        assumptions=assumptions,
+        unsupported_dimensions=unsupported_dimensions,
+        arrival_assumption_trace=arrival_assumption_trace,
+    )
+
+
+def _project_planning_problem(normalized: NormalizedExecutionModel):
+    from .types import PlanningProblem, PlanningSegment
+
+    segments = [
+        PlanningSegment(
+            task_id=segment.task_id,
+            subtask_id=segment.subtask_id,
+            segment_id=segment.segment_id,
+            wcet=segment.wcet,
+            release_index=segment.release_index,
+            release_time=segment.release_time,
+            period=segment.period,
+            relative_deadline=segment.relative_deadline,
+            absolute_deadline=segment.absolute_deadline,
+            mapping_hint=segment.mapping_hint,
+            predecessors=list(segment.predecessor_keys),
+            metadata={
+                **dict(segment.metadata),
+                "task_type": segment.task_type,
+                "arrival_mode": segment.arrival_mode,
+                "preemptible": segment.preemptible,
+                "required_resources": list(segment.required_resources),
+                "required_resource_count": len(segment.required_resources),
+                "release_offsets": list(segment.release_offsets),
+                "release_offset_count": len(segment.release_offsets),
+                "raw_wcet": segment.wcet,
+                "base_segment_key": f"{segment.task_id}:{segment.subtask_id}:{segment.segment_id}",
             },
         )
+        for segment in normalized.segments
+    ]
+    analysis_horizon = normalized.coverage_summary.get("analysis_horizon")
+    resolved_horizon = (
+        float(analysis_horizon if analysis_horizon is not None else (normalized.horizon or 0.0))
+        if (analysis_horizon is not None or normalized.horizon is not None)
+        else None
+    )
+    return PlanningProblem(
+        core_ids=[core.core_id for core in normalized.cores],
+        segments=segments,
+        horizon=resolved_horizon,
+        metadata={
+            **dict(normalized.coverage_summary),
+            "task_scope": normalized.task_scope,
+            "include_non_rt": normalized.include_non_rt,
+            "horizon": normalized.horizon,
+            "semantic_fingerprint": normalized.semantic_fingerprint(),
+            "scheduler_context": dict(normalized.scheduler_context),
+            "resource_bindings": {
+                resource_id: dict(binding)
+                for resource_id, binding in sorted(normalized.resource_bindings.items())
+            },
+            "assumptions": [dict(item) for item in normalized.assumptions],
+            "unsupported_dimensions": [dict(item) for item in normalized.unsupported_dimensions],
+            "arrival_assumption_trace": dict(normalized.arrival_assumption_trace),
+        },
+    )
 
 
 def build_normalized_execution_model(
